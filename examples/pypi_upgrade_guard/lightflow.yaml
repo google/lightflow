@@ -1,0 +1,49 @@
+name: pypi_upgrade_guard
+description: >-
+  Audits pinned Python dependencies against the live PyPI JSON API, pauses for
+  operator approval, and upgrades requirements.txt with an automatic
+  rollback_action if post-upgrade smoke verification fails.
+
+actions:
+  - id: audit_pypi_versions
+    python_import: examples.pypi_upgrade_guard.actions.audit_pypi_versions
+  - id: apply_and_smoke_test
+    python_import: examples.pypi_upgrade_guard.actions.apply_and_smoke_test
+  - id: restore_requirements_backup
+    python_import: examples.pypi_upgrade_guard.actions.restore_requirements_backup
+
+stages:
+  - name: audit_pypi_versions
+    description: Check live PyPI JSON API for newer package releases
+    python_action:
+      action_id: audit_pypi_versions
+    retry_policy:
+      max_attempts: 2
+      initial_backoff_seconds: 1
+
+  - name: approve_upgrades
+    description: Operator approval gate showing exact version bumps
+    run_after:
+      - audit_pypi_versions
+    operator_action:
+      instructions: >-
+        'PyPI audit found ' + string(payload.outputs.audit_pypi_versions.upgrade_count) + ' upgrade(s): ' + payload.outputs.audit_pypi_versions.summary + '. Approve applying upgrades?'
+      json_schema:
+        type: object
+        properties:
+          approved:
+            type: boolean
+          requirements_path:
+            type: string
+          simulate_smoke_failure:
+            type: boolean
+
+  - name: apply_and_smoke_test
+    description: Write updated requirements and run post-upgrade smoke test
+    run_after:
+      - approve_upgrades
+    run_if: "payload.outputs.approve_upgrades.approved == true"
+    python_action:
+      action_id: apply_and_smoke_test
+    rollback_action:
+      action_id: restore_requirements_backup

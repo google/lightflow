@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "lightflow": {
+      "command": "python3",
+      "args": [
+        "-m",
+        "lightflow.mcp_server"
+      ],
+      "env": {
+        "LIGHTFLOW_STATE_DIR": "~/.lightflow"
+      }
+    }
+  }
+}

@@ -1,0 +1,1098 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>__TITLE__</title>
+  <!-- Self-contained portable utility stylesheet (zero external CDN dependencies) -->
+  <style>
+    *, ::before, ::after { box-sizing: border-box; border-width: 0; border-style: solid; border-color: var(--app-border, #334155); }
+    .flex { display: flex; }
+    .inline-flex { display: inline-flex; }
+    .grid { display: grid; }
+    .hidden { display: none !important; }
+    .block { display: block; }
+    .flex-col { flex-direction: column; }
+    .flex-row { flex-direction: row; }
+    .flex-wrap { flex-wrap: wrap; }
+    .flex-1 { flex: 1 1 0%; }
+    .shrink-0 { flex-shrink: 0; }
+    .items-center { align-items: center; }
+    .items-start { align-items: flex-start; }
+    .justify-center { justify-content: center; }
+    .justify-between { justify-content: space-between; }
+    .grid-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .gap-1 { gap: 0.25rem; }
+    .gap-1\.5 { gap: 0.375rem; }
+    .gap-2 { gap: 0.5rem; }
+    .gap-2\.5 { gap: 0.625rem; }
+    .gap-3 { gap: 0.75rem; }
+    .gap-3\.5 { gap: 0.875rem; }
+    .space-y-1\.5 > :not([hidden]) ~ :not([hidden]) { margin-top: 0.375rem; }
+    .space-y-2 > :not([hidden]) ~ :not([hidden]) { margin-top: 0.5rem; }
+    .space-y-3\.5 > :not([hidden]) ~ :not([hidden]) { margin-top: 0.875rem; }
+    .relative { position: relative; }
+    .absolute { position: absolute; }
+    .top-0 { top: 0; }
+    .left-0 { left: 0; }
+    .right-0 { right: 0; }
+    .bottom-4 { bottom: 1rem; }
+    .left-4 { left: 1rem; }
+    .right-4 { right: 1rem; }
+    .z-10 { z-index: 10; }
+    .z-20 { z-index: 20; }
+    .z-30 { z-index: 30; }
+    .w-full { width: 100%; }
+    .h-full { height: 100%; }
+    .w-9 { width: 2.25rem; }
+    .h-9 { height: 2.25rem; }
+    .w-12 { width: 3rem; }
+    .h-12 { height: 3rem; }
+    .w-4 { width: 1rem; }
+    .h-4 { height: 1rem; }
+    .w-2\.5 { width: 0.625rem; }
+    .h-2\.5 { height: 0.625rem; }
+    .min-w-0 { min-width: 0; }
+    .min-h-0 { min-height: 0; }
+    .max-w-md { max-width: 28rem; }
+    .max-w-2xl { max-width: 42rem; }
+    .max-w-3xl { max-width: 48rem; }
+    .mx-auto { margin-left: auto; margin-right: auto; }
+    .p-1 { padding: 0.25rem; }
+    .p-1\.5 { padding: 0.375rem; }
+    .p-2 { padding: 0.5rem; }
+    .p-2\.5 { padding: 0.625rem; }
+    .p-3 { padding: 0.75rem; }
+    .p-4 { padding: 1rem; }
+    .p-5 { padding: 1.25rem; }
+    .p-6 { padding: 1.5rem; }
+    .px-2 { padding-left: 0.5rem; padding-right: 0.5rem; }
+    .px-2\.5 { padding-left: 0.625rem; padding-right: 0.625rem; }
+    .px-3 { padding-left: 0.75rem; padding-right: 0.75rem; }
+    .px-4 { padding-left: 1rem; padding-right: 1rem; }
+    .py-0\.5 { padding-top: 0.125rem; padding-bottom: 0.125rem; }
+    .py-1 { padding-top: 0.25rem; padding-bottom: 0.25rem; }
+    .py-1\.5 { padding-top: 0.375rem; padding-bottom: 0.375rem; }
+    .py-2 { padding-top: 0.5rem; padding-bottom: 0.5rem; }
+    .py-3 { padding-top: 0.75rem; padding-bottom: 0.75rem; }
+    .pb-3 { padding-bottom: 0.75rem; }
+    .mb-1 { margin-bottom: 0.25rem; }
+    .mb-3 { margin-bottom: 0.75rem; }
+    .mb-4 { margin-bottom: 1rem; }
+    .mt-0\.5 { margin-top: 0.125rem; }
+    .mt-1 { margin-top: 0.25rem; }
+    .rounded { border-radius: 0.25rem; }
+    .rounded-lg { border-radius: 0.5rem; }
+    .rounded-xl { border-radius: 0.75rem; }
+    .rounded-2xl { border-radius: 1rem; }
+    .rounded-full { border-radius: 9999px; }
+    .border { border-width: 1px; }
+    .border-b { border-bottom-width: 1px; }
+    .border-l { border-left-width: 1px; }
+    .border-none { border-style: none; }
+    .text-xs { font-size: 0.75rem; line-height: 1rem; }
+    .text-base { font-size: 1rem; line-height: 1.5rem; }
+    .text-lg { font-size: 1.125rem; line-height: 1.75rem; }
+    .text-2xl { font-size: 1.5rem; line-height: 2rem; }
+    .text-\[9px\] { font-size: 9px; }
+    .text-\[10px\] { font-size: 10px; }
+    .text-\[11px\] { font-size: 11px; }
+    .font-medium { font-weight: 500; }
+    .font-semibold { font-weight: 600; }
+    .font-bold { font-weight: 700; }
+    .font-mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+    .uppercase { text-transform: uppercase; }
+    .tracking-tight { letter-spacing: -0.025em; }
+    .tracking-wider { letter-spacing: 0.05em; }
+    .leading-relaxed { line-height: 1.625; }
+    .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .break-all { word-break: break-all; }
+    .text-center { text-align: center; }
+    .select-none { user-select: none; }
+    .cursor-grab { cursor: grab; }
+    .cursor-pointer { cursor: pointer; }
+    .pointer-events-none { pointer-events: none; }
+    .overflow-hidden { overflow: hidden; }
+    .overflow-y-auto { overflow-y: auto; }
+    .overflow-x-auto { overflow-x: auto; }
+    .shadow-sm { box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.25); }
+    .shadow-md { box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3); }
+    .shadow-lg { box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.35); }
+    .shadow-xl { box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.4); }
+    .shadow-2xl { box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.6); }
+    .bg-transparent { background-color: transparent; }
+    .bg-slate-950 { background-color: #020617; }
+    .bg-slate-950\/40 { background-color: rgba(2, 6, 23, 0.4); }
+    .bg-slate-950\/70 { background-color: rgba(2, 6, 23, 0.7); }
+    .bg-slate-950\/80 { background-color: rgba(2, 6, 23, 0.8); }
+    .bg-slate-900 { background-color: #0f172a; }
+    .bg-slate-800 { background-color: #1e293b; }
+    .bg-emerald-500\/80 { background-color: rgba(16, 185, 129, 0.8); }
+    .bg-amber-500\/80 { background-color: rgba(245, 158, 11, 0.8); }
+    .bg-sky-500\/80 { background-color: rgba(14, 165, 233, 0.8); }
+    .bg-gradient-to-tr { background-image: linear-gradient(to top right, #0ea5e9, #6366f1); }
+    .bg-\[var\(--app-background\,\#0f172a\)\] { background-color: var(--app-background, #0f172a); }
+    .bg-\[var\(--app-card\,\#131b2e\)\] { background-color: var(--app-card, #131b2e); }
+    .bg-\[var\(--app-card\,\#131b2e\)\]\/95 { background-color: var(--app-card, #131b2e); }
+    .bg-\[var\(--app-muted\,\#1e293b\)\] { background-color: var(--app-muted, #1e293b); }
+    .bg-\[var\(--app-primary\,\#38bdf8\)\] { background-color: var(--app-primary, #38bdf8); }
+    .text-white { color: #fff; }
+    .text-slate-300 { color: #cbd5e1; }
+    .text-sky-300 { color: #7dd3fc; }
+    .text-sky-400 { color: #38bdf8; }
+    .text-emerald-400 { color: #34d399; }
+    .text-amber-400 { color: #fbbf24; }
+    .text-rose-400 { color: #fb7185; }
+    .text-\[var\(--app-foreground\,\#f1f5f9\)\] { color: var(--app-foreground, #f1f5f9); }
+    .text-\[var\(--app-muted-foreground\,\#94a3b8\)\] { color: var(--app-muted-foreground, #94a3b8); }
+    .text-\[var\(--app-primary-foreground\,\#0f172a\)\] { color: var(--app-primary-foreground, #0f172a); }
+    .border-slate-700 { border-color: #334155; }
+    .border-slate-800 { border-color: #1e293b; }
+    .border-emerald-400 { border-color: #34d399; }
+    .border-amber-400 { border-color: #fbbf24; }
+    .border-sky-400 { border-color: #38bdf8; }
+    .border-\[var\(--app-card-border\,\#1e293b\)\] { border-color: var(--app-card-border, #1e293b); }
+    .border-\[var\(--app-border\,\#334155\)\] { border-color: var(--app-border, #334155); }
+    button { background: none; color: inherit; cursor: pointer; font: inherit; }
+    @media (min-width: 640px) {
+      .sm\:p-4 { padding: 1rem; }
+      .sm\:block { display: block !important; }
+      .sm\:w-\[380px\] { width: 380px; }
+    }
+    @media (min-width: 768px) {
+      .md\:flex-row { flex-direction: row; }
+      .md\:items-center { align-items: center; }
+      .md\:w-\[420px\] { width: 420px; }
+    }
+  </style>
+  <style>
+    :root {
+      --app-background: #0b0f19;
+      --app-foreground: #f1f5f9;
+      --app-card: #131b2e;
+      --app-card-border: #1e293b;
+      --app-border: #334155;
+      --app-primary: #38bdf8;
+      --app-primary-foreground: #0f172a;
+      --app-muted: #1e293b;
+      --app-muted-foreground: #94a3b8;
+    }
+    html, body {
+      height: 100%;
+      width: 100%;
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      box-sizing: border-box;
+    }
+    #app {
+      height: 100%;
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      min-height: 500px;
+    }
+    .custom-scrollbar::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    .custom-scrollbar::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    .custom-scrollbar::-webkit-scrollbar-thumb {
+      background: var(--app-border, #334155);
+      border-radius: 9999px;
+    }
+  </style>
+</head>
+<body class="__BG_CLASS__ text-[var(--app-foreground,#f1f5f9)] font-[var(--vscode-font-family,system-ui,-apple-system,sans-serif)] antialiased p-2 sm:p-4">
+  <div id="app" class="gap-2.5">
+    
+    <!-- Top Navigation Header -->
+    <header class="bg-[var(--app-card,#131b2e)] border border-[var(--app-card-border,#1e293b)] rounded-2xl px-4 py-3 shadow-lg flex flex-col md:flex-row md:items-center justify-between gap-3 shrink-0">
+      <div class="flex items-center gap-3 min-w-0">
+        <div class="w-9 h-9 rounded-xl bg-gradient-to-tr from-sky-500 to-indigo-500 flex items-center justify-center text-white font-bold text-lg shadow-md shadow-sky-500/20 shrink-0">
+          ⚡
+        </div>
+        <div class="min-w-0">
+          <div class="flex items-center gap-2 flex-wrap">
+            <h1 id="wf-name" class="text-base font-bold tracking-tight text-[var(--app-foreground,#f1f5f9)] truncate font-mono">Lightflow DAG</h1>
+            <span id="wf-status-badge" class="text-[10px] px-2 py-0.5 rounded-full font-medium bg-slate-800 text-slate-300 border border-slate-700">STATIC</span>
+          </div>
+          <p id="wf-desc" class="text-xs text-[var(--app-muted-foreground,#94a3b8)] truncate max-w-2xl"></p>
+        </div>
+      </div>
+
+      <!-- Navigation Tabs & View Controls -->
+      <div class="flex items-center gap-2 flex-wrap shrink-0">
+        <div class="flex items-center bg-[var(--app-muted,#1e293b)] rounded-xl p-1 border border-[var(--app-border,#334155)] text-xs">
+          <button id="tab-graph" onclick="setTab('graph')" class="px-2.5 py-1.5 rounded-lg font-medium transition bg-[var(--app-primary,#38bdf8)] text-[var(--app-primary-foreground,#0f172a)] shadow-sm">
+            DAG Canvas
+          </button>
+          <button id="tab-timeline" onclick="setTab('timeline')" class="px-2.5 py-1.5 rounded-lg font-medium transition text-[var(--app-muted-foreground,#94a3b8)] hover:text-[var(--app-foreground,#f1f5f9)]">
+            Trace
+          </button>
+          <button id="tab-payload" onclick="setTab('payload')" class="px-2.5 py-1.5 rounded-lg font-medium transition text-[var(--app-muted-foreground,#94a3b8)] hover:text-[var(--app-foreground,#f1f5f9)]">
+            Payload
+          </button>
+          <button id="tab-raw" onclick="setTab('raw')" class="px-2.5 py-1.5 rounded-lg font-medium transition text-[var(--app-muted-foreground,#94a3b8)] hover:text-[var(--app-foreground,#f1f5f9)]">
+            Manifest
+          </button>
+        </div>
+
+        <!-- Orientation Switcher -->
+        <div class="flex items-center bg-[var(--app-muted,#1e293b)] rounded-xl p-1 border border-[var(--app-border,#334155)] text-xs">
+          <button id="orient-tb" onclick="setOrientation('TB')" class="px-2 py-1.5 rounded-lg font-medium transition bg-[var(--app-primary,#38bdf8)] text-[var(--app-primary-foreground,#0f172a)] shadow-sm" title="Vertical (Top-to-Bottom)">
+            ⬇️ Vert
+          </button>
+          <button id="orient-lr" onclick="setOrientation('LR')" class="px-2 py-1.5 rounded-lg font-medium transition text-[var(--app-muted-foreground,#94a3b8)] hover:text-[var(--app-foreground,#f1f5f9)]" title="Horizontal (Left-to-Right)">
+            ➡️ Horiz
+          </button>
+        </div>
+
+        <!-- Quick Camera Actions -->
+        <button onclick="focusStart()" title="Reset View to Root Stage" class="px-2.5 py-1.5 rounded-xl bg-[var(--app-muted,#1e293b)] hover:bg-[var(--app-border,#334155)] border border-[var(--app-border,#334155)] text-xs text-[var(--app-muted-foreground,#94a3b8)] hover:text-[var(--app-foreground,#f1f5f9)] transition flex items-center gap-1">
+          <span>🎯</span> Reset View
+        </button>
+        <button onclick="fitView()" title="Fit Entire DAG in Viewport" class="px-2.5 py-1.5 rounded-xl bg-[var(--app-muted,#1e293b)] hover:bg-[var(--app-border,#334155)] border border-[var(--app-border,#334155)] text-xs text-[var(--app-muted-foreground,#94a3b8)] hover:text-[var(--app-foreground,#f1f5f9)] transition flex items-center gap-1">
+          <span>⛶</span> Fit All
+        </button>
+
+        <!-- Inspector Toggle Button -->
+        <button id="toggle-inspector-btn" onclick="toggleInspector()" class="px-2.5 py-1.5 rounded-xl bg-[var(--app-muted,#1e293b)] hover:bg-[var(--app-border,#334155)] border border-[var(--app-border,#334155)] text-xs text-[var(--app-muted-foreground,#94a3b8)] hover:text-[var(--app-foreground,#f1f5f9)] transition flex items-center gap-1">
+          <span>🔍</span> Inspector
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Workspace Area -->
+    <main class="flex-1 relative bg-[var(--app-card,#131b2e)] border border-[var(--app-card-border,#1e293b)] rounded-2xl shadow-xl overflow-hidden flex flex-col min-h-0">
+      
+      <!-- Filter Toolbar -->
+      <div class="px-4 py-2 border-b border-[var(--app-border,#334155)] bg-[var(--app-card,#131b2e)]/95 backdrop-blur flex items-center justify-between gap-3 text-xs z-10 shrink-0">
+        <div class="flex items-center gap-2 flex-1 max-w-md">
+          <svg class="w-4 h-4 text-[var(--app-muted-foreground,#94a3b8)]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+          <input id="search-input" type="text" placeholder="Search stages or actions..." oninput="onSearch(this.value)" class="w-full bg-transparent border-none outline-none text-[var(--app-foreground,#f1f5f9)] placeholder-[var(--app-muted-foreground,#94a3b8)] focus:ring-0">
+        </div>
+        <div class="flex items-center gap-3">
+          <div class="flex items-center gap-1.5">
+            <span class="text-[var(--app-muted-foreground,#94a3b8)]">Filter:</span>
+            <select id="type-filter" onchange="onFilterChange(this.value)" class="bg-[var(--app-muted,#1e293b)] text-[var(--app-foreground,#f1f5f9)] border border-[var(--app-border,#334155)] rounded-lg px-2 py-0.5 outline-none">
+              <option value="ALL">All Types</option>
+              <option value="python_action">Python Action</option>
+              <option value="operator_action">Operator Action</option>
+              <option value="polling_policy">Polling</option>
+            </select>
+          </div>
+          <div class="text-[var(--app-muted-foreground,#94a3b8)] text-xs hidden sm:block">
+            <span id="stage-count-badge" class="font-mono text-sky-400">0</span> stages
+          </div>
+        </div>
+      </div>
+
+      <!-- Workspace Body (Full Width Canvas + Overlay Drawer) -->
+      <div class="flex-1 relative overflow-hidden flex min-h-0">
+        
+        <!-- TAB 1: DAG Viewport Canvas (100% Full Workspace Width) -->
+        <div id="view-graph" class="w-full h-full relative overflow-hidden bg-slate-950/70 cursor-grab active:cursor-grabbing select-none flex-1">
+          <!-- Canvas Plane for Pan & Zoom -->
+          <div id="dag-plane" class="absolute top-0 left-0" style="transform-origin: 0 0; will-change: transform;">
+            <!-- SVG Edges Layer -->
+            <svg id="dag-edges-svg" class="absolute top-0 left-0 pointer-events-none" style="overflow: visible; width: 1px; height: 1px;">
+              <defs>
+                <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                  <path d="M 0 1 L 10 5 L 0 9 z" fill="#64748b" />
+                </marker>
+                <marker id="arrow-cond" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                  <path d="M 0 1 L 10 5 L 0 9 z" fill="#f59e0b" />
+                </marker>
+              </defs>
+              <g id="edges-group"></g>
+            </svg>
+
+            <!-- HTML Nodes Layer -->
+            <div id="dag-nodes-container" class="absolute top-0 left-0"></div>
+          </div>
+
+          <!-- Floating Zoom Controls -->
+          <div class="absolute bottom-4 left-4 bg-[var(--app-card,#131b2e)] border border-[var(--app-border,#334155)] rounded-2xl p-1 shadow-xl flex items-center gap-1 z-20">
+            <button onclick="zoomIn()" class="p-1.5 rounded-xl hover:bg-[var(--app-muted,#1e293b)] text-[var(--app-foreground,#f1f5f9)] transition" title="Zoom In">➕</button>
+            <button onclick="zoomOut()" class="p-1.5 rounded-xl hover:bg-[var(--app-muted,#1e293b)] text-[var(--app-foreground,#f1f5f9)] transition" title="Zoom Out">➖</button>
+            <button onclick="focusStart()" class="p-1.5 rounded-xl hover:bg-[var(--app-muted,#1e293b)] text-[var(--app-foreground,#f1f5f9)] transition" title="Reset View">🎯</button>
+            <button onclick="fitView()" class="p-1.5 rounded-xl hover:bg-[var(--app-muted,#1e293b)] text-[var(--app-foreground,#f1f5f9)] transition" title="Fit All">⛶</button>
+            <span id="zoom-level" class="text-xs px-2 font-mono text-[var(--app-muted-foreground,#94a3b8)]">100%</span>
+          </div>
+
+          <!-- Legend Overlay -->
+          <div class="absolute bottom-4 right-4 bg-[var(--app-card,#131b2e)]/95 backdrop-blur border border-[var(--app-border,#334155)] rounded-2xl p-2.5 shadow-xl text-[11px] flex flex-col gap-1.5 z-20">
+            <div class="font-semibold text-[var(--app-muted-foreground,#94a3b8)] uppercase tracking-wider text-[9px]">Node Types</div>
+            <div class="flex items-center gap-2"><span class="w-2.5 h-2.5 rounded bg-emerald-500/80 border border-emerald-400"></span> <span>Python Action</span></div>
+            <div class="flex items-center gap-2"><span class="w-2.5 h-2.5 rounded bg-amber-500/80 border border-amber-400"></span> <span>Operator Action</span></div>
+            <div class="flex items-center gap-2"><span class="w-2.5 h-2.5 rounded bg-sky-500/80 border border-sky-400"></span> <span>Polling Policy</span></div>
+          </div>
+        </div>
+
+        <!-- TAB 2: Execution Timeline -->
+        <div id="view-timeline" class="hidden w-full h-full p-6 overflow-y-auto custom-scrollbar flex-1 bg-slate-950/40">
+          <div class="max-w-3xl mx-auto">
+            <h2 class="text-xs font-semibold uppercase tracking-wider text-[var(--app-muted-foreground,#94a3b8)] mb-4">Execution Chronology & Stamps</h2>
+            <div id="timeline-list" class="space-y-3.5"></div>
+          </div>
+        </div>
+
+        <!-- TAB 3: Passport Payload -->
+        <div id="view-payload" class="hidden w-full h-full p-6 overflow-y-auto custom-scrollbar flex-1 bg-slate-950/40">
+          <div class="max-w-3xl mx-auto">
+            <div class="flex items-center justify-between mb-3">
+              <h2 class="text-xs font-semibold uppercase tracking-wider text-[var(--app-muted-foreground,#94a3b8)]">Current State Payload</h2>
+              <button onclick="copyPayload()" class="text-xs px-3 py-1 bg-[var(--app-muted,#1e293b)] hover:bg-[var(--app-border,#334155)] rounded-lg text-[var(--app-foreground,#f1f5f9)] transition">Copy JSON</button>
+            </div>
+            <pre id="payload-content" class="bg-slate-950 p-4 rounded-xl font-mono text-xs text-emerald-400 border border-slate-800 overflow-x-auto shadow-inner leading-relaxed"></pre>
+          </div>
+        </div>
+
+        <!-- TAB 4: Raw Manifest -->
+        <div id="view-raw" class="hidden w-full h-full p-6 overflow-y-auto custom-scrollbar flex-1 bg-slate-950/40">
+          <div class="max-w-3xl mx-auto">
+            <h2 class="text-xs font-semibold uppercase tracking-wider text-[var(--app-muted-foreground,#94a3b8)] mb-3">Workflow Manifest (JSON Representation)</h2>
+            <pre id="raw-manifest-content" class="bg-slate-950 p-4 rounded-xl font-mono text-xs text-sky-300 border border-slate-800 overflow-x-auto shadow-inner leading-relaxed"></pre>
+          </div>
+        </div>
+
+        <!-- Slide-Over Stage Inspector Drawer (Absolute Overlay) -->
+        <aside id="inspector-drawer" class="hidden absolute top-0 right-0 h-full w-full sm:w-[380px] md:w-[420px] bg-[var(--app-card,#131b2e)] border-l border-[var(--app-border,#334155)] shadow-2xl p-5 flex flex-col overflow-y-auto custom-scrollbar z-30 transition-all duration-300 backdrop-blur">
+          <div class="flex items-center justify-between border-b border-[var(--app-border,#334155)] pb-3 mb-4">
+            <div class="flex items-center gap-2">
+              <span id="inspect-type-icon" class="text-lg">📦</span>
+              <h3 class="font-bold text-xs text-[var(--app-foreground,#f1f5f9)]">Stage Inspector</h3>
+            </div>
+            <div class="flex items-center gap-2">
+              <span id="inspect-status-badge" class="text-[10px] px-2 py-0.5 rounded-full font-medium bg-slate-800 text-slate-300">SELECT NODE</span>
+              <button onclick="toggleInspector()" class="p-1 rounded-lg hover:bg-[var(--app-muted,#1e293b)] text-[var(--app-muted-foreground,#94a3b8)] hover:text-white" title="Close Inspector">✕</button>
+            </div>
+          </div>
+
+          <div id="inspector-empty" class="flex-1 flex flex-col items-center justify-center text-center p-6 text-[var(--app-muted-foreground,#94a3b8)]">
+            <div class="w-12 h-12 rounded-2xl bg-[var(--app-muted,#1e293b)] flex items-center justify-center text-2xl mb-3">🔍</div>
+            <h4 class="font-semibold text-xs text-[var(--app-foreground,#f1f5f9)] mb-1">No Stage Selected</h4>
+            <p class="text-xs leading-relaxed">Click on any stage card in the DAG to inspect parameters, actions, policies, and runtime status.</p>
+          </div>
+
+          <div id="inspector-content" class="hidden flex-1 flex flex-col gap-3.5 text-xs">
+            <div>
+              <label class="text-[10px] font-semibold text-[var(--app-muted-foreground,#94a3b8)] uppercase tracking-wider">Stage Name</label>
+              <div id="inspect-name" class="text-xs font-bold text-sky-300 font-mono mt-0.5 break-all"></div>
+            </div>
+
+            <div id="inspect-desc-box">
+              <label class="text-[10px] font-semibold text-[var(--app-muted-foreground,#94a3b8)] uppercase tracking-wider">Description</label>
+              <p id="inspect-desc" class="text-[var(--app-muted-foreground,#94a3b8)] mt-0.5 leading-relaxed"></p>
+            </div>
+
+            <div class="grid grid-cols-2 gap-2">
+              <div class="bg-[var(--app-muted,#1e293b)] p-2.5 rounded-xl border border-[var(--app-border,#334155)]">
+                <label class="text-[10px] text-[var(--app-muted-foreground,#94a3b8)] uppercase font-semibold">Action Kind</label>
+                <div id="inspect-kind" class="font-medium text-[var(--app-foreground,#f1f5f9)] mt-0.5"></div>
+              </div>
+              <div class="bg-[var(--app-muted,#1e293b)] p-2.5 rounded-xl border border-[var(--app-border,#334155)]">
+                <label class="text-[10px] text-[var(--app-muted-foreground,#94a3b8)] uppercase font-semibold">Runtime Status</label>
+                <div id="inspect-status" class="font-medium text-[var(--app-foreground,#f1f5f9)] mt-0.5"></div>
+              </div>
+            </div>
+
+            <!-- Dynamic Configuration Fields -->
+            <div id="inspect-action-details" class="bg-slate-950/80 p-3 rounded-xl border border-slate-800 space-y-2"></div>
+
+            <!-- Dependencies & Conditions -->
+            <div class="space-y-1.5">
+              <label class="text-[10px] font-semibold text-[var(--app-muted-foreground,#94a3b8)] uppercase tracking-wider">Dependencies & Logic</label>
+              <div class="bg-[var(--app-muted,#1e293b)] p-3 rounded-xl border border-[var(--app-border,#334155)] space-y-1.5 text-xs">
+                <div>
+                  <span class="text-[var(--app-muted-foreground,#94a3b8)]">Run After: </span>
+                  <span id="inspect-parents" class="font-mono text-sky-400 break-all">None (Root)</span>
+                </div>
+                <div id="inspect-condition-box">
+                  <span class="text-[var(--app-muted-foreground,#94a3b8)]">Run If: </span>
+                  <code id="inspect-condition" class="bg-slate-900 px-1.5 py-0.5 rounded text-amber-300 font-mono break-all inline-block mt-0.5"></code>
+                </div>
+              </div>
+            </div>
+
+            <!-- Latest Stamp Message -->
+            <div id="inspect-stamp-box" class="space-y-1">
+              <label class="text-[10px] font-semibold text-[var(--app-muted-foreground,#94a3b8)] uppercase tracking-wider">Latest Stamp</label>
+              <div id="inspect-stamp-msg" class="p-2.5 rounded-xl bg-slate-950 border border-slate-800 font-mono text-[11px] text-slate-300 whitespace-pre-wrap leading-relaxed"></div>
+            </div>
+          </div>
+        </aside>
+
+      </div>
+    </main>
+  </div>
+
+  <script>
+    const WORKFLOW_DATA = __WORKFLOW_DATA__;
+    const PASSPORT_DATA = __PASSPORT_DATA__;
+
+    let layoutOrientation = 'TB'; // Default: Vertical (Top-to-Bottom)
+    let currentScale = 0.9;
+    let panX = 0;
+    let panY = 0;
+    let isDragging = false;
+    let startX = 0;
+    let startY = 0;
+    let selectedStageName = null;
+    let searchQuery = "";
+    let typeFilter = "ALL";
+    let nodePositions = new Map();
+    let graphBounds = { minX: 0, maxX: 1000, minY: 0, maxY: 800 };
+    let inspectorVisible = false;
+
+    function escapeHtml(str) {
+      if (str === null || str === undefined) return "";
+      return String(str)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
+    function initApp() {
+      renderHeader();
+      renderDag();
+      renderTimeline();
+      renderPayload();
+      renderRawManifest();
+      setupPanZoom();
+      setTimeout(() => focusStart(), 50);
+    }
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', initApp);
+    } else {
+      initApp();
+    }
+
+    function renderHeader() {
+      document.getElementById("wf-name").textContent = WORKFLOW_DATA.name || "Unnamed Workflow";
+      document.getElementById("wf-desc").textContent = WORKFLOW_DATA.description || "No description provided.";
+      document.getElementById("stage-count-badge").textContent = (WORKFLOW_DATA.stages || []).length;
+      
+      const badge = document.getElementById("wf-status-badge");
+      if (PASSPORT_DATA && PASSPORT_DATA.stamps && PASSPORT_DATA.stamps.length > 0) {
+        const lastStamp = PASSPORT_DATA.stamps[PASSPORT_DATA.stamps.length - 1];
+        badge.textContent = lastStamp.status;
+        if (lastStamp.status === "COMPLETED") {
+          badge.className = "text-[10px] px-2 py-0.5 rounded-full font-medium bg-emerald-950 text-emerald-300 border border-emerald-800";
+        } else if (lastStamp.status === "PAUSED") {
+          badge.className = "text-[10px] px-2 py-0.5 rounded-full font-medium bg-amber-950 text-amber-300 border border-amber-800 animate-pulse";
+        } else if (lastStamp.status === "FAILED") {
+          badge.className = "text-[10px] px-2 py-0.5 rounded-full font-medium bg-rose-950 text-rose-300 border border-rose-800";
+        }
+      }
+    }
+
+    function setTab(tab) {
+      const tabs = ['graph', 'timeline', 'payload', 'raw'];
+      tabs.forEach(t => {
+        const btn = document.getElementById('tab-' + t);
+        const view = document.getElementById('view-' + t);
+        if (t === tab) {
+          btn.className = "px-2.5 py-1.5 rounded-lg font-medium transition bg-[var(--app-primary,#38bdf8)] text-[var(--app-primary-foreground,#0f172a)] shadow-sm";
+          view.classList.remove('hidden');
+          if (t === 'graph') {
+            setTimeout(() => focusStart(), 30);
+          }
+        } else {
+          btn.className = "px-2.5 py-1.5 rounded-lg font-medium transition text-[var(--app-muted-foreground,#94a3b8)] hover:text-[var(--app-foreground,#f1f5f9)]";
+          view.classList.add('hidden');
+        }
+      });
+    }
+
+    function setOrientation(orient) {
+      layoutOrientation = orient;
+      const tbBtn = document.getElementById("orient-tb");
+      const lrBtn = document.getElementById("orient-lr");
+      if (orient === 'TB') {
+        tbBtn.className = "px-2 py-1.5 rounded-lg font-medium transition bg-[var(--app-primary,#38bdf8)] text-[var(--app-primary-foreground,#0f172a)] shadow-sm";
+        lrBtn.className = "px-2 py-1.5 rounded-lg font-medium transition text-[var(--app-muted-foreground,#94a3b8)] hover:text-[var(--app-foreground,#f1f5f9)]";
+      } else {
+        lrBtn.className = "px-2 py-1.5 rounded-lg font-medium transition bg-[var(--app-primary,#38bdf8)] text-[var(--app-primary-foreground,#0f172a)] shadow-sm";
+        tbBtn.className = "px-2 py-1.5 rounded-lg font-medium transition text-[var(--app-muted-foreground,#94a3b8)] hover:text-[var(--app-foreground,#f1f5f9)]";
+      }
+      renderDag();
+      setTimeout(() => focusStart(), 40);
+    }
+
+    function toggleInspector() {
+      const drawer = document.getElementById("inspector-drawer");
+      inspectorVisible = !inspectorVisible;
+      if (inspectorVisible) {
+        drawer.classList.remove("hidden");
+      } else {
+        drawer.classList.add("hidden");
+      }
+    }
+
+    function computeLevels(stages) {
+      const stageMap = new Map();
+      stages.forEach(s => stageMap.set(s.name, s));
+      const levels = new Map();
+
+      function getLevel(name, visited = new Set()) {
+        if (levels.has(name)) return levels.get(name);
+        if (visited.has(name)) return 0;
+        visited.add(name);
+        const stage = stageMap.get(name);
+        if (!stage || !stage.run_after || stage.run_after.length === 0) {
+          levels.set(name, 0);
+          return 0;
+        }
+        let maxParentLevel = 0;
+        stage.run_after.forEach(p => {
+          maxParentLevel = Math.max(maxParentLevel, getLevel(p, new Set(visited)));
+        });
+        const lvl = maxParentLevel + 1;
+        levels.set(name, lvl);
+        return lvl;
+      }
+
+      stages.forEach(s => getLevel(s.name));
+      return levels;
+    }
+
+    function getStageStatus(stageName) {
+      if (!PASSPORT_DATA || !PASSPORT_DATA.stamps) return "PENDING";
+      const stamps = PASSPORT_DATA.stamps.filter(st => st.stage_name === stageName);
+      if (stamps.length === 0) return "PENDING";
+      return stamps[stamps.length - 1].status;
+    }
+
+    function renderDag() {
+      const stages = WORKFLOW_DATA.stages || [];
+      const levels = computeLevels(stages);
+
+      const levelGroups = new Map();
+      stages.forEach(s => {
+        const lvl = levels.get(s.name) || 0;
+        if (!levelGroups.has(lvl)) levelGroups.set(lvl, []);
+        levelGroups.get(lvl).push(s);
+      });
+
+      nodePositions.clear();
+      const nodeWidth = 280;
+      const nodeHeight = 88;
+      const xSpacing = 320;
+      const ySpacing = 150;
+
+      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+
+      if (layoutOrientation === 'TB') {
+        // Vertical Layout (Top-to-Bottom)
+        levelGroups.forEach((group, lvl) => {
+          const count = group.length;
+          const totalWidth = (count - 1) * xSpacing;
+          const startX = 300 - (totalWidth / 2);
+          const y = lvl * ySpacing + 40;
+
+          group.forEach((stage, index) => {
+            const x = startX + index * xSpacing;
+            nodePositions.set(stage.name, { x, y, stage });
+
+            minX = Math.min(minX, x);
+            maxX = Math.max(maxX, x + nodeWidth);
+            minY = Math.min(minY, y);
+            maxY = Math.max(maxY, y + nodeHeight);
+          });
+        });
+      } else {
+        // Horizontal Layout (Left-to-Right)
+        levelGroups.forEach((group, lvl) => {
+          const count = group.length;
+          const totalHeight = (count - 1) * ySpacing;
+          const startY = 200 - (totalHeight / 2);
+          const x = lvl * xSpacing + 40;
+
+          group.forEach((stage, index) => {
+            const y = startY + index * ySpacing;
+            nodePositions.set(stage.name, { x, y, stage });
+
+            minX = Math.min(minX, x);
+            maxX = Math.max(maxX, x + nodeWidth);
+            minY = Math.min(minY, y);
+            maxY = Math.max(maxY, y + nodeHeight);
+          });
+        });
+      }
+
+      if (minX === Infinity) {
+        minX = 0; maxX = 800; minY = 0; maxY = 600;
+      }
+      graphBounds = { minX, maxX, minY, maxY };
+
+      const nodesContainer = document.getElementById("dag-nodes-container");
+      const edgesGroup = document.getElementById("edges-group");
+      nodesContainer.innerHTML = "";
+      edgesGroup.innerHTML = "";
+
+      // Draw SVG Edges
+      stages.forEach(stage => {
+        const targetPos = nodePositions.get(stage.name);
+        if (!targetPos) return;
+
+        (stage.run_after || []).forEach(parentName => {
+          const sourcePos = nodePositions.get(parentName);
+          if (!sourcePos) return;
+
+          let x1 = 0;
+          let y1 = 0;
+          let x2 = 0;
+          let y2 = 0;
+          let cx1 = 0;
+          let cy1 = 0;
+          let cx2 = 0;
+          let cy2 = 0;
+
+          if (layoutOrientation === 'TB') {
+            // Top to Bottom
+            x1 = sourcePos.x + nodeWidth / 2;
+            y1 = sourcePos.y + nodeHeight;
+            x2 = targetPos.x + nodeWidth / 2;
+            y2 = targetPos.y;
+            const midY = y1 + (y2 - y1) / 2;
+            cx1 = x1;
+            cy1 = midY;
+            cx2 = x2;
+            cy2 = midY;
+          } else {
+            // Left to Right
+            x1 = sourcePos.x + nodeWidth;
+            y1 = sourcePos.y + nodeHeight / 2;
+            x2 = targetPos.x;
+            y2 = targetPos.y + nodeHeight / 2;
+            const midX = x1 + (x2 - x1) / 2;
+            cx1 = midX;
+            cy1 = y1;
+            cx2 = midX;
+            cy2 = y2;
+          }
+
+          const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+          path.setAttribute("d", `M ${x1} ${y1} C ${cx1} ${cy1}, ${cx2} ${cy2}, ${x2} ${y2}`);
+          path.setAttribute("fill", "none");
+          path.setAttribute("stroke", stage.run_if ? "#f59e0b" : "#475569");
+          path.setAttribute("stroke-width", "2.5");
+          if (stage.run_if) {
+            path.setAttribute("stroke-dasharray", "5 5");
+            path.setAttribute("marker-end", "url(#arrow-cond)");
+          } else {
+            path.setAttribute("marker-end", "url(#arrow)");
+          }
+          edgesGroup.appendChild(path);
+
+          if (stage.run_if) {
+            const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+            text.setAttribute("x", (x1 + x2) / 2);
+            text.setAttribute("y", (y1 + y2) / 2 - 8);
+            text.setAttribute("fill", "#f59e0b");
+            text.setAttribute("font-size", "10");
+            text.setAttribute("font-family", "monospace");
+            text.setAttribute("text-anchor", "middle");
+            text.textContent = `if: ${stage.run_if}`;
+            edgesGroup.appendChild(text);
+          }
+        });
+      });
+
+      // Draw HTML Node Cards
+      nodePositions.forEach((pos, stageName) => {
+        const stage = pos.stage;
+        const status = getStageStatus(stageName);
+        let kind = "python_action";
+        let kindLabel = "Python Action";
+        let icon = "⚡";
+        let borderColor = "border-slate-700";
+        let accentBg = "bg-emerald-500/15 text-emerald-400 border border-emerald-500/30";
+
+        if (stage.operator_action) {
+          kind = "operator_action";
+          kindLabel = "Operator Action";
+          icon = "👤";
+          accentBg = "bg-amber-500/15 text-amber-300 border border-amber-500/30";
+          borderColor = "border-amber-500/40";
+        } else if (stage.polling_policy) {
+          kind = "polling_policy";
+          kindLabel = "Polling Policy";
+          icon = "↻";
+          accentBg = "bg-sky-500/15 text-sky-300 border border-sky-500/30";
+          borderColor = "border-sky-500/40";
+        }
+
+        let statusBorder = "";
+        let statusBadge = `<span class="text-[9px] px-1.5 py-0.5 rounded font-mono bg-slate-800 text-slate-400">PENDING</span>`;
+        if (status === "COMPLETED") {
+          statusBorder = "ring-2 ring-emerald-500/50 border-emerald-500/60";
+          statusBadge = `<span class="text-[9px] px-1.5 py-0.5 rounded font-mono bg-emerald-950 text-emerald-300 border border-emerald-800 font-semibold">DONE</span>`;
+        } else if (status === "PAUSED") {
+          statusBorder = "ring-2 ring-amber-500/60 border-amber-500 animate-pulse";
+          statusBadge = `<span class="text-[9px] px-1.5 py-0.5 rounded font-mono bg-amber-950 text-amber-300 border border-amber-800 font-semibold">PAUSED</span>`;
+        } else if (status === "FAILED") {
+          statusBorder = "ring-2 ring-rose-500 border-rose-600";
+          statusBadge = `<span class="text-[9px] px-1.5 py-0.5 rounded font-mono bg-rose-950 text-rose-300 border border-rose-800 font-semibold">FAILED</span>`;
+        } else if (status === "SKIPPED") {
+          statusBorder = "border-dashed border-slate-700 opacity-60";
+          statusBadge = `<span class="text-[9px] px-1.5 py-0.5 rounded font-mono bg-slate-900 text-slate-500">SKIPPED</span>`;
+        }
+
+        const isSelected = selectedStageName === stageName;
+        const selectRing = isSelected ? "ring-2 ring-sky-400 shadow-sky-500/20" : "";
+
+        const card = document.createElement("div");
+        card.id = `node-${stageName}`;
+        card.className = "absolute cursor-pointer transition-transform duration-150 hover:scale-[1.03] hover:z-20";
+        card.style.left = `${pos.x}px`;
+        card.style.top = `${pos.y}px`;
+        card.style.width = `${nodeWidth}px`;
+        card.style.height = `${nodeHeight}px`;
+
+        const safeName = escapeHtml(stage.name);
+        const safeAction = escapeHtml(stage.python_action ? stage.python_action.action_id : kindLabel);
+
+        card.innerHTML = `
+          <div class="w-full h-full bg-[var(--app-card,#131b2e)] border ${borderColor} ${statusBorder} ${selectRing} rounded-2xl p-3 shadow-lg hover:shadow-2xl flex flex-col justify-between">
+            <div class="flex items-start justify-between gap-1.5">
+              <div class="flex items-center gap-1.5 min-w-0">
+                <span class="text-sm shrink-0">${icon}</span>
+                <div class="font-bold text-xs text-[var(--app-foreground,#f1f5f9)] truncate font-mono" title="${safeName}">${safeName}</div>
+              </div>
+              ${statusBadge}
+            </div>
+            <div class="flex items-center justify-between text-[10px] text-[var(--app-muted-foreground,#94a3b8)] mt-1">
+              <span class="px-2 py-0.5 rounded-md ${accentBg} font-medium truncate max-w-[170px]">
+                ${safeAction}
+              </span>
+              ${stage.run_if ? '<span class="text-amber-400 font-mono text-[11px] font-semibold" title="Conditional">⚡if</span>' : ''}
+            </div>
+          </div>
+        `;
+        if (card.firstElementChild) {
+          card.firstElementChild.addEventListener("click", () => selectStage(stage.name));
+        }
+        nodesContainer.appendChild(card);
+      });
+    }
+
+    function selectStage(stageName) {
+      selectedStageName = stageName;
+      const stage = (WORKFLOW_DATA.stages || []).find(s => s.name === stageName);
+      if (!stage) return;
+
+      // Open inspector drawer
+      const drawer = document.getElementById("inspector-drawer");
+      drawer.classList.remove("hidden");
+      inspectorVisible = true;
+
+      // Update node active ring
+      document.querySelectorAll("[id^='node-'] > div").forEach(el => {
+        el.classList.remove("ring-2", "ring-sky-400", "shadow-sky-500/20");
+      });
+      const nodeEl = document.getElementById(`node-${stageName}`);
+      const activeCard = nodeEl ? nodeEl.firstElementChild : null;
+      if (activeCard) {
+        activeCard.classList.add("ring-2", "ring-sky-400", "shadow-sky-500/20");
+      }
+
+      document.getElementById("inspector-empty").classList.add("hidden");
+      document.getElementById("inspector-content").classList.remove("hidden");
+
+      document.getElementById("inspect-name").textContent = stage.name;
+      document.getElementById("inspect-desc").textContent = stage.description || "No description provided.";
+
+      const status = getStageStatus(stageName);
+      const statusBadge = document.getElementById("inspect-status-badge");
+      statusBadge.textContent = status;
+      document.getElementById("inspect-status").textContent = status;
+
+      let kind = "Python Action";
+      let icon = "⚡";
+      let detailsHtml = "";
+
+      if (stage.python_action) {
+        kind = "Python Action";
+        icon = "⚡";
+        detailsHtml = `
+          <div><span class="text-slate-400">Action ID:</span> <span class="font-mono text-emerald-400 font-bold">${escapeHtml(stage.python_action.action_id)}</span></div>
+        `;
+        if (stage.python_action.static_kwargs) {
+          detailsHtml += `
+            <div class="mt-2">
+              <span class="text-slate-400 font-semibold">Static Kwargs:</span>
+              <pre class="bg-slate-900 p-2 rounded text-[10px] text-slate-300 font-mono mt-1 overflow-x-auto">${escapeHtml(JSON.stringify(stage.python_action.static_kwargs, null, 2))}</pre>
+            </div>
+          `;
+        }
+      } else if (stage.operator_action) {
+        kind = "Operator Action";
+        icon = "👤";
+        detailsHtml = `
+          <div class="mt-1.5"><span class="text-slate-400 font-semibold">Instructions:</span> <div class="bg-slate-900 p-2 rounded text-amber-200 font-mono mt-1 whitespace-pre-wrap leading-relaxed">${escapeHtml(stage.operator_action.instructions || "None")}</div></div>
+          <div class="mt-1.5"><span class="text-slate-400">Output Namespace:</span> <span class="font-mono text-sky-300">payload.outputs.${escapeHtml(stage.name)}</span></div>
+          ${stage.operator_action.json_schema ? `<div class="mt-1.5"><span class="text-slate-400 font-semibold">Payload Schema:</span> <div class="bg-slate-900 p-2 rounded text-sky-200 font-mono mt-1 whitespace-pre-wrap leading-relaxed">${escapeHtml(stage.operator_action.json_schema)}</div></div>` : ''}
+        `;
+      }
+
+      if (stage.polling_policy) {
+        detailsHtml += `
+          <div class="mt-2 pt-2 border-t border-slate-800">
+            <span class="text-sky-400 font-bold">↻ Polling Policy:</span>
+            <div class="text-[10px] space-y-0.5 mt-1 text-slate-300">
+              <div>Condition: <code class="text-amber-300 font-mono">${escapeHtml(stage.polling_policy.condition || "None")}</code></div>
+              <div>Interval: ${stage.polling_policy.interval_seconds || 10}s | Timeout: ${stage.polling_policy.timeout_seconds || 3600}s</div>
+            </div>
+          </div>
+        `;
+      }
+
+      if (stage.retry_policy) {
+        detailsHtml += `
+          <div class="mt-2 pt-2 border-t border-slate-800">
+            <span class="text-indigo-400 font-bold">🔄 Retry Policy:</span>
+            <div class="text-[10px] space-y-0.5 mt-1 text-slate-300">
+              <div>Max Attempts: ${stage.retry_policy.max_attempts || 3} | Initial Backoff: ${stage.retry_policy.initial_backoff_seconds || 5}s</div>
+            </div>
+          </div>
+        `;
+      }
+
+      document.getElementById("inspect-type-icon").textContent = icon;
+      document.getElementById("inspect-kind").textContent = kind;
+      document.getElementById("inspect-action-details").innerHTML = detailsHtml;
+
+      const parents = stage.run_after && stage.run_after.length > 0 ? stage.run_after.join(", ") : "None (Root)";
+      document.getElementById("inspect-parents").textContent = parents;
+
+      const condBox = document.getElementById("inspect-condition-box");
+      if (stage.run_if) {
+        condBox.classList.remove("hidden");
+        document.getElementById("inspect-condition").textContent = stage.run_if;
+      } else {
+        condBox.classList.add("hidden");
+      }
+
+      const stampBox = document.getElementById("inspect-stamp-box");
+      const stampMsg = document.getElementById("inspect-stamp-msg");
+      const stamps = PASSPORT_DATA && PASSPORT_DATA.stamps ? PASSPORT_DATA.stamps.filter(st => st.stage_name === stageName) : [];
+      if (stamps.length > 0) {
+        stampBox.classList.remove("hidden");
+        const s = stamps[stamps.length - 1];
+        stampMsg.textContent = `[${s.timestamp || "N/A"}] Status: ${s.status}\n${s.message || "No execution message."}`;
+      } else {
+        stampBox.classList.add("hidden");
+      }
+    }
+
+    function renderTimeline() {
+      const list = document.getElementById("timeline-list");
+      list.innerHTML = "";
+      if (!PASSPORT_DATA || !PASSPORT_DATA.stamps || PASSPORT_DATA.stamps.length === 0) {
+        list.innerHTML = `<div class="text-xs text-slate-500 italic">No execution stamps recorded. Run the workflow to generate timeline logs.</div>`;
+        return;
+      }
+
+      PASSPORT_DATA.stamps.forEach((stamp, index) => {
+        const item = document.createElement("div");
+        item.className = "flex gap-3 items-start";
+        let dotColor = "bg-emerald-500";
+        if (stamp.status === "PAUSED") dotColor = "bg-amber-500 animate-pulse";
+        if (stamp.status === "FAILED") dotColor = "bg-rose-500";
+        if (stamp.status === "SKIPPED") dotColor = "bg-slate-500";
+
+        item.innerHTML = `
+          <div class="flex flex-col items-center">
+            <span class="w-3 h-3 rounded-full ${dotColor} mt-1"></span>
+            ${index < PASSPORT_DATA.stamps.length - 1 ? '<span class="w-0.5 h-12 bg-slate-800"></span>' : ''}
+          </div>
+          <div class="flex-1 bg-[var(--app-card,#131b2e)] border border-[var(--app-border,#334155)] rounded-2xl p-3.5 shadow-sm">
+            <div class="flex items-center justify-between">
+              <span class="font-bold text-xs text-[var(--app-foreground,#f1f5f9)] font-mono">${escapeHtml(stamp.stage_name)}</span>
+              <span class="text-[10px] font-mono text-[var(--app-muted-foreground,#94a3b8)]">${escapeHtml(stamp.timestamp || "")}</span>
+            </div>
+            <div class="text-xs text-slate-300 mt-1 leading-relaxed">${escapeHtml(stamp.message || "Executed successfully.")}</div>
+          </div>
+        `;
+        list.appendChild(item);
+      });
+    }
+
+    function renderPayload() {
+      const el = document.getElementById("payload-content");
+      if (PASSPORT_DATA && PASSPORT_DATA.payload) {
+        el.textContent = JSON.stringify(PASSPORT_DATA.payload, null, 2);
+      } else {
+        el.textContent = "{\n  // No active passport payload found\n}";
+      }
+    }
+
+    function renderRawManifest() {
+      document.getElementById("raw-manifest-content").textContent = JSON.stringify(WORKFLOW_DATA, null, 2);
+    }
+
+    function copyPayload() {
+      const text = document.getElementById("payload-content").textContent;
+      navigator.clipboard.writeText(text);
+    }
+
+    function updateTransform() {
+      const plane = document.getElementById("dag-plane");
+      if (!plane) return;
+      plane.style.transform = `translate(${panX}px, ${panY}px) scale(${currentScale})`;
+      const zoomBadge = document.getElementById("zoom-level");
+      if (zoomBadge) zoomBadge.textContent = `${Math.round(currentScale * 100)}%`;
+    }
+
+    function focusStart() {
+      const viewport = document.getElementById("view-graph");
+      const vpWidth = (viewport && viewport.clientWidth) ? viewport.clientWidth : 800;
+      currentScale = 0.9;
+
+      let firstRoot = null;
+      for (const [name, pos] of nodePositions) {
+        if (!pos.stage.run_after || pos.stage.run_after.length === 0) {
+          firstRoot = pos;
+          break;
+        }
+      }
+
+      if (firstRoot) {
+        panX = (vpWidth - 280 * currentScale) / 2 - firstRoot.x * currentScale;
+        panY = 30;
+      } else {
+        panX = (vpWidth - 280 * currentScale) / 2;
+        panY = 30;
+      }
+      updateTransform();
+    }
+
+    function fitView() {
+      const viewport = document.getElementById("view-graph");
+      const vpWidth = (viewport && viewport.clientWidth) ? viewport.clientWidth : 800;
+      const vpHeight = (viewport && viewport.clientHeight) ? viewport.clientHeight : 600;
+
+      const graphWidth = Math.max(graphBounds.maxX - graphBounds.minX, 300);
+      const graphHeight = Math.max(graphBounds.maxY - graphBounds.minY, 300);
+
+      const scaleX = (vpWidth - 60) / graphWidth;
+      const scaleY = (vpHeight - 60) / graphHeight;
+      currentScale = Math.min(Math.max(Math.min(scaleX, scaleY), 0.1), 1.0);
+
+      panX = (vpWidth - graphWidth * currentScale) / 2 - graphBounds.minX * currentScale;
+      panY = (vpHeight - graphHeight * currentScale) / 2 - graphBounds.minY * currentScale;
+
+      updateTransform();
+    }
+
+    function setupPanZoom() {
+      const viewport = document.getElementById("view-graph");
+      if (!viewport) return;
+
+      viewport.addEventListener("mousedown", (e) => {
+        if (e.target.closest("#dag-nodes-container") && !e.target.id.includes("dag-nodes-container")) return;
+        isDragging = true;
+        startX = e.clientX - panX;
+        startY = e.clientY - panY;
+      });
+
+      window.addEventListener("mousemove", (e) => {
+        if (!isDragging) return;
+        panX = e.clientX - startX;
+        panY = e.clientY - startY;
+        updateTransform();
+      });
+
+      window.addEventListener("mouseup", () => {
+        isDragging = false;
+      });
+
+      viewport.addEventListener("wheel", (e) => {
+        e.preventDefault();
+        if (e.ctrlKey || e.metaKey) {
+          // Zoom on Ctrl+Wheel / Pinch
+          const delta = e.deltaY > 0 ? 0.9 : 1.1;
+          const newScale = Math.min(Math.max(currentScale * delta, 0.08), 2.5);
+
+          const rect = viewport.getBoundingClientRect();
+          const mouseX = e.clientX - rect.left;
+          const mouseY = e.clientY - rect.top;
+
+          panX = mouseX - (mouseX - panX) * (newScale / currentScale);
+          panY = mouseY - (mouseY - panY) * (newScale / currentScale);
+          currentScale = newScale;
+        } else {
+          // Smooth vertical & horizontal scrolling
+          panY -= e.deltaY * 0.9;
+          panX -= e.deltaX * 0.9;
+        }
+        updateTransform();
+      }, { passive: false });
+
+      window.zoomIn = () => {
+        currentScale = Math.min(currentScale * 1.2, 2.5);
+        updateTransform();
+      };
+
+      window.zoomOut = () => {
+        currentScale = Math.max(currentScale / 1.2, 0.08);
+        updateTransform();
+      };
+
+      window.fitView = fitView;
+      window.focusStart = focusStart;
+
+      let resizeTimeout;
+      window.addEventListener("resize", () => {
+        clearTimeout(resizeTimeout);
+        resizeTimeout = setTimeout(() => {
+          if (document.getElementById("view-graph") && !selectedStageName) {
+            focusStart();
+          }
+        }, 150);
+      });
+    }
+
+    function onSearch(query) {
+      searchQuery = query.toLowerCase();
+      applyFilters();
+    }
+
+    function onFilterChange(type) {
+      typeFilter = type;
+      applyFilters();
+    }
+
+    function applyFilters() {
+      const stages = WORKFLOW_DATA.stages || [];
+      stages.forEach(s => {
+        const node = document.getElementById(`node-${s.name}`);
+        if (!node) return;
+
+        let matchesSearch = s.name.toLowerCase().includes(searchQuery) ||
+          (s.description && s.description.toLowerCase().includes(searchQuery)) ||
+          (s.python_action && s.python_action.action_id.toLowerCase().includes(searchQuery));
+
+        let matchesType = true;
+        if (typeFilter === "python_action") matchesType = !!s.python_action;
+        else if (typeFilter === "operator_action") matchesType = !!s.operator_action;
+        else if (typeFilter === "polling_policy") matchesType = !!s.polling_policy;
+
+        if (matchesSearch && matchesType) {
+          node.style.display = "";
+        } else {
+          node.style.display = "none";
+        }
+      });
+    }
+  </script>
+</body>
+</html>

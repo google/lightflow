@@ -1,0 +1,56 @@
+name: usgs_seismic_alert
+description: >-
+  Polls the live USGS M4.5+ global earthquake GeoJSON feed, pauses at an
+  incident commander approval gate showing the strongest event, and dispatches
+  a formatted Markdown bulletin.
+
+actions:
+  - id: fetch_usgs_feed
+    python_import: examples.usgs_seismic_alert.actions.fetch_usgs_feed
+  - id: emit_bulletin
+    python_import: examples.usgs_seismic_alert.actions.emit_bulletin
+
+stages:
+  - name: fetch_usgs_feed
+    description: Poll live USGS GeoJSON feed for M4.5+ seismic events
+    python_action:
+      action_id: fetch_usgs_feed
+      static_kwargs:
+        limit: 5
+    retry_policy:
+      max_attempts: 2
+      initial_backoff_seconds: 1
+
+  - name: incident_commander_gate
+    description: Operator triage checkpoint for peak seismic event
+    run_after:
+      - fetch_usgs_feed
+    run_if: "payload.outputs.fetch_usgs_feed.event_count > 0"
+    operator_action:
+      instructions: >-
+        'USGS reported ' + string(payload.outputs.fetch_usgs_feed.event_count) + ' M4.5+ event(s). Strongest: M' + string(payload.outputs.fetch_usgs_feed.max_magnitude) + ' at ' + payload.outputs.fetch_usgs_feed.strongest_place + '. Approve bulletin dispatch?'
+      json_schema:
+        type: object
+        required:
+          - severity
+        properties:
+          approved:
+            type: boolean
+          severity:
+            type: string
+            enum:
+              - INFO
+              - ADVISORY
+              - WATCH
+          output_path:
+            type: string
+
+  - name: emit_bulletin
+    description: Atomically write the approved seismic bulletin
+    run_after:
+      - incident_commander_gate
+    run_if: "payload.outputs.incident_commander_gate.approved == true"
+    python_action:
+      action_id: emit_bulletin
+      static_kwargs:
+        default_output: /tmp/usgs_bulletin.md

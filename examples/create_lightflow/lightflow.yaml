@@ -1,0 +1,119 @@
+name: create_lightflow
+description: >-
+  Meta-workflow ("A Lightflow to Create Lightflows") that staggers an AI agent
+  skill into three human/agent checkpoints backed by deterministic AST,
+  return-contract smoke tests, unit tests, and DAG output cross-checks.
+
+actions:
+  - id: verify_actions
+    python_import: examples.create_lightflow.actions.verify_actions
+  - id: validate_manifest_dry_run
+    python_import: examples.create_lightflow.actions.validate_manifest_dry_run
+
+stages:
+  - name: align_on_design
+    description: >-
+      Step 1: Align with the user on workflow stages, side-effect isolation,
+      operator gates, and stage output keys before writing code.
+    operator_action:
+      instructions: >-
+        'Step 1 (Align on Design & Contracts): Discuss with the user: (1) which stages are read/compute vs. external write/mutate stages (one side effect per stage so Passport checkpointing prevents duplicate mutations), (2) which stages pause at an operator_action gate, and (3) what output dictionary keys each stage produces under payload.outputs.<stage>. Once aligned, resolve this gate.'
+      json_schema:
+        type: object
+        required:
+          - target_dir
+          - workflow_name
+          - summary
+          - has_python_actions
+          - action_names
+        properties:
+          target_dir:
+            type: string
+            description: Directory where the new workflow files will be created
+          workflow_name:
+            type: string
+            description: Snake_case name of the workflow
+          summary:
+            type: string
+            description: Agreed summary of stages, gates, and output keys
+          has_python_actions:
+            type: boolean
+            description: True if the workflow includes Python action stages
+          action_names:
+            type: array
+            items:
+              type: string
+            description: List of Python action function names to implement
+
+  - name: implement_and_test_actions
+    description: >-
+      Step 2a: Agent writes Python actions returning consistent `(dict, str)`
+      output keys and unit tests / sample_payload.
+    run_after:
+      - align_on_design
+    run_if: "payload.outputs.align_on_design.has_python_actions == true"
+    operator_action:
+      instructions: >-
+        'Step 2 (Implement & Test Actions): In ' + payload.outputs.align_on_design.target_dir + ', write Python actions for ' + payload.outputs.align_on_design.workflow_name + '. Keep each stage focused on a single responsibility, ensure every return path (including any offline test mode) returns the exact same output dictionary keys, and write unit tests. Resolve this gate to run automated AST, return-contract, and unit test verification.'
+      json_schema:
+        type: object
+        required:
+          - actions_file
+        properties:
+          actions_file:
+            type: string
+            description: Relative filename of the Python actions module (e.g. actions.py)
+          test_file:
+            type: string
+            description: Optional relative filename of the unittest module (e.g. test_actions.py)
+          sample_payload:
+            type: object
+            description: 'Optional sample payload dictionary (include offline=true for mutating actions) to smoke-test action return contracts `(dict, str)`'
+          idempotent_confirmed:
+            type: boolean
+            description: Optional confirmation that write stages are safe to retry on failure
+
+  - name: verify_actions
+    description: >-
+      Step 2b: Deterministic AST, sample_payload return-contract check, and
+      unittest runner.
+    run_after:
+      - implement_and_test_actions
+    run_if: "payload.outputs.align_on_design.has_python_actions == true"
+    python_action:
+      action_id: verify_actions
+
+  - name: draft_and_explain_manifest
+    description: >-
+      Step 3a: Agent authors lightflow.yaml and explains the DAG topology and
+      gates to the user.
+    run_after:
+      - verify_actions
+    trigger_rule: ALL_DONE
+    run_if: "payload.outputs.align_on_design.has_python_actions == false || has(payload.outputs.verify_actions.verified_actions)"
+    operator_action:
+      instructions: >-
+        'Step 3 (Draft & Explain Manifest): Create lightflow.yaml in ' + payload.outputs.align_on_design.target_dir + ' for ' + payload.outputs.align_on_design.workflow_name + '. Ensure every payload.outputs.<stage>.<key> expression references an upstream stage in run_after. Explain the DAG to the user and resolve this gate to run automated dry_run validation and generate visualizer.html.'
+      json_schema:
+        type: object
+        required:
+          - manifest_file
+          - explained_to_user
+        properties:
+          manifest_file:
+            type: string
+            description: Relative filename of the manifest (e.g. lightflow.yaml)
+          explained_to_user:
+            type: boolean
+            enum:
+              - true
+
+  - name: prove_manifest_dry_run
+    description: >-
+      Step 3b: Compiles the manifest, cross-checks payload.outputs.<stage>
+      against run_after, verifies action imports, runs dry_run, and generates
+      visualizer.html.
+    run_after:
+      - draft_and_explain_manifest
+    python_action:
+      action_id: validate_manifest_dry_run

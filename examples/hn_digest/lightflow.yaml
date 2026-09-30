@@ -1,0 +1,50 @@
+name: hn_digest
+description: >-
+  Fetches live top stories from the public Hacker News Firebase API, pauses at
+  a human/agent editorial gate with dynamic story previews, and publishes an
+  idempotent Markdown briefing.
+
+actions:
+  - id: fetch_top_stories
+    python_import: examples.hn_digest.actions.fetch_top_stories
+  - id: publish_digest
+    python_import: examples.hn_digest.actions.publish_digest
+
+stages:
+  - name: fetch_top_stories
+    description: Fetch live top stories from the Hacker News Firebase API
+    python_action:
+      action_id: fetch_top_stories
+      static_kwargs:
+        limit: 5
+    retry_policy:
+      max_attempts: 3
+      initial_backoff_seconds: 1
+      backoff_multiplier: 2.0
+
+  - name: editorial_gate
+    description: Human/agent editorial review and commentary checkpoint
+    run_after:
+      - fetch_top_stories
+    operator_action:
+      instructions: >-
+        'Fetched ' + string(payload.outputs.fetch_top_stories.count) + ' Hacker News stories (Top: "' + payload.outputs.fetch_top_stories.top_title + '" [' + string(payload.outputs.fetch_top_stories.top_score) + ' pts]). Approve publishing digest and attach an optional editor_note:'
+      json_schema:
+        type: object
+        properties:
+          approved:
+            type: boolean
+          editor_note:
+            type: string
+          output_path:
+            type: string
+
+  - name: publish_digest
+    description: Write the curated Markdown digest atomically to disk
+    run_after:
+      - editorial_gate
+    run_if: "payload.outputs.editorial_gate.approved == true"
+    python_action:
+      action_id: publish_digest
+      static_kwargs:
+        default_output: /tmp/hn_digest.md

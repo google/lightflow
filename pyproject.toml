@@ -1,0 +1,58 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lightflow-dag"
+version = "0.1.0"
+description = "Lightweight, local-first deterministic DAG workflow engine and human-in-the-loop guardrails for AI agents."
+readme = "README.md"
+license = {text = "Apache-2.0"}
+requires-python = ">=3.10"
+authors = [
+  {name = "Google LLC"}
+]
+keywords = [
+  "ai-agents",
+  "workflow",
+  "dag",
+  "human-in-the-loop",
+  "mcp",
+  "claude",
+  "antigravity"
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: Apache Software License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+]
+dependencies = [
+  "jsonschema>=4.17.0",
+  "PyYAML>=6.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/google/lightflow"
+Repository = "https://github.com/google/lightflow"
+Issues = "https://github.com/google/lightflow/issues"
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=7.0.0",
+]
+
+[project.scripts]
+lightflow = "lightflow.runner:run_cli"
+lightflow-mcp = "lightflow.mcp_server:main"
+
+[tool.setuptools]
+packages = ["lightflow"]
+
+[tool.setuptools.package-data]
+lightflow = ["visualizer.html"]

@@ -1,0 +1,49 @@
+name: async_job_watcher
+description: >-
+  Spawns a detached background process that completes after a random 10-20s
+  duration, polls its status file using polling_policy until READY, verifies
+  the exported artifact, and cleans up temporary files with trigger_rule:
+  ALL_DONE.
+
+actions:
+  - id: spawn_background_job
+    python_import: examples.async_job_watcher.actions.spawn_background_job
+  - id: check_job_status_file
+    python_import: examples.async_job_watcher.actions.check_job_status_file
+  - id: verify_exported_artifact
+    python_import: examples.async_job_watcher.actions.verify_exported_artifact
+  - id: cleanup_job_status_file
+    python_import: examples.async_job_watcher.actions.cleanup_job_status_file
+
+stages:
+  - name: spawn_background_job
+    description: Launch a detached background export worker with a random 10-20s duration
+    python_action:
+      action_id: spawn_background_job
+
+  - name: await_job_completion
+    description: Poll the worker status file every 3s until job_status == 'READY'
+    run_after:
+      - spawn_background_job
+    polling_policy:
+      condition: "payload.outputs.await_job_completion.job_status == 'READY'"
+      interval_seconds: 3
+      timeout_seconds: 30
+      poll_tick_action:
+        action_id: check_job_status_file
+
+  - name: verify_exported_artifact
+    description: Verify row count and SHA-256 digest once polling succeeds
+    run_after:
+      - await_job_completion
+    python_action:
+      action_id: verify_exported_artifact
+
+  - name: cleanup_job_status_file
+    description: Always clean up completed temporary status files (ALL_DONE)
+    run_after:
+      - verify_exported_artifact
+    trigger_rule: ALL_DONE
+    run_if: "payload.outputs.await_job_completion.job_status == 'READY'"
+    python_action:
+      action_id: cleanup_job_status_file
