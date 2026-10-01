@@ -313,6 +313,99 @@ stages:
             wf.stages, f"{name}: fallback parser produced no stages"
         )
 
+  def test_allowed_import_prefixes_blocks_manifest_local_module_shadowing(
+      self,
+  ) -> None:
+    """When allowed_import_prefixes is set, manifest-local files cannot shadow allowlisted packages."""
+    with tempfile.TemporaryDirectory() as tmp:
+      trusted_root = os.path.join(tmp, "trusted_site_pkgs")
+      trusted_pkg = os.path.join(trusted_root, "trusted_allowlisted_pkg")
+      os.makedirs(trusted_pkg)
+      with open(
+          os.path.join(trusted_pkg, "__init__.py"), "w", encoding="utf-8"
+      ) as f:
+        f.write("")
+      with open(
+          os.path.join(trusted_pkg, "actions.py"), "w", encoding="utf-8"
+      ) as f:
+        f.write(
+            "def safe_action(payload, **kw):\n"
+            "  return {'trusted': True}, 'TRUSTED_EXECUTED'\n"
+        )
+
+      untrusted_dir = os.path.join(tmp, "untrusted_manifest_dir")
+      evil_pkg = os.path.join(untrusted_dir, "trusted_allowlisted_pkg")
+      os.makedirs(evil_pkg)
+      with open(
+          os.path.join(evil_pkg, "__init__.py"), "w", encoding="utf-8"
+      ) as f:
+        f.write("")
+      with open(
+          os.path.join(evil_pkg, "actions.py"), "w", encoding="utf-8"
+      ) as f:
+        f.write(
+            "def safe_action(payload, **kw):\n"
+            "  return {'shadowed': True}, 'EVIL_SHADOW_EXECUTED'\n"
+        )
+      manifest_path = os.path.join(untrusted_dir, "lightflow.yaml")
+      with open(manifest_path, "w", encoding="utf-8") as f:
+        f.write(
+            "name: shadow_test\n"
+            "actions:\n"
+            "  - id: safe_action\n"
+            "    python_import: trusted_allowlisted_pkg.actions.safe_action\n"
+            "stages:\n"
+            "  - name: s1\n"
+            "    python_action:\n"
+            "      action_id: safe_action\n"
+        )
+
+      sys.path.insert(0, trusted_root)
+      try:
+        wf = schema.load_lightflow(manifest_path)
+        eng = engine.LightflowEngine(
+            wf,
+            workflow_path=manifest_path,
+            allowed_import_prefixes=["trusted_allowlisted_pkg"],
+        )
+        passport = schema.Passport(payload=schema.StructDict({}))
+        eng.execute_stage("s1", passport)
+        self.assertNotIn("shadowed", passport.payload)
+        self.assertTrue(passport.payload.get("trusted"))
+      finally:
+        if trusted_root in sys.path:
+          sys.path.remove(trusted_root)
+        for mod_name in list(sys.modules):
+          if mod_name == "trusted_allowlisted_pkg" or mod_name.startswith(
+              "trusted_allowlisted_pkg."
+          ):
+            sys.modules.pop(mod_name, None)
+
+  def test_manifest_rejects_unknown_fields_with_did_you_mean_hint(self) -> None:
+    with self.assertRaisesRegex(
+        ValueError, r"Unknown field 'run_aftr'.*Did you mean 'run_after'\?"
+    ):
+      schema.Stage.from_dict({"name": "s1", "run_aftr": ["s0"]})
+
+    with self.assertRaisesRegex(
+        ValueError,
+        r"Unknown field 'max_attemps'.*Did you mean 'max_attempts'\?",
+    ):
+      schema.RetryPolicy.from_dict({"max_attemps": 3})
+
+    with self.assertRaisesRegex(
+        ValueError,
+        r"Unknown field 'python_imports'.*Did you mean 'python_import'\?",
+    ):
+      schema.ActionDefinition.from_dict(
+          {"id": "a1", "python_imports": "pkg.mod.fn"}
+      )
+
+    with self.assertRaisesRegex(
+        ValueError, r"Unknown field 'stags'.*Did you mean 'stages'\?"
+    ):
+      schema.Lightflow.from_dict({"name": "wf", "stags": []})
+
 
 if __name__ == "__main__":
   unittest.main()

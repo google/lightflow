@@ -33,7 +33,7 @@ _FALLBACK_STORIES = [
         "title": "Show HN: Deterministic DAG Guardrails for CLI AI Agents",
         "url": "https://github.com/google/lightflow",
         "score": 342,
-        "by": "pg",
+        "by": "demo_author",
     },
     {
         "id": 40000002,

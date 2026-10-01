@@ -124,7 +124,9 @@ code** and review them like you would a script. For manifests authored by an
 agent, set `LIGHTFLOW_ALLOWED_IMPORT_PREFIXES` to a comma-separated list of
 module prefixes (e.g.
 `LIGHTFLOW_ALLOWED_IMPORT_PREFIXES=my_pkg.actions,examples`) and the engine will
-refuse to import any action outside those prefixes.
+refuse to import any action outside those prefixes, while disabling
+manifest-local `sys.path` injection and module eviction so an untrusted manifest
+directory cannot shadow allowlisted packages.
 
 --------------------------------------------------------------------------------
 

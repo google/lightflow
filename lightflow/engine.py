@@ -1195,58 +1195,59 @@ class LightflowEngine:
             f" reasons. Allowed prefixes: {self.allowed_import_prefixes}."
         )
 
-    candidate_dirs = [os.getcwd()]
-    local_roots: list[str] = []
-    if self.workflow_path:
-      resolved_wf = schema.resolve_lightflow_path(self.workflow_path)
-      wf_dir = os.path.dirname(os.path.abspath(resolved_wf))
-      pkg_root = wf_dir
-      while os.path.isfile(os.path.join(pkg_root, "__init__.py")):
-        parent = os.path.dirname(pkg_root)
-        if parent == pkg_root:
-          break
-        pkg_root = parent
-      if pkg_root != wf_dir:
-        candidate_dirs.insert(0, pkg_root)
-        local_roots.append(pkg_root)
-      candidate_dirs.insert(0, wf_dir)
-      local_roots.insert(0, wf_dir)
-    for candidate_dir in reversed(candidate_dirs):
-      if candidate_dir and os.path.isdir(candidate_dir):
-        if candidate_dir in sys.path:
-          sys.path.remove(candidate_dir)
-        sys.path.insert(0, candidate_dir)
+    if self.allowed_import_prefixes is None:
+      candidate_dirs = [os.getcwd()]
+      local_roots: list[str] = []
+      if self.workflow_path:
+        resolved_wf = schema.resolve_lightflow_path(self.workflow_path)
+        wf_dir = os.path.dirname(os.path.abspath(resolved_wf))
+        pkg_root = wf_dir
+        while os.path.isfile(os.path.join(pkg_root, "__init__.py")):
+          parent = os.path.dirname(pkg_root)
+          if parent == pkg_root:
+            break
+          pkg_root = parent
+        if pkg_root != wf_dir:
+          candidate_dirs.insert(0, pkg_root)
+          local_roots.append(pkg_root)
+        candidate_dirs.insert(0, wf_dir)
+        local_roots.insert(0, wf_dir)
+      for candidate_dir in reversed(candidate_dirs):
+        if candidate_dir and os.path.isdir(candidate_dir):
+          if candidate_dir in sys.path:
+            sys.path.remove(candidate_dir)
+          sys.path.insert(0, candidate_dir)
 
-    for root in local_roots:
-      local_py = os.path.join(root, *parts) + ".py"
-      local_pkg = os.path.join(root, *parts, "__init__.py")
-      top_pkg = parts[0]
-      top_pkg_init = os.path.join(root, top_pkg, "__init__.py")
-      if (
-          os.path.isfile(local_py)
-          or os.path.isfile(local_pkg)
-          or os.path.isfile(top_pkg_init)
-      ):
-        existing = sys.modules.get(module_path) or sys.modules.get(top_pkg)
-        existing_file = (
-            getattr(existing, "__file__", None) if existing else None
-        )
-        if existing is not None:
-          try:
-            in_same_root = bool(existing_file) and (
-                os.path.commonpath(
-                    [os.path.realpath(root), os.path.realpath(existing_file)]
-                )
-                == os.path.realpath(root)
-            )
-          except ValueError:
-            in_same_root = False
-          if not in_same_root:
-            for mod_name in list(sys.modules):
-              if mod_name == top_pkg or mod_name.startswith(top_pkg + "."):
-                sys.modules.pop(mod_name, None)
-            importlib.invalidate_caches()
-        break
+      for root in local_roots:
+        local_py = os.path.join(root, *parts) + ".py"
+        local_pkg = os.path.join(root, *parts, "__init__.py")
+        top_pkg = parts[0]
+        top_pkg_init = os.path.join(root, top_pkg, "__init__.py")
+        if (
+            os.path.isfile(local_py)
+            or os.path.isfile(local_pkg)
+            or os.path.isfile(top_pkg_init)
+        ):
+          existing = sys.modules.get(module_path) or sys.modules.get(top_pkg)
+          existing_file = (
+              getattr(existing, "__file__", None) if existing else None
+          )
+          if existing is not None:
+            try:
+              in_same_root = bool(existing_file) and (
+                  os.path.commonpath(
+                      [os.path.realpath(root), os.path.realpath(existing_file)]
+                  )
+                  == os.path.realpath(root)
+              )
+            except ValueError:
+              in_same_root = False
+            if not in_same_root:
+              for mod_name in list(sys.modules):
+                if mod_name == top_pkg or mod_name.startswith(top_pkg + "."):
+                  sys.modules.pop(mod_name, None)
+              importlib.invalidate_caches()
+          break
 
     module = importlib.import_module(module_path)
     func = getattr(module, func_name)

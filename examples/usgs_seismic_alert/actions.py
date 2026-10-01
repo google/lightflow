@@ -83,11 +83,15 @@ def fetch_usgs_feed(
         "dry_run" if (dry_run or payload.get("dry_run")) else "offline_fixture"
     )
 
-  if not events:
-    events = list(_FALLBACK_EVENTS[:max_items])
-    source = "offline_fallback"
-
-  strongest = events[0]
+  strongest = (
+      events[0]
+      if events
+      else {
+          "magnitude": 0.0,
+          "place": "None",
+          "url": "https://earthquake.usgs.gov",
+      }
+  )
   return {
       "events": events,
       "event_count": len(events),

@@ -28,7 +28,7 @@ Two fresh zero-context LLM subagents executed the exact same end-to-end workflow
 
 | Metric | Arm A: Lightflow DAG (`N=1` Cold Start incl. `run_lightflows/SKILL.md`) | Arm B: Unstructured Execution (No Lightflow CLI) | Delta |
 | :--- | :---: | :---: | :---: |
-| **Total Tool Calls** | **5** (`1 view_file` + `4 CLI`) | **7** (`2 view_file` + `5 python -c`) | **29% fewer calls** |
+| **Total Tool Calls** | **5** (`1 skill read` + `4 CLI`) | **7** (`2 file reads` + `5 python -c`) | **29% fewer calls** |
 | **Agent-Generated Tool Inputs (Output Tokens)** | **3,229 ch (~807 tok)** | **9,483 ch (~2,371 tok)** | **66% fewer output tokens ($2.9\times$ smaller)** |
 | **Agent Thinking / Reasoning** | **1,093 ch (~273 tok)** | **1,675 ch (~419 tok)** | **35% fewer reasoning tokens** |
 | **End-of-Run Transcript Size** | **16,315 ch (~4,079 tok)** | **24,255 ch (~6,064 tok)** | **33% smaller transcript** |
@@ -43,13 +43,13 @@ Two fresh zero-context LLM subagents executed the exact same end-to-end workflow
 
 | Workflow | CLI Calls | Warm Runtime (`cmd + stdout`) | Cold Start (`N=1` incl. `SKILL.md`) | Multi-Turn Cumulative | Out-of-Context State (`passport.json`) | Source Avoided (`yaml + actions.py`) | Zero-Context Savings (Warm) |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| [`hn_digest`](../examples/hn_digest/) | 3 | 1,559 ch (~**390 tok**) | 5,615 ch (~1,404 tok) | ~1,030 tok | 4,207 ch (~1,052 tok) | 7,378 ch (~1,844 tok) | **83%** |
-| [`usgs_seismic_alert`](../examples/usgs_seismic_alert/) | 3 | 1,512 ch (~**378 tok**) | 5,568 ch (~1,392 tok) | ~981 tok | 3,362 ch (~840 tok) | 6,747 ch (~1,687 tok) | **82%** |
-| [`pypi_upgrade_guard`](../examples/pypi_upgrade_guard/) *(incl. fail + rollback + recovery)* | 4 | 2,603 ch (~**651 tok**) | 6,659 ch (~1,665 tok) | ~2,101 tok | 5,967 ch (~1,492 tok) | 7,867 ch (~1,967 tok) | **75%** |
+| [`hn_digest`](../examples/hn_digest/) | 3 | 1,559 ch (~**390 tok**) | 5,615 ch (~1,404 tok) | ~1,030 tok | 4,225 ch (~1,056 tok) | 7,387 ch (~1,847 tok) | **83%** |
+| [`usgs_seismic_alert`](../examples/usgs_seismic_alert/) | 3 | 1,512 ch (~**378 tok**) | 5,568 ch (~1,392 tok) | ~981 tok | 3,362 ch (~840 tok) | 6,801 ch (~1,700 tok) | **82%** |
+| [`pypi_upgrade_guard`](../examples/pypi_upgrade_guard/) *(incl. fail + rollback + recovery)* | 4 | 2,579 ch (~**645 tok**) | 6,635 ch (~1,659 tok) | ~2,084 tok | 5,895 ch (~1,474 tok) | 8,375 ch (~2,094 tok) | **76%** |
 | [`async_job_watcher`](../examples/async_job_watcher/) | 2 | 843 ch (~**211 tok**) | 4,899 ch (~1,225 tok) | ~399 tok | 2,525 ch (~631 tok) | 10,213 ch (~2,553 tok) | **92%** |
 | [`create_lightflow`](../examples/create_lightflow/) *(3 gates + 2 verifiers + authored files)* | 5 | 6,220 ch (~**1,555 tok**) | 15,917 ch (~3,979 tok) | ~5,722 tok | 6,925 ch (~1,731 tok) | 18,273 ch (~4,568 tok) | **75%** |
-| **Total (5 workflows, warm)** | **17** | **12,737 ch (~3,184 tok)** | — | **~10,233 tok** | **22,986 ch (~5,746 tok)** | **50,478 ch (~12,620 tok)** | **80%** |
-| **Session Total (`N=5`, cold start incl. both `SKILL.md`s)** | **17 + 2 reads** | — | **22,434 ch (~5,608 tok)** | — | **22,986 ch (~5,746 tok)** | **50,478 ch (~12,620 tok)** | **69%** |
+| **Total (5 workflows, warm)** | **17** | **12,713 ch (~3,178 tok)** | — | **~10,216 tok** | **22,932 ch (~5,733 tok)** | **51,049 ch (~12,762 tok)** | **80%** |
+| **Session Total (`N=5`, cold start incl. both `SKILL.md`s)** | **17 + 2 reads** | — | **22,410 ch (~5,602 tok)** | — | **22,932 ch (~5,733 tok)** | **51,049 ch (~12,762 tok)** | **69%** |
 
 ---
 
@@ -63,4 +63,4 @@ Two fresh zero-context LLM subagents executed the exact same end-to-end workflow
    - Because `run_lightflows/SKILL.md` is generic across all Lightflow workflows, its ~1,014-token cost is paid **once per session** rather than once per workflow.
 3. **Definition of `Zero-Context Savings`**:
    - Defined as $\frac{\text{Source Avoided}}{\text{Runtime Context} + \text{Source Avoided}}$, comparing an agent that follows the Zero-Context Entry Rule (`lightflow start` directly) against a white-box coding agent that reads `lightflow.yaml` + `actions.py` before executing the workflow.
-   - Note that a traditional prompt-only skill would not paste Python source files into a prompt; instead, without `passport.json` persisting intermediate data on disk (`22,986 chars / ~5,746 tokens` across the 5 runs), intermediate step outputs (`payload.outputs.<stage>`) must pass through tool `stdout` into the LLM conversation history—or the skill author must hand-roll custom state files, `--step` flags, and rollback glue per skill.
+   - Note that a traditional prompt-only skill would not paste Python source files into a prompt; instead, without `passport.json` persisting intermediate data on disk (`22,932 chars / ~5,733 tokens` across the 5 runs), intermediate step outputs (`payload.outputs.<stage>`) must pass through tool `stdout` into the LLM conversation history—or the skill author must hand-roll custom state files, `--step` flags, and rollback glue per skill.

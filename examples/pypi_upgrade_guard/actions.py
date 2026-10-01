@@ -115,7 +115,11 @@ def apply_and_smoke_test(
   )
 
   req_path = os.path.abspath(
-      str(gate.get("requirements_path") or default_requirements_path)
+      str(
+          gate.get("requirements_path")
+          or payload.get("requirements_path")
+          or default_requirements_path
+      )
   )
   backup_path = f"{req_path}.bak"
 
@@ -130,14 +134,23 @@ def apply_and_smoke_test(
     )
 
   os.makedirs(os.path.dirname(req_path) or ".", exist_ok=True)
+  existing_pins: dict[str, str] = {}
   if not os.path.exists(req_path):
     with open(req_path, "w", encoding="utf-8") as f:
       for pkg, ver in pinned.items():
         f.write(f"{pkg}=={ver}\n")
+  else:
+    with open(req_path, "r", encoding="utf-8") as f:
+      for raw_line in f:
+        line = raw_line.strip()
+        if line and not line.startswith("#") and "==" in line:
+          pkg_name, pkg_ver = line.split("==", 1)
+          existing_pins[pkg_name.strip()] = pkg_ver.strip()
 
   shutil.copy2(req_path, backup_path)
 
-  updated = dict(pinned)
+  updated = dict(existing_pins)
+  updated.update(pinned)
   for u in upgrades:
     updated[u["package"]] = u["to"]
 
@@ -183,7 +196,11 @@ def restore_requirements_backup(
       outputs.get("approve_upgrades") or payload.get("upgrade_gate") or payload
   )
   req_path = os.path.abspath(
-      str(gate.get("requirements_path") or default_requirements_path)
+      str(
+          gate.get("requirements_path")
+          or payload.get("requirements_path")
+          or default_requirements_path
+      )
   )
   backup_path = f"{req_path}.bak"
 

@@ -29,6 +29,7 @@ import dataclasses
 dataclass = dataclasses.dataclass
 field = dataclasses.field
 import datetime
+import difflib
 import enum
 import json
 import os
@@ -39,6 +40,27 @@ try:
   import yaml
 except ImportError:
   yaml = None
+
+
+def _reject_unknown_keys(
+    data: dict[str, Any], allowed: set[str], context: str
+) -> None:
+  """Raises ValueError if `data` contains keys outside `allowed`."""
+  if not isinstance(data, dict):
+    return
+  unknown = sorted(set(data.keys()) - allowed)
+  if not unknown:
+    return
+  key = unknown[0]
+  matches = difflib.get_close_matches(
+      str(key), sorted(allowed), n=1, cutoff=0.6
+  )
+  hint = f" Did you mean '{matches[0]}'?" if matches else ""
+  allowed_list = ", ".join(sorted(allowed))
+  raise ValueError(
+      f"Unknown field '{key}' in {context}.{hint} Allowed fields:"
+      f" {allowed_list}."
+  )
 
 
 class TriggerRule(enum.IntEnum):
@@ -211,6 +233,7 @@ class PythonAction:
   def from_dict(cls, data: dict[str, Any]) -> PythonAction:
     if not data:
       return cls()
+    _reject_unknown_keys(data, {"action_id", "static_kwargs"}, "PythonAction")
     raw_kwargs = data.get("static_kwargs", {})
     normalized_kwargs = _unwrap_proto_struct_fields(raw_kwargs)
     return cls(
@@ -240,6 +263,9 @@ class OperatorAction:
   def from_dict(cls, data: dict[str, Any]) -> OperatorAction:
     if not data:
       return cls()
+    _reject_unknown_keys(
+        data, {"instructions", "json_schema"}, "OperatorAction"
+    )
     schema_val = data.get("json_schema", "")
     if isinstance(schema_val, dict):
       schema_val = json.dumps(schema_val)
@@ -274,6 +300,11 @@ class RetryPolicy:
   def from_dict(cls, data: dict[str, Any]) -> RetryPolicy:
     if not data:
       return cls()
+    _reject_unknown_keys(
+        data,
+        {"max_attempts", "initial_backoff_seconds", "backoff_multiplier"},
+        "RetryPolicy",
+    )
     return cls(
         max_attempts=(
             int(data["max_attempts"])
@@ -327,6 +358,17 @@ class PollingPolicy:
   def from_dict(cls, data: dict[str, Any]) -> PollingPolicy:
     if not data:
       return cls()
+    _reject_unknown_keys(
+        data,
+        {
+            "condition",
+            "interval_seconds",
+            "timeout_seconds",
+            "max_attempts",
+            "poll_tick_action",
+        },
+        "PollingPolicy",
+    )
     tick = data.get("poll_tick_action")
     return cls(
         condition=str(data.get("condition", "")),
@@ -413,6 +455,24 @@ class Stage:
   def from_dict(cls, data: dict[str, Any]) -> Stage:
     if not data:
       return cls()
+    _reject_unknown_keys(
+        data,
+        {
+            "name",
+            "description",
+            "run_after",
+            "python_action",
+            "operator_action",
+            "run_if",
+            "trigger_rule",
+            "retry_policy",
+            "polling_policy",
+            "rollback_action",
+            "metadata",
+            "timeout_seconds",
+        },
+        f"Stage '{data.get('name', '<unnamed>')}'",
+    )
     run_after_raw = data.get("run_after", [])
     if isinstance(run_after_raw, str):
       run_after = [run_after_raw]
@@ -485,6 +545,9 @@ class ActionDefinition:
 
   @classmethod
   def from_dict(cls, data: dict[str, Any]) -> ActionDefinition:
+    if not data:
+      return cls()
+    _reject_unknown_keys(data, {"id", "python_import"}, "ActionDefinition")
     return cls(
         id=str(data.get("id", "")),
         python_import=str(data.get("python_import", "")),
@@ -520,6 +583,18 @@ class Lightflow:
   def from_dict(cls, data: dict[str, Any]) -> Lightflow:
     if not data:
       return cls()
+    _reject_unknown_keys(
+        data,
+        {
+            "name",
+            "description",
+            "actions",
+            "stages",
+            "metadata",
+            "runner_target",
+        },
+        "Lightflow",
+    )
     raw_actions = data.get("actions", [])
     actions_list: list[ActionDefinition] = []
     if isinstance(raw_actions, dict):
@@ -530,6 +605,9 @@ class Lightflow:
               ActionDefinition(id=str(act_id), python_import=py_imp)
           )
         elif isinstance(py_imp, dict):
+          _reject_unknown_keys(
+              py_imp, {"python_import"}, f"ActionDefinition '{act_id}'"
+          )
           actions_list.append(
               ActionDefinition(
                   id=str(act_id),
