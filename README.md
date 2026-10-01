@@ -3,20 +3,17 @@
 # Lightflow: Deterministic DAG Workflow Engine for AI Agents
 
 **Lightflow** is a lightweight, local-first workflow compiler and execution
-engine designed to coordinate multi-step processes between AI agents (Claude
-Code, Claude Desktop, Gemini CLI, Cursor) and human operators safely and
-reliably.
+engine that gives AI agents a structural backbone for multi-step
+workflows—turning steps an agent would otherwise follow from prose instructions
+into an explicit DAG of `python_action` stages and `operator_action` checkpoints
+with dependencies, retries, and rollbacks enforced by the engine.
 
-Distributed orchestrators (Airflow, Temporal) run on servers and databases;
-agent graph libraries (LangGraph) run inside your Python process. Lightflow
-instead works across process boundaries: every step is a plain CLI command that
-an agent or a human can run, pause, and resume. Think of a workflow as a skill
-with a structural backbone—turning steps an agent would otherwise follow from
-prose instructions into explicit stages with dependencies, retries, and approval
-gates enforced by the engine. Rather than burying "ask before step 7" inside a
-twelve-step prompt blob where context decay and momentum cause agents to skip
-ahead, Lightflow halts the process (`exit 2`) and delivers each checkpoint as a
-fresh, dedicated turn at the exact moment of decision. It provides **zero-daemon,
+Every step runs across process boundaries as a plain CLI command that an agent
+or operator can start, pause, and resume against a single append-only JSON
+ledger (`passport.json`). Rather than burying *"ask before step 7"* inside a
+long prompt blob where context decay and momentum cause agents to skip ahead,
+Lightflow halts the process (`exit 2`) and delivers each checkpoint as a fresh,
+dedicated turn at the exact moment of decision. It provides **zero-daemon,
 append-only state guardrails** in pure Python—depending only on `PyYAML` and
 `jsonschema`, with built-in standard-library fallbacks when running directly
 from a checkout.
