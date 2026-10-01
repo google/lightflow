@@ -177,6 +177,7 @@ class BenchmarkRunner:
     self.env["PYTHONPATH"] = _OSS_ROOT
     self.env["LIGHTFLOW_STATE_DIR"] = self.state_dir
     self.env.pop("ANTIGRAVITY_CONVERSATION_ID", None)
+    self.env.pop("LIGHTFLOW_OPERATOR", None)
 
   def close(self) -> None:
     shutil.rmtree(self.state_dir, ignore_errors=True)

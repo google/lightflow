@@ -153,11 +153,18 @@ def _unlock(fd: Any) -> None:
 
 
 def _current_operator() -> str:
-  """Returns the invoking user, for stamp attribution."""
+  """Returns the invoking operator identity (with agent session provenance if set)."""
+  explicit = os.environ.get("LIGHTFLOW_OPERATOR", "").strip()
+  if explicit:
+    return explicit
   try:
-    return getpass.getuser()
+    user = getpass.getuser()
   except Exception:  # pylint: disable=broad-except
-    return "unknown"
+    user = "unknown"
+  conv_id = os.environ.get("ANTIGRAVITY_CONVERSATION_ID", "").strip()
+  if conv_id:
+    return f"{user} (agent:{conv_id})"
+  return user
 
 
 _SAFE_WORKFLOW_ID_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$")

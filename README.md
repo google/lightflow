@@ -13,9 +13,13 @@ instead works across process boundaries: every step is a plain CLI command that
 an agent or a human can run, pause, and resume. Think of a workflow as a skill
 with a structural backbone—turning steps an agent would otherwise follow from
 prose instructions into explicit stages with dependencies, retries, and approval
-gates enforced by the engine. It provides **zero-daemon, append-only state
-guardrails** in pure Python—depending only on `PyYAML` and `jsonschema`, with
-built-in standard-library fallbacks when running directly from a checkout.
+gates enforced by the engine. Rather than burying "ask before step 7" inside a
+twelve-step prompt blob where context decay and momentum cause agents to skip
+ahead, Lightflow halts the process (`exit 2`) and delivers each checkpoint as a
+fresh, dedicated turn at the exact moment of decision. It provides **zero-daemon,
+append-only state guardrails** in pure Python—depending only on `PyYAML` and
+`jsonschema`, with built-in standard-library fallbacks when running directly
+from a checkout.
 
 ```mermaid
 flowchart LR
@@ -29,14 +33,17 @@ flowchart LR
 
 -   **Append-Only Passport Ledger (`passport.json`)**: Every stage transition
     appends an immutable `Stamp` (`PENDING`, `COMPLETED`, `PAUSED`, `SKIPPED`,
-    `FAILED`) guarded by cross-platform file locks and atomic `os.replace`.
+    `FAILED`) guarded by cross-platform file locks and atomic `os.replace`,
+    recording operator and agent session provenance (`LIGHTFLOW_OPERATOR` /
+    `ANTIGRAVITY_CONVERSATION_ID`).
 -   **Selective Subgraph Re-Arming**: When a stage fails, fix the underlying
     code or environment and run `resume`. Lightflow re-arms *only* the failed
     stage and its downstream collateral subgraph—never re-executing completed
     upstream side effects.
 -   **Human-in-the-Loop Checkpoints (`operator_action`)**: Suspends execution
-    with exit code `2`, validates operator payloads against JSON Schema, and
-    auto-generates drift-free `resume` commands.
+    with exit code `2` so the gate arrives as its own dedicated turn rather than
+    a buried prompt instruction, validates operator payloads against JSON Schema,
+    and auto-generates drift-free `resume` commands.
 -   **Safe, CEL-like Expressions**: `run_if`, polling conditions, and dynamic
     gate instructions use a small subset of [CEL](https://cel.dev) syntax
     (`string()`, `int()`, `size()`, `has()`), evaluated by a pure-Python AST
@@ -115,7 +122,10 @@ pip install -e .
 Each run's `passport.json` is written to
 `~/.lightflow/lightflow_state_<log_id>/passport.json` by default. Set
 `LIGHTFLOW_STATE_DIR=/some/dir` to relocate the `lightflow_state_<log_id>/`
-directories (for example into a project-local or CI-scoped folder).
+directories (for example into a project-local or CI-scoped folder). Gate and
+re-arm stamps attribute the action to `--operator` if passed, `LIGHTFLOW_OPERATOR`
+if set, or `<user> (agent:<ANTIGRAVITY_CONVERSATION_ID>)` when invoked inside an
+agent session so you can trace any approval back to its conversation transcript.
 
 ### Security model
 

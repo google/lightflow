@@ -406,6 +406,31 @@ stages:
     ):
       schema.Lightflow.from_dict({"name": "wf", "stags": []})
 
+  def test_current_operator_records_env_override_and_agent_conversation(
+      self,
+  ) -> None:
+    orig_op = os.environ.get("LIGHTFLOW_OPERATOR")
+    orig_conv = os.environ.get("ANTIGRAVITY_CONVERSATION_ID")
+    try:
+      os.environ.pop("LIGHTFLOW_OPERATOR", None)
+      os.environ["ANTIGRAVITY_CONVERSATION_ID"] = "conv-uuid-123"
+      op_with_conv = lib._current_operator()  # pylint: disable=protected-access
+      self.assertIn("(agent:conv-uuid-123)", op_with_conv)
+
+      os.environ["LIGHTFLOW_OPERATOR"] = "ci-bot"
+      self.assertEqual(
+          lib._current_operator(), "ci-bot"  # pylint: disable=protected-access
+      )
+    finally:
+      if orig_op is None:
+        os.environ.pop("LIGHTFLOW_OPERATOR", None)
+      else:
+        os.environ["LIGHTFLOW_OPERATOR"] = orig_op
+      if orig_conv is None:
+        os.environ.pop("ANTIGRAVITY_CONVERSATION_ID", None)
+      else:
+        os.environ["ANTIGRAVITY_CONVERSATION_ID"] = orig_conv
+
 
 if __name__ == "__main__":
   unittest.main()
