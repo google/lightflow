@@ -112,6 +112,27 @@ class BenchmarkPayloadTest(unittest.TestCase):
     finally:
       self.runner.work_dir = original_work_dir
 
+  def test_normalize_text_keeps_json_valid_for_embedded_quoted_paths(self) -> None:
+    original_work_dir = self.runner.work_dir
+    self.runner.work_dir = "/tmp/lightflow_bench_embedded_quote"
+    try:
+      raw = json.dumps(
+          {
+              "message": (
+                  f'File "{self.runner.work_dir}/nested/engine.py", line 7'
+              )
+          }
+      )
+
+      normalized = self.runner._normalize_text(raw)
+
+      self.assertEqual(
+          json.loads(normalized),
+          {"message": 'File "/tmp/lf_bench/nested/engine.py", line 7'},
+      )
+    finally:
+      self.runner.work_dir = original_work_dir
+
 
 if __name__ == "__main__":
   unittest.main()

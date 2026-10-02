@@ -196,17 +196,20 @@ class BenchmarkRunner:
       nonlocal norm
       normalized_path = path.replace("\\", "/")
       component = r'''[^/\\/"'<>:|?*\r\n,;)\]}]*'''
-      suffix_end = r'''(?=$|[\s"';,)\]}])'''
+      suffix_end = r'''(?=$|[\s"';,)\]}]|\\(?="))'''
 
       # Match separators in either style, but only after a known root. The
       # escaped pattern handles the doubled backslashes used inside JSON.
       native_sep = r"[/\\]"
+      # A backslash immediately before a quote can be JSON's escaped quote,
+      # not an empty final path component (notably on POSIX).
+      native_suffix_sep = r'''(?:/|\\(?!"))'''
       escaped_sep = r"(?:/|\\\\)"
       native_pattern = re.compile(
           r"(?<![A-Za-z0-9_])"
           + re.escape(normalized_path).replace("/", native_sep)
           + r"(?P<suffix>(?:"
-          + native_sep
+          + native_suffix_sep
           + component
           + r")*)"
           + suffix_end
