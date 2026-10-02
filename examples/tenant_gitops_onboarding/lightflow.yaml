@@ -1,0 +1,399 @@
+name: tenant_gitops_onboarding
+description: >-
+  Enterprise 39-stage Kubernetes & GitOps tenant onboarding workflow.
+  Demonstrates why complex multi-system platform provisioning (RBAC branching,
+  2 human-in-the-loop gates, 5 GitOps PR merge loops, 6 control-plane
+  reconciler polling loops, automatic rollback, and ALL_DONE join semantics)
+  belongs in a checkpointed Lightflow DAG rather than an ad-hoc prompt.
+
+actions:
+  - id: initialize_spec
+    python_import: examples.tenant_gitops_onboarding.actions.initialize_spec
+  - id: check_operator_is_admin
+    python_import: examples.tenant_gitops_onboarding.actions.check_operator_is_admin
+  - id: create_provisioning_request
+    python_import: examples.tenant_gitops_onboarding.actions.create_provisioning_request
+  - id: checkpoint_registry
+    python_import: examples.tenant_gitops_onboarding.actions.checkpoint_registry
+  - id: stop_non_admin
+    python_import: examples.tenant_gitops_onboarding.actions.stop_non_admin
+  - id: check_governance_approval
+    python_import: examples.tenant_gitops_onboarding.actions.check_governance_approval
+  - id: write_oidc_rbac_manifest
+    python_import: examples.tenant_gitops_onboarding.actions.write_oidc_rbac_manifest
+  - id: register_in_kustomize
+    python_import: examples.tenant_gitops_onboarding.actions.register_in_kustomize
+  - id: package_rbac_pr
+    python_import: examples.tenant_gitops_onboarding.actions.package_rbac_pr
+  - id: check_pr_merged
+    python_import: examples.tenant_gitops_onboarding.actions.check_pr_merged
+  - id: check_oidc_absorbed
+    python_import: examples.tenant_gitops_onboarding.actions.check_oidc_absorbed
+  - id: actuate_identity_groups
+    python_import: examples.tenant_gitops_onboarding.actions.create_identity_groups
+  - id: add_admins
+    python_import: examples.tenant_gitops_onboarding.actions.add_admins
+  - id: propose_trusted_issuer
+    python_import: examples.tenant_gitops_onboarding.actions.propose_trusted_issuer
+  - id: check_trusted_issuer_ready
+    python_import: examples.tenant_gitops_onboarding.actions.check_trusted_issuer_ready
+  - id: enable_automated_management
+    python_import: examples.tenant_gitops_onboarding.actions.enable_automated_management
+  - id: trigger_group_reconciliation
+    python_import: examples.tenant_gitops_onboarding.actions.trigger_group_reconciliation
+  - id: check_scim_ready
+    python_import: examples.tenant_gitops_onboarding.actions.check_scim_ready
+  - id: create_service_account
+    python_import: examples.tenant_gitops_onboarding.actions.create_service_account
+  - id: fail_workflow
+    python_import: examples.tenant_gitops_onboarding.actions.fail_workflow
+  - id: check_sa_ready
+    python_import: examples.tenant_gitops_onboarding.actions.check_sa_ready
+  - id: provision_external_resources
+    python_import: examples.tenant_gitops_onboarding.actions.provision_external_resources
+  - id: rollback_external_resources
+    python_import: examples.tenant_gitops_onboarding.actions.rollback_external_resources
+  - id: scaffold_k8s_namespace
+    python_import: examples.tenant_gitops_onboarding.actions.scaffold_k8s_namespace
+  - id: package_scaffolding_pr
+    python_import: examples.tenant_gitops_onboarding.actions.package_scaffolding_pr
+  - id: bootstrap_cronjob_rbac
+    python_import: examples.tenant_gitops_onboarding.actions.bootstrap_cronjob_rbac
+  - id: package_cronjob_rbac_pr
+    python_import: examples.tenant_gitops_onboarding.actions.package_cronjob_rbac_pr
+  - id: nest_in_root_groups
+    python_import: examples.tenant_gitops_onboarding.actions.nest_in_root_groups
+  - id: package_wiring_pr
+    python_import: examples.tenant_gitops_onboarding.actions.package_wiring_pr
+  - id: check_wiring_oidc_absorbed
+    python_import: examples.tenant_gitops_onboarding.actions.check_wiring_oidc_absorbed
+  - id: propose_cost_center_association
+    python_import: examples.tenant_gitops_onboarding.actions.propose_cost_center_association
+  - id: package_catalog_pr
+    python_import: examples.tenant_gitops_onboarding.actions.package_catalog_pr
+
+stages:
+  # Phase 1: Spec Resolution, Operator Role Check & Governance Gate
+  - name: init_spec
+    description: Resolve tenant alias, OIDC root group, admins, and FinOps cost center
+    python_action:
+      action_id: initialize_spec
+
+  - name: check_admin
+    description: Check whether the active operator holds platform-admin privileges
+    run_after: [init_spec]
+    python_action:
+      action_id: check_operator_is_admin
+
+  - name: verify_spec
+    description: Ask the human operator to confirm the resolved tenant specification before creating resources
+    run_after: [check_admin]
+    operator_action:
+      instructions: >-
+        'Confirm the resolved tenant onboarding specification before creating any resources:\n' +
+        '- Tenant Alias: ' + payload.alias + '\n' +
+        '- Display Name: ' + payload.spec_name + '\n' +
+        '- OIDC Group Root: ' + payload.spec_rbac_root + '\n' +
+        '- Primary Admin: ' + payload.spec_primary_admin + '\n' +
+        '- Secondary Admin: ' + payload.spec_secondary_admin + '\n' +
+        '- Cost Center ID: ' + payload.spec_cost_center_id
+      json_schema:
+        type: object
+        required: [approved]
+        properties:
+          approved:
+            type: boolean
+            const: true
+
+  - name: create_ticket
+    description: Create the change-management onboarding request ticket
+    run_after: [verify_spec]
+    python_action:
+      action_id: create_provisioning_request
+
+  - name: checkpoint_ticket
+    description: Checkpoint the ticket ID into the platform catalog (admins only)
+    run_after: [create_ticket]
+    run_if: "payload.is_admin == true"
+    python_action:
+      action_id: checkpoint_registry
+
+  - name: stop_non_admin_stage
+    description: Record ticket handoff and exit cleanly when run by a non-admin requester
+    run_after: [create_ticket]
+    run_if: "payload.is_admin == false"
+    python_action:
+      action_id: stop_non_admin
+
+  - name: wait_governance_approval
+    description: Poll change-advisory ticket status until approved
+    run_after: [checkpoint_ticket]
+    polling_policy:
+      poll_tick_action:
+        action_id: check_governance_approval
+      condition: "payload.governance_approved == true"
+      interval_seconds: 1
+      timeout_seconds: 30
+
+  # Phase 2: OIDC RBAC GitOps PR, Reconciler Absorption & Group Actuation
+  - name: inject_rbac_manifest
+    description: Generate declarative OIDC GroupSet manifest in the GitOps tree
+    run_after: [wait_governance_approval]
+    python_action:
+      action_id: write_oidc_rbac_manifest
+
+  - name: register_rbac_in_kustomize
+    description: Register the tenant RBAC manifest in root kustomization.yaml
+    run_after: [inject_rbac_manifest]
+    python_action:
+      action_id: register_in_kustomize
+
+  - name: package_rbac_pr
+    description: Open GitOps pull request for the OIDC RBAC configuration
+    run_after: [register_rbac_in_kustomize]
+    python_action:
+      action_id: package_rbac_pr
+
+  - name: wait_rbac_pr_submission
+    description: Poll until the OIDC RBAC GitOps pull request merges
+    run_after: [package_rbac_pr]
+    polling_policy:
+      poll_tick_action:
+        action_id: check_pr_merged
+        static_kwargs:
+          target_pr_key: rbac_pr_id
+      condition: "payload.rbac_pr_id_merged == true"
+      interval_seconds: 1
+      timeout_seconds: 30
+
+  - name: wait_oidc_absorption
+    description: Wait for the OIDC control-plane reconciler to absorb the merged RBAC commit
+    run_after: [wait_rbac_pr_submission]
+    polling_policy:
+      poll_tick_action:
+        action_id: check_oidc_absorbed
+      condition: "payload.oidc_absorbed == true"
+      interval_seconds: 1
+      timeout_seconds: 30
+
+  - name: actuate_identity_groups
+    description: Provision the tenant admin, developer, and automation OIDC groups
+    run_after: [wait_oidc_absorption]
+    python_action:
+      action_id: actuate_identity_groups
+
+  - name: add_admins
+    description: Bind primary and secondary tenant administrators to the admin group
+    run_after: [actuate_identity_groups]
+    python_action:
+      action_id: add_admins
+
+  # Phase 3: Trusted Issuer, SCIM Group Sync & ServiceAccount with Conditional Portal Escalation
+  - name: propose_trusted_issuer
+    description: Register the tenant automation group as a trusted workload OIDC issuer
+    run_after: [add_admins]
+    python_action:
+      action_id: propose_trusted_issuer
+
+  - name: wait_trusted_issuer_approval
+    description: Poll until the trusted workload OIDC issuer registration is active
+    run_after: [propose_trusted_issuer]
+    polling_policy:
+      poll_tick_action:
+        action_id: check_trusted_issuer_ready
+      condition: "payload.trusted_issuer_ready == true"
+      interval_seconds: 1
+      timeout_seconds: 30
+
+  - name: enable_automated_management
+    description: Enable automated SCIM group membership management
+    run_after: [wait_trusted_issuer_approval]
+    python_action:
+      action_id: enable_automated_management
+
+  - name: trigger_scim_reconciliation
+    description: Trigger SCIM directory group membership reconciliation
+    run_after: [enable_automated_management]
+    python_action:
+      action_id: trigger_group_reconciliation
+
+  - name: wait_scim_sync
+    description: Poll until two-way SCIM directory synchronization converges
+    run_after: [trigger_scim_reconciliation]
+    polling_policy:
+      poll_tick_action:
+        action_id: check_scim_ready
+      condition: "payload.scim_ready == true"
+      interval_seconds: 1
+      timeout_seconds: 30
+
+  - name: create_service_account
+    description: Attempt automated creation of the tenant workload identity ServiceAccount
+    run_after: [wait_scim_sync]
+    python_action:
+      action_id: create_service_account
+
+  - name: fail_on_sa_failed
+    description: Fail fast when workload ServiceAccount creation encounters a hard error
+    run_after: [create_service_account]
+    run_if: "payload.sa_creation_status == 'FAILED'"
+    python_action:
+      action_id: fail_workflow
+
+  - name: prompt_sa_activation
+    description: Conditional human gate when auto-creation hits a quota/permission boundary
+    run_after: [create_service_account]
+    run_if: "payload.sa_creation_status == 'PERMISSION_DENIED'"
+    operator_action:
+      instructions: >-
+        'Automated creation of the workload ServiceAccount hit a quota/permission boundary.\n' +
+        'Please activate workload ServiceAccount \'' + payload.spec_rbac_root + '-jobs.svc\' in the IAM portal and resume with {"manually_activated": true}.'
+      json_schema:
+        type: object
+        required: [manually_activated]
+        properties:
+          manually_activated:
+            type: boolean
+            const: true
+
+  - name: wait_sa_activation
+    description: Poll until the workload ServiceAccount is active (runs whether Gate 2 was skipped or completed)
+    run_after: [prompt_sa_activation]
+    trigger_rule: ALL_DONE
+    run_if: "payload.sa_creation_status == 'SUCCESS' || (payload.sa_creation_status == 'PERMISSION_DENIED' && payload.outputs.prompt_sa_activation.approved == true && payload.manually_activated == true)"
+    polling_policy:
+      poll_tick_action:
+        action_id: check_sa_ready
+      condition: "payload.sa_ready == true"
+      interval_seconds: 1
+      timeout_seconds: 30
+
+  # Phase 4: Cloud Artifacts (with Retry + Rollback), K8s Scaffolding, CronJob RBAC, Mesh Wiring & Catalog PRs
+  - name: provision_external_resources
+    description: Provision Terraform state bucket and Vault secret mount with automatic rollback on error
+    run_after: [wait_sa_activation]
+    python_action:
+      action_id: provision_external_resources
+    retry_policy:
+      max_attempts: 2
+      initial_backoff_seconds: 1
+    rollback_action:
+      action_id: rollback_external_resources
+
+  - name: checkpoint_external_resources
+    description: Checkpoint provisioned cloud storage and Vault paths in the platform catalog
+    run_after: [provision_external_resources]
+    python_action:
+      action_id: checkpoint_registry
+
+  - name: scaffold_k8s_structure
+    description: Generate Kubernetes Namespace, NetworkPolicy, and ResourceQuota manifests
+    run_after: [checkpoint_external_resources]
+    python_action:
+      action_id: scaffold_k8s_namespace
+
+  - name: package_scaffolding_pr
+    description: Open GitOps pull request for the Kubernetes namespace scaffolding
+    run_after: [scaffold_k8s_structure]
+    python_action:
+      action_id: package_scaffolding_pr
+
+  - name: wait_scaffolding_pr
+    description: Poll until the Kubernetes namespace scaffolding PR merges
+    run_after: [package_scaffolding_pr]
+    polling_policy:
+      poll_tick_action:
+        action_id: check_pr_merged
+        static_kwargs:
+          target_pr_key: scaffolding_pr_id
+      condition: "payload.scaffolding_pr_id_merged == true"
+      interval_seconds: 1
+      timeout_seconds: 30
+
+  - name: bootstrap_cronjob_rbac
+    description: Generate CronJob RBAC RoleBinding for the workload ServiceAccount
+    run_after: [wait_scaffolding_pr]
+    python_action:
+      action_id: bootstrap_cronjob_rbac
+
+  - name: package_cronjob_rbac_pr
+    description: Open GitOps pull request for the CronJob RBAC RoleBinding
+    run_after: [bootstrap_cronjob_rbac]
+    python_action:
+      action_id: package_cronjob_rbac_pr
+
+  - name: wait_cronjob_pr
+    description: Poll until the CronJob RBAC pull request merges
+    run_after: [package_cronjob_rbac_pr]
+    polling_policy:
+      poll_tick_action:
+        action_id: check_pr_merged
+        static_kwargs:
+          target_pr_key: cronjob_pr_id
+      condition: "payload.cronjob_pr_id_merged == true"
+      interval_seconds: 1
+      timeout_seconds: 30
+
+  - name: nest_in_root_groups
+    description: Nest tenant OIDC groups into the cluster-wide ingress mesh and root hierarchy
+    run_after: [wait_cronjob_pr]
+    python_action:
+      action_id: nest_in_root_groups
+
+  - name: package_wiring_pr
+    description: Open GitOps pull request for the root mesh and group hierarchy wiring
+    run_after: [nest_in_root_groups]
+    python_action:
+      action_id: package_wiring_pr
+
+  - name: wait_wiring_pr
+    description: Poll until the root mesh wiring pull request merges
+    run_after: [package_wiring_pr]
+    polling_policy:
+      poll_tick_action:
+        action_id: check_pr_merged
+        static_kwargs:
+          target_pr_key: wiring_pr_id
+      condition: "payload.wiring_pr_id_merged == true"
+      interval_seconds: 1
+      timeout_seconds: 30
+
+  - name: wait_wiring_oidc_absorption
+    description: Wait for the mesh and OIDC reconciler to absorb the root wiring commit
+    run_after: [wait_wiring_pr]
+    polling_policy:
+      poll_tick_action:
+        action_id: check_wiring_oidc_absorbed
+      condition: "payload.wiring_oidc_absorbed == true"
+      interval_seconds: 1
+      timeout_seconds: 30
+
+  - name: trigger_group_reconciliation
+    description: Trigger final SCIM group membership reconciliation after root wiring
+    run_after: [wait_wiring_oidc_absorption]
+    python_action:
+      action_id: trigger_group_reconciliation
+
+  - name: propose_cost_center_association
+    description: Bind FinOps cost center ID to the tenant namespace for chargeback
+    run_after: [trigger_group_reconciliation]
+    python_action:
+      action_id: propose_cost_center_association
+
+  - name: package_catalog_pr
+    description: Open final GitOps pull request registering the active tenant in the service catalog
+    run_after: [propose_cost_center_association]
+    python_action:
+      action_id: package_catalog_pr
+
+  - name: wait_catalog_pr
+    description: Poll until the service catalog registration pull request merges
+    run_after: [package_catalog_pr]
+    polling_policy:
+      poll_tick_action:
+        action_id: check_pr_merged
+        static_kwargs:
+          target_pr_key: catalog_pr_id
+      condition: "payload.catalog_pr_id_merged == true"
+      interval_seconds: 1
+      timeout_seconds: 30

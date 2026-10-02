@@ -48,8 +48,9 @@ Two fresh zero-context LLM subagents executed the exact same end-to-end workflow
 | [`pypi_upgrade_guard`](../examples/pypi_upgrade_guard/) *(incl. fail + rollback + recovery)* | 4 | 2,579 ch (~**645 tok**) | 6,635 ch (~1,659 tok) | ~2,084 tok | 5,895 ch (~1,474 tok) | 8,375 ch (~2,094 tok) | **76%** |
 | [`async_job_watcher`](../examples/async_job_watcher/) | 2 | 843 ch (~**211 tok**) | 4,899 ch (~1,225 tok) | ~399 tok | 2,525 ch (~631 tok) | 10,213 ch (~2,553 tok) | **92%** |
 | [`create_lightflow`](../examples/create_lightflow/) *(3 gates + 2 verifiers + authored files)* | 5 | 6,220 ch (~**1,555 tok**) | 15,917 ch (~3,979 tok) | ~5,722 tok | 6,925 ch (~1,731 tok) | 18,273 ch (~4,568 tok) | **75%** |
-| **Total (5 workflows, warm)** | **17** | **12,713 ch (~3,178 tok)** | — | **~10,216 tok** | **22,932 ch (~5,733 tok)** | **51,049 ch (~12,762 tok)** | **80%** |
-| **Session Total (`N=5`, cold start incl. both `SKILL.md`s)** | **17 + 2 reads** | — | **22,410 ch (~5,602 tok)** | — | **22,932 ch (~5,733 tok)** | **51,049 ch (~12,762 tok)** | **69%** |
+| [`tenant_gitops_onboarding`](../examples/tenant_gitops_onboarding/) *(39 stages: 2 gates, 5 PRs, 6 reconciler polls)* | 4 | 6,227 ch (~**1,557 tok**) | 10,283 ch (~2,571 tok) | ~4,414 tok | 21,022 ch (~5,256 tok) | 39,439 ch (~9,860 tok) | **86%** |
+| **Total (6 workflows, warm)** | **21** | **18,940 ch (~4,735 tok)** | — | **~14,630 tok** | **43,954 ch (~10,988 tok)** | **90,488 ch (~22,622 tok)** | **83%** |
+| **Session Total (`N=6`, cold start incl. both `SKILL.md`s)** | **21 + 2 reads** | — | **28,637 ch (~7,159 tok)** | — | **43,954 ch (~10,988 tok)** | **90,488 ch (~22,622 tok)** | **76%** |
 
 ---
 
@@ -57,10 +58,10 @@ Two fresh zero-context LLM subagents executed the exact same end-to-end workflow
 
 1. **Both Agent Inputs and Tool `stdout` Are Counted**:
    - `Warm Runtime (cmd + stdout)` counts every CLI command string emitted by the agent (`lightflow start ...`, `lightflow resume ...`, `lightflow cleanup ...`), any files authored between gates in `create_lightflow` (`actions.py`, `actions_test.py`, `lightflow.yaml`), and the full `stdout`/`stderr` returned by the process.
-2. **Single-Workflow (`N=1`) and Session (`N=5`) Cold Starts Are Reported Explicitly**:
-   - Running an existing workflow (rows 1–4) from a cold start requires reading [`skills/run_lightflows/SKILL.md`](../skills/run_lightflows/SKILL.md) once (**4,056 chars / ~1,014 tokens**).
+2. **Single-Workflow (`N=1`) and Session (`N=6`) Cold Starts Are Reported Explicitly**:
+   - Running an existing workflow (rows 1–4 and 6) from a cold start requires reading [`skills/run_lightflows/SKILL.md`](../skills/run_lightflows/SKILL.md) once (**4,056 chars / ~1,014 tokens**).
    - Authoring a new workflow (`create_lightflow`, row 5) from a cold start also counts [`skills/create_lightflows/SKILL.md`](../skills/create_lightflows/SKILL.md) (**5,641 chars / ~1,410 tokens**).
    - Because `run_lightflows/SKILL.md` is generic across all Lightflow workflows, its ~1,014-token cost is paid **once per session** rather than once per workflow.
 3. **Definition of `Zero-Context Savings`**:
    - Defined as $\frac{\text{Source Avoided}}{\text{Runtime Context} + \text{Source Avoided}}$, comparing an agent that follows the Zero-Context Entry Rule (`lightflow start` directly) against a white-box coding agent that reads `lightflow.yaml` + `actions.py` before executing the workflow.
-   - Note that a traditional prompt-only skill would not paste Python source files into a prompt; instead, without `passport.json` persisting intermediate data on disk (`22,932 chars / ~5,733 tokens` across the 5 runs), intermediate step outputs (`payload.outputs.<stage>`) must pass through tool `stdout` into the LLM conversation history—or the skill author must hand-roll custom state files, `--step` flags, and rollback glue per skill.
+   - Note that a traditional prompt-only skill would not paste Python source files into a prompt; instead, without `passport.json` persisting intermediate data on disk (`43,954 chars / ~10,988 tokens` across the 6 runs), intermediate step outputs (`payload.outputs.<stage>`) must pass through tool `stdout` into the LLM conversation history—or the skill author must hand-roll custom state files, `--step` flags, and rollback glue per skill.

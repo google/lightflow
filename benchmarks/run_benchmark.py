@@ -14,7 +14,7 @@
 # limitations under the License.
 """Reproducible token-efficiency benchmark for Lightflow example workflows.
 
-Executes all 5 included example Lightflows end-to-end and measures:
+Executes all 6 included example Lightflows end-to-end and measures:
 1. Runtime Agent Context (CLI command invocations + authored files + stdout).
 2. Multi-Turn Cumulative Input Tokens (accounting for transcript re-reads across
    turns in a stateful LLM conversation).
@@ -555,6 +555,71 @@ class BenchmarkRunner:
         passport_outputs_chars=p_out_chars,
     )
 
+  def bench_tenant_gitops_onboarding(self) -> WorkflowBenchmark:
+    """Benchmarks the 39-stage tenant_gitops_onboarding workflow."""
+    log_id = "bench_tenant"
+    sandbox_dir = os.path.join(self.work_dir, "tenant_sandbox")
+    steps = [
+        self._run_step(
+            "start (init spec + role check -> pause at verify_spec)",
+            [
+                "start",
+                "--lightflow=examples/tenant_gitops_onboarding",
+                f"--log_id={log_id}",
+                (
+                    '--payload={"alias": "payments-eu", "sandbox_dir":'
+                    f' "{sandbox_dir}", "require_manual_sa_portal": true}}'
+                ),
+            ],
+            expected_exit=2,
+        ),
+        self._run_step(
+            "resume verify_spec (Phase 2 OIDC/SCIM -> pause at"
+            " prompt_sa_activation)",
+            [
+                "resume",
+                "--lightflow=examples/tenant_gitops_onboarding",
+                f"--log_id={log_id}",
+                "--stage=verify_spec",
+                "--resolution=APPROVE",
+                '--payload={"approved": true}',
+            ],
+            expected_exit=2,
+        ),
+        self._run_step(
+            "resume prompt_sa_activation (Phases 3-4 K8s/mesh/FinOps ->"
+            " complete)",
+            [
+                "resume",
+                "--lightflow=examples/tenant_gitops_onboarding",
+                f"--log_id={log_id}",
+                "--stage=prompt_sa_activation",
+                "--resolution=APPROVE",
+                '--payload={"manually_activated": true}',
+            ],
+            expected_exit=0,
+        ),
+    ]
+    p_chars, p_out_chars = self._measure_passport(log_id)
+    steps.append(
+        self._run_step("cleanup", ["cleanup", f"--log_id={log_id}"], 0)
+    )
+    y_ch, a_ch, r_ch = self._measure_blueprint("tenant_gitops_onboarding")
+    return WorkflowBenchmark(
+        name="tenant_gitops_onboarding",
+        description=(
+            "39-stage enterprise GitOps onboarding (2 gates, 5 PRs, 6"
+            " reconciler polls)"
+        ),
+        is_authoring_workflow=False,
+        steps=steps,
+        yaml_chars=y_ch,
+        actions_chars=a_ch,
+        readme_chars=r_ch,
+        passport_chars=p_chars,
+        passport_outputs_chars=p_out_chars,
+    )
+
   def run_all(self) -> list[WorkflowBenchmark]:
     return [
         self.bench_hn_digest(),
@@ -562,6 +627,7 @@ class BenchmarkRunner:
         self.bench_pypi_upgrade_guard(),
         self.bench_async_job_watcher(),
         self.bench_create_lightflow(),
+        self.bench_tenant_gitops_onboarding(),
     ]
 
 
@@ -627,9 +693,10 @@ def format_markdown_report(
   tot_pp_tok = estimate_tokens(tot_passport_ch)
   tot_bp_tok = estimate_tokens(tot_blueprint_ch)
   warm_savings = tot_blueprint_ch / (tot_runtime_ch + tot_blueprint_ch)
+  n_wf = len(results)
 
   lines.append(
-      "| **Total (5 workflows, warm)** |"
+      f"| **Total ({n_wf} workflows, warm)** |"
       f" **{sum(len(r.steps) for r in results)}** | **{tot_runtime_ch:,} ch"
       f" (~{tot_runtime_tok:,} tok)** | — | **~{tot_cum_tok:,} tok** |"
       f" **{tot_passport_ch:,} ch (~{tot_pp_tok:,} tok)** |"
@@ -640,7 +707,7 @@ def format_markdown_report(
   session_cold_tok = estimate_tokens(session_cold_ch)
   cold_savings = tot_blueprint_ch / (session_cold_ch + tot_blueprint_ch)
   lines.append(
-      "| **Session Total (`N=5`, cold start incl. both `SKILL.md`s)** |"
+      f"| **Session Total (`N={n_wf}`, cold start incl. both `SKILL.md`s)** |"
       f" **{sum(len(r.steps) for r in results)} + 2 reads** | — |"
       f" **{session_cold_ch:,} ch (~{session_cold_tok:,} tok)** | — |"
       f" **{tot_passport_ch:,} ch (~{tot_pp_tok:,} tok)** |"

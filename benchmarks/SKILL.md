@@ -37,20 +37,20 @@ python3 benchmarks/run_benchmark.py
 python3 benchmarks/run_benchmark.py --json
 ```
 
-`run_benchmark.py` executes all 5 included example Lightflows (`hn_digest`,
-`usgs_seismic_alert`, `pypi_upgrade_guard`, `async_job_watcher`, and
-`create_lightflow`) end-to-end in an isolated temporary directory (normalizing
-OS temp paths, PIDs, and timestamps for 100% bit-for-bit reproducibility) and
-measures:
+`run_benchmark.py` executes all 6 included example Lightflows (`hn_digest`,
+`usgs_seismic_alert`, `pypi_upgrade_guard`, `async_job_watcher`,
+`create_lightflow`, and `tenant_gitops_onboarding`) end-to-end in an isolated
+temporary directory (normalizing OS temp paths, PIDs, and timestamps for 100%
+bit-for-bit reproducibility) and measures:
 
 1.  **Warm Runtime Context (`cmd + stdout`)**: Every CLI command string emitted
     by the agent (`lightflow start ...`, `lightflow resume ...`, `lightflow
     cleanup ...`), any files authored between gates in `create_lightflow`
     (`actions.py`, `actions_test.py`, `lightflow.yaml`), and the exact
     `stdout`/`stderr` returned to the agent's context window.
-2.  **Cold-Start Context (`N=1` and `N=5`)**: Explicitly adds
+2.  **Cold-Start Context (`N=1` and `N=6`)**: Explicitly adds
     `skills/run_lightflows/SKILL.md` (4,056 chars / ~1,014 tokens) for execution
-    workflows (`1–4`) and both `run_lightflows/SKILL.md` +
+    workflows (`1–4 and 6`) and both `run_lightflows/SKILL.md` +
     `create_lightflows/SKILL.md` (+5,641 chars / ~1,410 tokens) for the
     `create_lightflow` authoring meta-workflow.
 3.  **Multi-Turn Cumulative Tokens**: Accounts for stateful LLM conversation
@@ -86,7 +86,7 @@ these rules:
         `skills/run_lightflows/SKILL.md` (~1,014 tokens) to a single execution
         run, and also add `skills/create_lightflows/SKILL.md` (~1,410 tokens)
         when benchmarking `create_lightflow`.
-    -   *Multi-Workflow Session (`N=5`)*: Count each required `SKILL.md` once
+    -   *Multi-Workflow Session (`N=6`)*: Count each required `SKILL.md` once
         across the session.
 -   **Never conflate `Source Avoided (yaml + actions.py)` with a prompt-only
     `SKILL.md`**:

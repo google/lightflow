@@ -173,6 +173,7 @@ Windows PowerShell 5.1), you can also pass JSON payloads from a file or stdin vi
 | 3 | **[`examples/pypi_upgrade_guard/`](./examples/pypi_upgrade_guard/README.md)** | **Live Audit → Approval Gate → Automatic `rollback_action`**: Compares pinned packages against live PyPI, applies upgrades, and automatically restores `.bak` if smoke tests fail. | PyPI JSON API (zero auth) |
 | 4 | **[`examples/async_job_watcher/`](./examples/async_job_watcher/README.md)** | **Async Background Polling & `ALL_DONE` Cleanup**: Spawns a 10–20s background process, polls its status file via `polling_policy` until `READY`, and cleans up temp files. | Detached Worker + Local JSON Status File |
 | 5 | **[`examples/create_lightflow/`](./examples/create_lightflow/README.md)** | **Staggered Agent Skill Delivery ("A Lightflow to Create Lightflows")**: 3 human/agent design & coding gates interleaved with deterministic AST, `unittest`, and `dry_run` verification stages. | Python `ast` + `unittest` + `LightflowEngine` |
+| 6 | **[`examples/tenant_gitops_onboarding/`](./examples/tenant_gitops_onboarding/README.md)** | **39-Stage Enterprise Kubernetes & GitOps Onboarding**: 4-phase control-plane orchestration with RBAC branching, 2 human gates, 5 GitOps PR merge loops, 6 reconciler polling loops, automatic rollback, and `ALL_DONE` joins. | Local Mocked GitOps / OIDC / SCIM / Vault Sandbox |
 
 --------------------------------------------------------------------------------
 

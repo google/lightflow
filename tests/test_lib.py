@@ -601,6 +601,170 @@ stages:
         cli.status(lightflow=pypi_wf, log_id="pypi_test_run", verbose=True)
     self.assertIn("[rolled back]", status_buf.getvalue())
 
+    # 4. Dry-run and execute 39-stage tenant_gitops_onboarding across all paths
+    tenant_wf = os.path.join(
+        examples_dir, "tenant_gitops_onboarding", "lightflow.yaml"
+    )
+    self.assertTrue(os.path.isfile(tenant_wf))
+    tenant_dry_buf = io.StringIO()
+    with contextlib.redirect_stdout(tenant_dry_buf):
+      runner._dispatch_argv(  # pylint: disable=protected-access
+          runner.CliWrapper(cli),
+          ["dry_run", f"--lightflow={tenant_wf}"],
+      )
+    self.assertIn(
+        "Stage: wait_catalog_pr",
+        tenant_dry_buf.getvalue(),
+    )
+    sandbox_dir = os.path.join(self.temp_dir, "tenant_sandbox")
+    with contextlib.redirect_stdout(io.StringIO()):
+      # 4a. Rejecting Gate #2 skips wait_sa_activation and Phase 4
+      with self.assertRaises(engine.OperatorActionSuspended):
+        cli.start(
+            lightflow=tenant_wf,
+            log_id="tenant_reject_run",
+            payload={
+                "alias": "payments-eu",
+                "sandbox_dir": sandbox_dir,
+                "require_manual_sa_portal": True,
+            },
+        )
+      with self.assertRaises(engine.OperatorActionSuspended):
+        cli.resume(
+            lightflow=tenant_wf,
+            log_id="tenant_reject_run",
+            stage="verify_spec",
+            resolution="APPROVE",
+            payload={"approved": True},
+        )
+      with self.assertRaises(engine.EngineError):
+        cli.resume(
+            lightflow=tenant_wf,
+            log_id="tenant_reject_run",
+            stage="prompt_sa_activation",
+            resolution="REJECT",
+        )
+      rej_passport = lib.PassportManager("tenant_reject_run").load_passport()
+      assert rej_passport is not None
+      rej_stamps = {s.stage_name: s.status for s in rej_passport.stamps}
+      self.assertEqual(
+          rej_stamps["prompt_sa_activation"], schema.StampStatus.FAILED
+      )
+      self.assertEqual(
+          rej_stamps["wait_sa_activation"], schema.StampStatus.SKIPPED
+      )
+      self.assertEqual(
+          rej_stamps["wait_catalog_pr"], schema.StampStatus.SKIPPED
+      )
+
+      # 4b. Full 2-gate approval path
+      with self.assertRaises(engine.OperatorActionSuspended) as ctx1:
+        cli.start(
+            lightflow=tenant_wf,
+            log_id="tenant_test_run",
+            payload={
+                "alias": "payments-eu",
+                "sandbox_dir": sandbox_dir,
+                "require_manual_sa_portal": True,
+            },
+        )
+      self.assertIn("verify_spec", str(ctx1.exception))
+      with self.assertRaises(engine.OperatorActionSuspended) as ctx2:
+        cli.resume(
+            lightflow=tenant_wf,
+            log_id="tenant_test_run",
+            stage="verify_spec",
+            resolution="APPROVE",
+            payload={"approved": True},
+        )
+      self.assertIn("prompt_sa_activation", str(ctx2.exception))
+      cli.resume(
+          lightflow=tenant_wf,
+          log_id="tenant_test_run",
+          stage="prompt_sa_activation",
+          resolution="APPROVE",
+          payload={"manually_activated": True},
+      )
+
+      # 4c. Non-admin requester early handoff branch
+      with self.assertRaises(engine.OperatorActionSuspended):
+        cli.start(
+            lightflow=tenant_wf,
+            log_id="tenant_non_admin_run",
+            payload={
+                "alias": "payments-eu",
+                "sandbox_dir": sandbox_dir,
+                "simulate_non_admin": True,
+            },
+        )
+      cli.resume(
+          lightflow=tenant_wf,
+          log_id="tenant_non_admin_run",
+          stage="verify_spec",
+          resolution="APPROVE",
+          payload={"approved": True},
+      )
+
+      # 4d. Auto-SA (ALL_DONE skip) + artifact failure rollback + resume
+      with self.assertRaises(engine.OperatorActionSuspended):
+        cli.start(
+            lightflow=tenant_wf,
+            log_id="tenant_rollback_run",
+            payload={
+                "alias": "payments-eu",
+                "sandbox_dir": sandbox_dir,
+                "simulate_artifact_failure": True,
+            },
+        )
+      with self.assertRaises(engine.EngineError):
+        cli.resume(
+            lightflow=tenant_wf,
+            log_id="tenant_rollback_run",
+            stage="verify_spec",
+            resolution="APPROVE",
+            payload={"approved": True},
+        )
+      cli.resume(
+          lightflow=tenant_wf,
+          log_id="tenant_rollback_run",
+          stage="provision_external_resources",
+          payload={"simulate_artifact_failure": False},
+      )
+
+    tenant_passport = lib.PassportManager("tenant_test_run").load_passport()
+    self.assertIsNotNone(tenant_passport)
+    assert tenant_passport is not None
+    stamps_by_stage = {s.stage_name: s.status for s in tenant_passport.stamps}
+    self.assertEqual(len(stamps_by_stage), 39)
+    self.assertEqual(
+        stamps_by_stage["wait_catalog_pr"], schema.StampStatus.COMPLETED
+    )
+    self.assertEqual(
+        stamps_by_stage["stop_non_admin_stage"], schema.StampStatus.SKIPPED
+    )
+    self.assertEqual(
+        stamps_by_stage["fail_on_sa_failed"], schema.StampStatus.SKIPPED
+    )
+
+    na_passport = lib.PassportManager("tenant_non_admin_run").load_passport()
+    assert na_passport is not None
+    na_stamps = {s.stage_name: s.status for s in na_passport.stamps}
+    self.assertEqual(
+        na_stamps["stop_non_admin_stage"], schema.StampStatus.COMPLETED
+    )
+    self.assertEqual(na_stamps["wait_catalog_pr"], schema.StampStatus.SKIPPED)
+
+    rb_passport = lib.PassportManager("tenant_rollback_run").load_passport()
+    assert rb_passport is not None
+    rb_stamps = {s.stage_name: s.status for s in rb_passport.stamps}
+    self.assertEqual(
+        rb_stamps["prompt_sa_activation"], schema.StampStatus.SKIPPED
+    )
+    self.assertEqual(
+        rb_stamps["wait_sa_activation"], schema.StampStatus.COMPLETED
+    )
+    self.assertEqual(rb_stamps["wait_catalog_pr"], schema.StampStatus.COMPLETED)
+
   def test_stage_timeout_allows_all_done_cleanup_in_engine_loop(self) -> None:
     wf = schema.Lightflow(
         name="timeout_wf",
