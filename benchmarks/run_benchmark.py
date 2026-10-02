@@ -46,6 +46,11 @@ _JSON_PID_RE = re.compile(r'"worker_pid":\s*\d+')
 _TS_RE = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z")
 
 
+def _payload_arg(payload: dict[str, Any]) -> str:
+  """Serializes a payload dictionary as a CLI --payload argument."""
+  return "--payload=" + json.dumps(payload)
+
+
 def estimate_tokens(chars: int) -> int:
   """Estimates LLM token count using the standard 4-chars-per-token heuristic."""
   return round(chars / 4.0)
@@ -185,9 +190,52 @@ class BenchmarkRunner:
 
   def _normalize_text(self, text: str) -> str:
     """Normalizes OS-specific temp paths, PIDs, and timestamps for determinism."""
-    norm = text.replace(self.work_dir, _CANONICAL_WORK_DIR)
-    norm = norm.replace(self.state_dir, "/tmp/lf_state")
-    norm = norm.replace(_OSS_ROOT, "/repo/lightflow")
+    norm = text
+
+    def replace_path(path: str, canonical_path: str) -> None:
+      nonlocal norm
+      normalized_path = path.replace("\\", "/")
+      component = r'''[^/\\/"'<>:|?*\r\n,;)\]}]*'''
+      suffix_end = r'''(?=$|[\s"';,)\]}]|\\(?="))'''
+
+      # Match separators in either style, but only after a known root. The
+      # escaped pattern handles the doubled backslashes used inside JSON.
+      native_sep = r"[/\\]"
+      # A backslash immediately before a quote can be JSON's escaped quote,
+      # not an empty final path component (notably on POSIX).
+      native_suffix_sep = r'''(?:/|\\(?!"))'''
+      escaped_sep = r"(?:/|\\\\)"
+      native_pattern = re.compile(
+          r"(?<![A-Za-z0-9_])"
+          + re.escape(normalized_path).replace("/", native_sep)
+          + r"(?P<suffix>(?:"
+          + native_suffix_sep
+          + component
+          + r")*)"
+          + suffix_end
+      )
+      escaped_pattern = re.compile(
+          r"(?<![A-Za-z0-9_])"
+          + re.escape(normalized_path).replace("/", escaped_sep)
+          + r"(?P<suffix>(?:"
+          + escaped_sep
+          + component
+          + r")*)"
+          + suffix_end
+      )
+
+      def replace_native(match: re.Match[str]) -> str:
+        return canonical_path + match.group("suffix").replace("\\", "/")
+
+      def replace_escaped(match: re.Match[str]) -> str:
+        return canonical_path + match.group("suffix").replace("\\\\", "/")
+
+      norm = native_pattern.sub(replace_native, norm)
+      norm = escaped_pattern.sub(replace_escaped, norm)
+
+    replace_path(self.work_dir, _CANONICAL_WORK_DIR)
+    replace_path(self.state_dir, "/tmp/lf_state")
+    replace_path(_OSS_ROOT, "/repo/lightflow")
     norm = _PID_RE.sub("PID 12345", norm)
     norm = _JSON_PID_RE.sub('"worker_pid": 12345', norm)
     norm = _TS_RE.sub("2026-01-01T00:00:00Z", norm)
@@ -232,7 +280,11 @@ class BenchmarkRunner:
     norm_cmd = self._normalize_text(raw_cmd)
     cmd = [sys.executable, "-m", "lightflow"] + args
     res = subprocess.run(
-        cmd, cwd=_OSS_ROOT, env=self.env, capture_output=True, text=True
+        cmd,
+        cwd=_OSS_ROOT,
+        env=self.env,
+        capture_output=True,
+        encoding="utf-8",
     )
     if res.returncode != expected_exit:
       raise RuntimeError(
@@ -270,10 +322,7 @@ class BenchmarkRunner:
                 f"--log_id={log_id}",
                 "--stage=editorial_gate",
                 "--resolution=APPROVE",
-                (
-                    '--payload={"editor_note": "LGTM", "output_path":'
-                    f' "{out_md}"}}'
-                ),
+                _payload_arg({"editor_note": "LGTM", "output_path": out_md}),
             ],
             expected_exit=0,
         ),
@@ -319,10 +368,7 @@ class BenchmarkRunner:
                 f"--log_id={log_id}",
                 "--stage=incident_commander_gate",
                 "--resolution=APPROVE",
-                (
-                    '--payload={"severity": "ADVISORY", "output_path":'
-                    f' "{out_md}"}}'
-                ),
+                _payload_arg({"severity": "ADVISORY", "output_path": out_md}),
             ],
             expected_exit=0,
         ),
@@ -354,9 +400,8 @@ class BenchmarkRunner:
                 "start",
                 "--lightflow=examples/pypi_upgrade_guard",
                 f"--log_id={log_id}",
-                (
-                    '--payload={"offline": true, "requirements_path":'
-                    f' "{reqs_path}"}}'
+                _payload_arg(
+                    {"offline": True, "requirements_path": reqs_path}
                 ),
             ],
             expected_exit=2,
@@ -413,9 +458,8 @@ class BenchmarkRunner:
                 "start",
                 "--lightflow=examples/async_job_watcher",
                 f"--log_id={log_id}",
-                (
-                    '--payload={"delay_seconds": 1.0, "status_file":'
-                    f' "{status_file}"}}'
+                _payload_arg(
+                    {"delay_seconds": 1.0, "status_file": status_file}
                 ),
             ],
             expected_exit=0,
@@ -462,8 +506,7 @@ class BenchmarkRunner:
             f"--log_id={log_id}",
             "--stage=align_on_design",
             "--resolution=APPROVE",
-            "--payload="
-            + json.dumps({
+            _payload_arg({
                 "target_dir": scaffold_dir,
                 "workflow_name": "demo_flow",
                 "summary": "Single-stage demo workflow",
@@ -566,10 +609,11 @@ class BenchmarkRunner:
                 "start",
                 "--lightflow=examples/tenant_gitops_onboarding",
                 f"--log_id={log_id}",
-                (
-                    '--payload={"alias": "payments-eu", "sandbox_dir":'
-                    f' "{sandbox_dir}", "require_manual_sa_portal": true}}'
-                ),
+                _payload_arg({
+                    "alias": "payments-eu",
+                    "sandbox_dir": sandbox_dir,
+                    "require_manual_sa_portal": True,
+                }),
             ],
             expected_exit=2,
         ),
