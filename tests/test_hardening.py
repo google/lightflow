@@ -455,9 +455,7 @@ stages:
     class FakeCp1252Stream:
       encoding = "cp1252"
 
-      def reconfigure(
-          self, *, encoding: str = "", errors: str = ""
-      ) -> None:
+      def reconfigure(self, *, encoding: str = "", errors: str = "") -> None:
         reconfigured.append((encoding, errors))
 
     with (
@@ -520,7 +518,8 @@ stages:
     self.assertEqual(loaded_split.payload.to_dict()["n"], 7)
 
     # Unexpected positional arguments when --lightflow is already set raise a
-    # clear ValueError rather than TypeError: got multiple values for 'lightflow'
+    # clear ValueError rather than TypeError: got multiple values for
+    # 'lightflow'.
     with self.assertRaisesRegex(
         ValueError, "Unexpected positional argument.*--payload=@payload.json"
     ):
@@ -643,7 +642,7 @@ stages:
           payload='{"project": "apollo"}',
       )
 
-    # gate_1 inherits "project" from initial start --payload, and receives "reviewer"
+    # gate_1 inherits "project" from start --payload and receives "reviewer"
     with self.assertRaises(engine.OperatorActionSuspended):
       cli.resume(
           lightflow=wf,
@@ -682,8 +681,7 @@ stages:
     actions_py = os.path.join(wf_dir, "hot_actions.py")
     with open(actions_py, "w", encoding="utf-8") as f:
       f.write(
-          "def run_step(payload, **kwargs):\n"
-          "  raise RuntimeError('buggy v1')\n"
+          "def run_step(payload, **kwargs):\n  raise RuntimeError('buggy v1')\n"
       )
     wf_path = os.path.join(wf_dir, "lightflow.yaml")
     with open(wf_path, "w", encoding="utf-8") as f:

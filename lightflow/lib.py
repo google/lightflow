@@ -114,7 +114,10 @@ _LOCK_RETRY_INTERVAL_SECONDS = 0.025
 
 
 def _ensure_utf8_stdio() -> None:
-  """Reconfigures stdout and stderr to UTF-8 on non-UTF-8 console encodings (e.g. Windows cp1252)."""
+  """Reconfigures stdout and stderr to UTF-8 on non-UTF-8 console encodings (e.g.
+
+  Windows cp1252).
+  """
   for stream in (sys.stdout, sys.stderr):
     enc = getattr(stream, "encoding", None)
     if isinstance(enc, str) and enc.lower().replace("-", "") != "utf8":
