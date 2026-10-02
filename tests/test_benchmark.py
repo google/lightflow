@@ -37,7 +37,7 @@ class BenchmarkPayloadTest(unittest.TestCase):
     super().tearDown()
 
   def test_windows_path_round_trips_through_cli_payload_parsing(self) -> None:
-    path = r"C:\Users\Vero\AppData\Local\Temp\report.json"
+    path = r"C:\Users\testuser\AppData\Local\Temp\report.json"
     arg = run_benchmark._payload_arg({"output_path": path})
 
     self.assertEqual(
@@ -79,10 +79,10 @@ class BenchmarkPayloadTest(unittest.TestCase):
   def test_normalize_text_canonicalizes_native_and_json_paths(self) -> None:
     original_work_dir = self.runner.work_dir
     self.runner.work_dir = (
-        r"C:\Users\Vero\AppData\Local\Temp\lightflow_bench_work"
+        r"C:\Users\testuser\AppData\Local\Temp\lightflow_bench_work"
     )
     try:
-      native_path = self.runner.work_dir + r"\output.md"
+      native_path = self.runner.work_dir + r"\subdir\nested\output.md"
       escaped_path = json.dumps(native_path)[1:-1]
 
       normalized = self.runner._normalize_text(
@@ -91,17 +91,24 @@ class BenchmarkPayloadTest(unittest.TestCase):
 
       self.assertEqual(
           normalized,
-          "native=/tmp/lf_bench/output.md; "
-          "escaped=/tmp/lf_bench/output.md",
+          "native=/tmp/lf_bench/subdir/nested/output.md; "
+          "escaped=/tmp/lf_bench/subdir/nested/output.md",
       )
 
       normalized_payload = self.runner._normalize_text(
           json.dumps({"output_path": native_path})
       )
       self.assertEqual(
-          json.loads(normalized_payload),
-          {"output_path": "/tmp/lf_bench/output.md"},
+          normalized_payload,
+          '{"output_path": "/tmp/lf_bench/subdir/nested/output.md"}',
       )
+      self.assertEqual(
+          json.loads(normalized_payload),
+          {"output_path": "/tmp/lf_bench/subdir/nested/output.md"},
+      )
+
+      unrelated = r"unrelated=C:\keep\this; escaped=C:\\keep\\this"
+      self.assertEqual(self.runner._normalize_text(unrelated), unrelated)
     finally:
       self.runner.work_dir = original_work_dir
 

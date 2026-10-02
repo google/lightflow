@@ -194,14 +194,41 @@ class BenchmarkRunner:
 
     def replace_path(path: str, canonical_path: str) -> None:
       nonlocal norm
-      norm = norm.replace(path + os.sep, canonical_path + "/")
-      norm = norm.replace(path, canonical_path)
-      escaped_path = json.dumps(path)[1:-1]
-      escaped_path_with_sep = json.dumps(path + os.sep)[1:-1]
-      norm = norm.replace(
-          escaped_path_with_sep, canonical_path + "/"
+      normalized_path = path.replace("\\", "/")
+      component = r'''[^/\\/"'<>:|?*\r\n,;)\]}]*'''
+      suffix_end = r'''(?=$|[\s"';,)\]}])'''
+
+      # Match separators in either style, but only after a known root. The
+      # escaped pattern handles the doubled backslashes used inside JSON.
+      native_sep = r"[/\\]"
+      escaped_sep = r"(?:/|\\\\)"
+      native_pattern = re.compile(
+          r"(?<![A-Za-z0-9_])"
+          + re.escape(normalized_path).replace("/", native_sep)
+          + r"(?P<suffix>(?:"
+          + native_sep
+          + component
+          + r")*)"
+          + suffix_end
       )
-      norm = norm.replace(escaped_path, canonical_path)
+      escaped_pattern = re.compile(
+          r"(?<![A-Za-z0-9_])"
+          + re.escape(normalized_path).replace("/", escaped_sep)
+          + r"(?P<suffix>(?:"
+          + escaped_sep
+          + component
+          + r")*)"
+          + suffix_end
+      )
+
+      def replace_native(match: re.Match[str]) -> str:
+        return canonical_path + match.group("suffix").replace("\\", "/")
+
+      def replace_escaped(match: re.Match[str]) -> str:
+        return canonical_path + match.group("suffix").replace("\\\\", "/")
+
+      norm = native_pattern.sub(replace_native, norm)
+      norm = escaped_pattern.sub(replace_escaped, norm)
 
     replace_path(self.work_dir, _CANONICAL_WORK_DIR)
     replace_path(self.state_dir, "/tmp/lf_state")
@@ -254,7 +281,6 @@ class BenchmarkRunner:
         cwd=_OSS_ROOT,
         env=self.env,
         capture_output=True,
-        text=True,
         encoding="utf-8",
     )
     if res.returncode != expected_exit:
