@@ -635,7 +635,7 @@ def _parse_payload_arg(
     if stripped.startswith("@") and len(stripped) > 1:
       file_ref = stripped[1:]
       if file_ref == "-":
-        raw_json = sys.stdin.read()
+        raw_json = sys.stdin.read().lstrip("\ufeff")
       else:
         file_path = os.path.expanduser(file_ref)
         with open(file_path, "r", encoding="utf-8-sig") as f:
@@ -956,6 +956,7 @@ class LightflowRunnerCLI:
               "Failed to parse stage operator action json_schema"
               f" configuration: {e}"
           ) from e
+        validation_dict = dict(input_dict)
         if isinstance(schema_dict, dict):
           props = schema_dict.get("properties")
           req_keys = schema_dict.get("required")
@@ -963,6 +964,7 @@ class LightflowRunnerCLI:
               isinstance(req_keys, list) and "approved" in req_keys
           ):
             input_dict.setdefault("approved", True)
+            validation_dict.setdefault("approved", True)
           if isinstance(req_keys, list):
             stage_output_keys: set[str] = set()
             raw_outputs = payload_dict.get(engine.STAGE_OUTPUTS_KEY)
@@ -973,7 +975,7 @@ class LightflowRunnerCLI:
             for req_key in req_keys:
               if (
                   isinstance(req_key, str)
-                  and req_key not in input_dict
+                  and req_key not in validation_dict
                   and req_key in payload_dict
                   and req_key not in stage_output_keys
                   and req_key
@@ -986,10 +988,10 @@ class LightflowRunnerCLI:
                       "rejection_comment",
                   )
               ):
-                input_dict[req_key] = payload_dict[req_key]
+                validation_dict[req_key] = payload_dict[req_key]
         try:
           schema.validate_json_schema(
-              instance=input_dict, schema_dict=schema_dict
+              instance=validation_dict, schema_dict=schema_dict
           )
         except Exception as e:
           raise ValueError(

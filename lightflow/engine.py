@@ -23,6 +23,7 @@ import copy
 import graphlib
 import hashlib
 import importlib
+import importlib.util
 import inspect
 import json
 import operator
@@ -1288,7 +1289,16 @@ class LightflowEngine:
             if not in_same_root or stale_on_disk:
               for mod_name in list(sys.modules):
                 if mod_name == top_pkg or mod_name.startswith(top_pkg + "."):
-                  sys.modules.pop(mod_name, None)
+                  evicted = sys.modules.pop(mod_name, None)
+                  evicted_file = getattr(evicted, "__file__", None)
+                  if stale_on_disk and evicted_file:
+                    try:
+                      pyc_path = importlib.util.cache_from_source(evicted_file)
+                      if os.path.isfile(pyc_path):
+                        os.remove(pyc_path)
+                    except (OSError, ValueError, NotImplementedError):
+                      # Best-effort bytecode cache invalidation on read-only FS.
+                      pass
               importlib.invalidate_caches()
           break
 

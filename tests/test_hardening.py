@@ -629,8 +629,8 @@ stages:
       instructions: "'Second gate'"
       json_schema: >
         {"type": "object",
-         "properties": {"reviewer": {"type": "string"}},
-         "required": ["reviewer"]}
+         "properties": {"project": {"type": "string"}, "reviewer": {"type": "string"}},
+         "required": ["project", "reviewer"]}
 """,
     )
     cli = lib.LightflowRunnerCLI()
@@ -651,7 +651,8 @@ stages:
           payload='{"reviewer": "alice"}',
       )
 
-    # gate_2 must NOT inherit "reviewer" from gate_1's output
+    # gate_2 inherits "project" from start --payload, but must NOT inherit
+    # "reviewer" from gate_1's output
     with self.assertRaisesRegex(
         ValueError, "failed JSON schema validation.*'reviewer'"
     ):
@@ -662,7 +663,8 @@ stages:
           payload="{}",
       )
 
-    # Supplying "reviewer" explicitly for gate_2 succeeds
+    # Supplying "reviewer" explicitly for gate_2 succeeds (while "project"
+    # is still back-filled from initial start --payload)
     cli.resume(
         lightflow=wf,
         log_id="two_gates_run",
@@ -673,7 +675,9 @@ stages:
     assert passport is not None
     p_dict = passport.payload.to_dict()
     self.assertEqual(p_dict["outputs"]["gate_1"]["reviewer"], "alice")
+    self.assertNotIn("project", p_dict["outputs"]["gate_1"])
     self.assertEqual(p_dict["outputs"]["gate_2"]["reviewer"], "bob")
+    self.assertNotIn("project", p_dict["outputs"]["gate_2"])
 
   def test_local_action_module_reloads_when_edited_on_disk(self) -> None:
     wf_dir = os.path.join(self.temp_dir, "hot_reload_wf")

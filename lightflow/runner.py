@@ -222,7 +222,11 @@ def _dispatch_argv(wrapper: CliWrapper, argv: list[str]) -> None:
       if "=" in body:
         k, v = body.split("=", 1)
         norm_k = k.replace("-", "_")
-        if v.lstrip().startswith(("{", "[")) and not _is_balanced_json_like(v):
+        if (
+            norm_k == "payload"
+            and v.lstrip().startswith(("{", "["))
+            and not _is_balanced_json_like(v)
+        ):
           while (
               i + 1 < len(argv)
               and not argv[i + 1].startswith("--")
@@ -237,7 +241,11 @@ def _dispatch_argv(wrapper: CliWrapper, argv: list[str]) -> None:
         norm_k = body.replace("-", "_")
         v = argv[i + 1]
         i += 1
-        if v.lstrip().startswith(("{", "[")) and not _is_balanced_json_like(v):
+        if (
+            norm_k == "payload"
+            and v.lstrip().startswith(("{", "["))
+            and not _is_balanced_json_like(v)
+        ):
           while (
               i + 1 < len(argv)
               and not argv[i + 1].startswith("--")
@@ -254,6 +262,8 @@ def _dispatch_argv(wrapper: CliWrapper, argv: list[str]) -> None:
 
   if "payload_file" in kw_args:
     pf = kw_args.pop("payload_file")
+    if not isinstance(pf, str) or not pf.strip():
+      raise ValueError("--payload_file requires a file path.")
     if "payload" in kw_args:
       raise ValueError("Cannot specify both --payload and --payload_file.")
     kw_args["payload"] = f"@{pf}"
