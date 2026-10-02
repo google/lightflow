@@ -154,6 +154,36 @@ class CliWrapper:
     return attr
 
 
+def _is_balanced_json_like(text: str) -> bool:
+  """Returns True once opening '{'/'[' delimiters are balanced outside quotes."""
+  s = text.strip()
+  if not s or s[0] not in ("{", "["):
+    return True
+  depth = 0
+  in_str = False
+  quote_char = ""
+  escape = False
+  for ch in s:
+    if escape:
+      escape = False
+      continue
+    if ch == "\\":
+      escape = True
+      continue
+    if in_str:
+      if ch == quote_char:
+        in_str = False
+      continue
+    if ch in ('"', "'"):
+      in_str = True
+      quote_char = ch
+    elif ch in ("{", "["):
+      depth += 1
+    elif ch in ("}", "]"):
+      depth -= 1
+  return depth <= 0 and s[-1] in ("}", "]")
+
+
 def _dispatch_argv(wrapper: CliWrapper, argv: list[str]) -> None:
   """Dispatches command-line arguments to a CLI command."""
   commands = sorted(dir(wrapper))
@@ -191,23 +221,57 @@ def _dispatch_argv(wrapper: CliWrapper, argv: list[str]) -> None:
       body = tok[2:]
       if "=" in body:
         k, v = body.split("=", 1)
-        kw_args[k.replace("-", "_")] = v
+        norm_k = k.replace("-", "_")
+        if v.lstrip().startswith(("{", "[")) and not _is_balanced_json_like(v):
+          while (
+              i + 1 < len(argv)
+              and not argv[i + 1].startswith("--")
+              and not _is_balanced_json_like(v)
+          ):
+            i += 1
+            v = f"{v} {argv[i]}"
+        kw_args[norm_k] = v
       elif body.startswith("no-") or body.startswith("no_"):
         kw_args[body[3:].replace("-", "_")] = False
       elif i + 1 < len(argv) and not argv[i + 1].startswith("--"):
-        kw_args[body.replace("-", "_")] = argv[i + 1]
+        norm_k = body.replace("-", "_")
+        v = argv[i + 1]
         i += 1
+        if v.lstrip().startswith(("{", "[")) and not _is_balanced_json_like(v):
+          while (
+              i + 1 < len(argv)
+              and not argv[i + 1].startswith("--")
+              and not _is_balanced_json_like(v)
+          ):
+            i += 1
+            v = f"{v} {argv[i]}"
+        kw_args[norm_k] = v
       else:
         kw_args[body.replace("-", "_")] = True
     else:
       pos_args.append(tok)
     i += 1
 
+  if "payload_file" in kw_args:
+    pf = kw_args.pop("payload_file")
+    if "payload" in kw_args:
+      raise ValueError("Cannot specify both --payload and --payload_file.")
+    kw_args["payload"] = f"@{pf}"
+
+  if pos_args and ("lightflow" in kw_args or "workflow" in kw_args):
+    raise ValueError(
+        f"Unexpected positional argument(s): {pos_args}. If passing JSON via"
+        " --payload on Windows PowerShell, quote stripping may have split your"
+        " JSON across arguments; pass a file via --payload=@payload.json"
+        " instead."
+    )
+
   target(*pos_args, **kw_args)
 
 
 def run_cli() -> None:
   """Runs the Lightflow CLI."""
+  lib._ensure_utf8_stdio()  # pylint: disable=protected-access
   try:
     _dispatch_argv(CliWrapper(lib.LightflowRunnerCLI()), sys.argv[1:])
   except (

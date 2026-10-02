@@ -388,7 +388,9 @@ stages:
     real_commonpath = os.path.commonpath
 
     def cross_drive_commonpath(paths: list[str]) -> str:
-      if paths[0] != os.path.realpath(self.temp_dir):
+      if os.path.normcase(paths[0]) != os.path.normcase(
+          os.path.realpath(self.temp_dir)
+      ):
         raise ValueError("Paths don't have the same drive")
       return real_commonpath(paths)
 

@@ -113,6 +113,22 @@ _LOCK_RETRY_SECONDS = 0.25
 _LOCK_RETRY_INTERVAL_SECONDS = 0.025
 
 
+def _ensure_utf8_stdio() -> None:
+  """Reconfigures stdout and stderr to UTF-8 on non-UTF-8 console encodings (e.g. Windows cp1252)."""
+  for stream in (sys.stdout, sys.stderr):
+    enc = getattr(stream, "encoding", None)
+    if isinstance(enc, str) and enc.lower().replace("-", "") != "utf8":
+      reconfigure = getattr(stream, "reconfigure", None)
+      if callable(reconfigure):
+        try:
+          reconfigure(encoding="utf-8", errors="replace")
+        except Exception:  # pylint: disable=broad-exception-caught
+          pass
+
+
+_ensure_utf8_stdio()
+
+
 def _try_lock(fd: Any, exclusive: bool) -> bool:
   """Takes a non-blocking lock; returns False if another process holds it."""
   try:
@@ -391,8 +407,8 @@ class PassportManager:
           f"Failed to save passport state to disk: {e}"
       ) from e
 
-  def delete_state(self) -> None:
-    """Deletes the workflow state directory and advisory lock file."""
+  def delete_state(self, remove_lock: bool = True) -> None:
+    """Deletes the workflow state directory and optionally the advisory lock file."""
     if os.path.islink(self.resolved_path):
       raise ValueError(
           f"Refusing to delete symlinked state path: '{self.resolved_path}'."
@@ -400,12 +416,13 @@ class PassportManager:
     self._validate_path_safety(self.resolved_path)
     if os.path.exists(self.resolved_path):
       shutil.rmtree(self.resolved_path)
-    lock_path = self.resolved_path + ".lock"
-    if os.path.exists(lock_path) and not os.path.islink(lock_path):
-      try:
-        os.remove(lock_path)
-      except OSError:
-        pass
+    if remove_lock:
+      lock_path = self.resolved_path + ".lock"
+      if os.path.exists(lock_path) and not os.path.islink(lock_path):
+        try:
+          os.remove(lock_path)
+        except OSError:
+          pass
 
 
 def generate_status_mermaid(
@@ -419,17 +436,29 @@ def generate_status_mermaid(
       stage_statuses[stamp.stage_name] = stamp.status
       stage_messages[stamp.stage_name] = stamp.message
 
+  node_ids: dict[str, str] = {}
+  used_ids: set[str] = set()
+  for stage in workflow.stages:
+    base_id = re.sub(r"[^a-zA-Z0-9_]", "_", stage.name) or "stage"
+    candidate = base_id
+    suffix_idx = 2
+    while candidate in used_ids:
+      candidate = f"{base_id}_{suffix_idx}"
+      suffix_idx += 1
+    used_ids.add(candidate)
+    node_ids[stage.name] = candidate
+
   lines = ["```mermaid", "graph TD"]
 
   for stage in workflow.stages:
     name = stage.name
-    node_id = re.sub(r"[^a-zA-Z0-9_]", "_", name)
+    node_id = node_ids[name]
     desc = html.escape(stage.description or name).replace('"', '\\"')
     status = stage_statuses.get(name, schema.StampStatus.STATUS_UNSPECIFIED)
     msg = stage_messages.get(name, "")
     rollback_suffix = ""
     if passport is not None and status == schema.StampStatus.FAILED:
-      if "Rollback executed successfully:" in msg:
+      if "Rollback executed successfully" in msg:
         rollback_suffix = " [rolled back]"
       elif "Rollback action " in msg and " failed:" in msg:
         rollback_suffix = " [rollback failed]"
@@ -479,9 +508,9 @@ def generate_status_mermaid(
       )
 
   for stage in workflow.stages:
-    node_id = re.sub(r"[^a-zA-Z0-9_]", "_", stage.name)
+    node_id = node_ids[stage.name]
     for parent in stage.run_after:
-      parent_id = re.sub(r"[^a-zA-Z0-9_]", "_", parent)
+      parent_id = node_ids.get(parent, re.sub(r"[^a-zA-Z0-9_]", "_", parent))
       if stage.run_if:
         sanitized_cond = stage.run_if.replace('"', "'")
         lines.append(f'  {parent_id} -. "if: {sanitized_cond}" .-> {node_id}')
@@ -589,11 +618,64 @@ def _raise_for_run_state(
     )
 
 
+def _parse_payload_arg(
+    payload: str | dict[str, Any],
+    *,
+    context_label: str = "--payload",
+    allow_outputs: bool = False,
+) -> dict[str, Any]:
+  """Parses a payload dict, JSON string, or `@<file>` / `@-` file reference."""
+  if isinstance(payload, dict):
+    parsed: Any = dict(payload)
+  elif isinstance(payload, str):
+    stripped = payload.strip()
+    if stripped.startswith("@") and len(stripped) > 1:
+      file_ref = stripped[1:]
+      if file_ref == "-":
+        raw_json = sys.stdin.read()
+      else:
+        file_path = os.path.expanduser(file_ref)
+        with open(file_path, "r", encoding="utf-8-sig") as f:
+          raw_json = f.read()
+      try:
+        parsed = json.loads(raw_json)
+      except json.JSONDecodeError as e:
+        raise ValueError(
+            f"Failed to parse {context_label} JSON from '{stripped}': {e}"
+        ) from e
+    else:
+      try:
+        parsed = json.loads(payload)
+      except json.JSONDecodeError as e:
+        raise ValueError(
+            f"Failed to parse {context_label} JSON: {e}. Tip: you can pass a"
+            " JSON file via --payload=@payload.json (or --payload=@- for"
+            " stdin)."
+        ) from e
+  else:
+    parsed = payload
+
+  if not isinstance(parsed, dict):
+    raise ValueError(
+        f"{context_label} must be a JSON object (dictionary), got:"
+        f" {type(parsed).__name__}"
+    )
+
+  if not allow_outputs and engine.STAGE_OUTPUTS_KEY in parsed:
+    raise ValueError(
+        f"{context_label} cannot contain reserved key"
+        f" '{engine.STAGE_OUTPUTS_KEY}'; stage outputs are managed by the"
+        " engine."
+    )
+  return dict(parsed)
+
+
 class LightflowRunnerCLI:
   """CLI interface for executing, inspecting, and resuming Lightflow DAGs.
 
   Core Lifecycle & Exit Codes:
-    - start --lightflow=<path> --log_id=<id> [--payload='{...}'] [--dry_run]:
+    - start --lightflow=<path> --log_id=<id> [--payload='{...}' |
+      --payload=@file.json] [--dry_run]:
       Starts a new run (or previews the DAG trace with --dry_run).
       * Exit 0: Completed all stages.
       * Exit 2 (SUSPENDED): Paused at an `operator_action` human-in-the-loop
@@ -604,7 +686,7 @@ class LightflowRunnerCLI:
         (never `start --force`, which wipes the Passport and repeats completed
         upstream side effects).
     - resume --lightflow=<path> --log_id=<id> [--stage=<gate>
-      --resolution=APPROVE|REJECT --payload='{...}']:
+      --resolution=APPROVE|REJECT --payload='{...}' | --payload=@file.json]:
       Resolves a paused `operator_action` gate or re-arms failed stages and
       their downstream dependents without re-running completed upstream stages.
     - status --lightflow=<path> --log_id=<id> [--verbose]:
@@ -654,21 +736,12 @@ class LightflowRunnerCLI:
       except Exception as e:
         raise engine.EngineError(f"Compilation Error: {e}") from e
 
-      if isinstance(payload, str):
-        initial_payload = json.loads(payload)
-      elif isinstance(payload, dict):
-        initial_payload = dict(payload)
-      else:
-        initial_payload = payload
-      if not isinstance(initial_payload, dict):
-        raise ValueError(
-            "--payload must be a JSON object (dictionary), got:"
-            f" {type(initial_payload).__name__}"
-        )
-      initial_payload = dict(initial_payload)
+      initial_payload = _parse_payload_arg(
+          payload, context_label="--payload", allow_outputs=False
+      )
 
       if force:
-        pm.delete_state()
+        pm.delete_state(remove_lock=False)
 
       passport = pm.load_passport()
       if passport:
@@ -816,25 +889,15 @@ class LightflowRunnerCLI:
         payload_dict["resolution"] = "REJECT"
 
         if payload and payload not in ("{}", ""):
-          if isinstance(payload, dict):
-            input_dict = payload
-          else:
-            try:
-              input_dict = json.loads(payload)
-            except json.JSONDecodeError as e:
-              raise ValueError(
-                  f"Failed to parse resume payload JSON: {e}"
-              ) from e
-
-          if not isinstance(input_dict, dict):
-            raise ValueError(
-                f"Operator action stage '{stage}' resume payload must be a"
-                " JSON object (dictionary) to be merged, got:"
-                f" {type(input_dict).__name__}"
-            )
+          input_dict = _parse_payload_arg(
+              payload,
+              context_label=f"Operator action stage '{stage}' resume payload",
+              allow_outputs=False,
+          )
           payload_dict.update(input_dict)
           stage_output.update(input_dict)
 
+        payload_dict["operator"] = operator
         payload_dict["approved"] = False
         payload_dict["resolution"] = "REJECT"
         stage_output["approved"] = False
@@ -866,20 +929,11 @@ class LightflowRunnerCLI:
         self._execute_engine_loop(runner, ordered_stages, passport, pm)
         return
 
-      if isinstance(payload, dict):
-        input_dict = payload
-      else:
-        try:
-          input_dict = json.loads(payload)
-        except json.JSONDecodeError as e:
-          raise ValueError(f"Failed to parse resume payload JSON: {e}") from e
-
-      if not isinstance(input_dict, dict):
-        raise ValueError(
-            f"Operator action stage '{stage}' resume payload must be a JSON"
-            " object (dictionary) to be merged, got:"
-            f" {type(input_dict).__name__}"
-        )
+      input_dict = _parse_payload_arg(
+          payload,
+          context_label=f"Operator action stage '{stage}' resume payload",
+          allow_outputs=False,
+      )
 
       approved_value = input_dict.get("approved", True)
       if not (isinstance(approved_value, bool) and approved_value):
@@ -907,11 +961,18 @@ class LightflowRunnerCLI:
           ):
             input_dict.setdefault("approved", True)
           if isinstance(req_keys, list):
+            stage_output_keys: set[str] = set()
+            raw_outputs = payload_dict.get(engine.STAGE_OUTPUTS_KEY)
+            if isinstance(raw_outputs, dict):
+              for stage_out in raw_outputs.values():
+                if isinstance(stage_out, dict):
+                  stage_output_keys.update(stage_out.keys())
             for req_key in req_keys:
               if (
                   isinstance(req_key, str)
                   and req_key not in input_dict
                   and req_key in payload_dict
+                  and req_key not in stage_output_keys
                   and req_key
                   not in (
                       "outputs",
@@ -938,6 +999,7 @@ class LightflowRunnerCLI:
       if comment:
         payload_dict["approval_note"] = comment
         stage_output["comment"] = comment
+      payload_dict["operator"] = operator
       payload_dict["approved"] = True
       payload_dict["resolution"] = "APPROVE"
       stage_output["approved"] = True
@@ -1018,19 +1080,9 @@ class LightflowRunnerCLI:
 
     extra_payload: dict[str, Any] = {}
     if payload and payload not in ("{}", ""):
-      if isinstance(payload, dict):
-        parsed = payload
-      else:
-        try:
-          parsed = json.loads(payload)
-        except json.JSONDecodeError as e:
-          raise ValueError(f"Failed to parse resume payload JSON: {e}") from e
-      if not isinstance(parsed, dict):
-        raise ValueError(
-            "Resume payload must be a JSON object (dictionary), got:"
-            f" {type(parsed).__name__}"
-        )
-      extra_payload = parsed
+      extra_payload = _parse_payload_arg(
+          payload, context_label="Resume payload", allow_outputs=False
+      )
 
     rearmed = self._rearm_failed_stages(
         runner, ordered_stages, passport, stage, cascade, operator
@@ -1288,18 +1340,9 @@ class LightflowRunnerCLI:
     workflow_path = os.path.expanduser(resolved_lightflow)
     workflow_proto = schema.load_lightflow(workflow_path)
 
-    if isinstance(payload, str):
-      initial_payload = json.loads(payload)
-    elif isinstance(payload, dict):
-      initial_payload = payload
-    else:
-      initial_payload = payload
-    if not isinstance(initial_payload, dict):
-      raise ValueError(
-          "--payload must be a JSON object (dictionary), got:"
-          f" {type(initial_payload).__name__}"
-      )
-    current_payload = dict(initial_payload)
+    current_payload = _parse_payload_arg(
+        payload, context_label="--payload", allow_outputs=True
+    )
 
     print(f"=== DRY RUN: {workflow_proto.name} ===")
     print(f"Initial Payload: {current_payload}\n")
@@ -1376,10 +1419,7 @@ class LightflowRunnerCLI:
           )
           if simulated is not None:
             sim_payload, sim_msg = simulated
-            current_payload.update(sim_payload)
-            engine.record_stage_outputs(
-                current_payload, stage_name, sim_payload
-            )
+            engine.merge_stage_payload(current_payload, stage_name, sim_payload)
             print(f"    Dry-Run Output: {sim_msg}")
       elif stage_proto.HasField("python_action") and stage_proto.python_action:
         print(
@@ -1396,8 +1436,7 @@ class LightflowRunnerCLI:
         )
         if simulated is not None:
           sim_payload, sim_msg = simulated
-          current_payload.update(sim_payload)
-          engine.record_stage_outputs(current_payload, stage_name, sim_payload)
+          engine.merge_stage_payload(current_payload, stage_name, sim_payload)
           print(f"    Dry-Run Output: {sim_msg}")
       elif (
           stage_proto.HasField("operator_action")
@@ -1646,14 +1685,14 @@ class LightflowRunnerCLI:
     pm = PassportManager(log_id)
     try:
       with pm.lock(exclusive=True):
-        pm.delete_state()
-        lock_path = pm.resolved_path + ".lock"
-        if os.path.exists(lock_path):
-          try:
-            os.remove(lock_path)
-          except OSError:
-            pass
-        print(f"Successfully cleaned up state for log ID: {log_id}")
+        pm.delete_state(remove_lock=False)
+      lock_path = pm.resolved_path + ".lock"
+      if os.path.exists(lock_path) and not os.path.islink(lock_path):
+        try:
+          os.remove(lock_path)
+        except OSError:
+          pass
+      print(f"Successfully cleaned up state for log ID: {log_id}")
     except RuntimeError as e:
       raise RuntimeError(
           f"Cannot clean up state for log ID '{log_id}' because the lightflow"

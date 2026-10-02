@@ -21,6 +21,7 @@ from __future__ import annotations
 import ast
 import copy
 import graphlib
+import hashlib
 import importlib
 import inspect
 import json
@@ -727,6 +728,30 @@ def record_stage_outputs(
   payload_dict[STAGE_OUTPUTS_KEY] = outputs
 
 
+def merge_stage_payload(
+    payload_dict: dict[str, Any],
+    stage_name: str,
+    stage_output: dict[str, Any],
+) -> None:
+  """Merges stage output into payload (excluding reserved `outputs`) and records under `payload.outputs.<stage_name>`."""
+  for key, value in stage_output.items():
+    if key != STAGE_OUTPUTS_KEY:
+      payload_dict[key] = value
+  record_stage_outputs(payload_dict, stage_name, stage_output)
+
+
+_LOADED_MODULE_HASHES: dict[str, bytes] = {}
+
+
+def _file_fingerprint(path: str) -> Optional[bytes]:
+  """Returns the SHA-256 digest of a source file, or None if unreadable."""
+  try:
+    with open(path, "rb") as f:
+      return hashlib.sha256(f.read()).digest()
+  except OSError:
+    return None
+
+
 def _normalize_static_kwargs(value: Any) -> Any:
   """Normalizes struct numbers: converts whole floats to int."""
   if isinstance(value, float) and value.is_integer():
@@ -1228,21 +1253,39 @@ class LightflowEngine:
             or os.path.isfile(local_pkg)
             or os.path.isfile(top_pkg_init)
         ):
-          existing = sys.modules.get(module_path) or sys.modules.get(top_pkg)
+          target_mod = sys.modules.get(module_path)
+          existing = target_mod or sys.modules.get(top_pkg)
           existing_file = (
               getattr(existing, "__file__", None) if existing else None
+          )
+          target_file = (
+              getattr(target_mod, "__file__", None)
+              if target_mod is not None
+              else existing_file
           )
           if existing is not None:
             try:
               in_same_root = bool(existing_file) and (
-                  os.path.commonpath(
-                      [os.path.realpath(root), os.path.realpath(existing_file)]
-                  )
-                  == os.path.realpath(root)
+                  os.path.commonpath([
+                      os.path.normcase(os.path.realpath(root)),
+                      os.path.normcase(os.path.realpath(existing_file)),
+                  ])
+                  == os.path.normcase(os.path.realpath(root))
               )
             except ValueError:
               in_same_root = False
-            if not in_same_root:
+            stale_on_disk = False
+            if in_same_root and target_file and os.path.isfile(target_file):
+              real_target = os.path.realpath(target_file)
+              current_fp = _file_fingerprint(real_target)
+              prev_fp = _LOADED_MODULE_HASHES.get(real_target)
+              if (
+                  prev_fp is not None
+                  and current_fp is not None
+                  and current_fp != prev_fp
+              ):
+                stale_on_disk = True
+            if not in_same_root or stale_on_disk:
               for mod_name in list(sys.modules):
                 if mod_name == top_pkg or mod_name.startswith(top_pkg + "."):
                   sys.modules.pop(mod_name, None)
@@ -1250,6 +1293,12 @@ class LightflowEngine:
           break
 
     module = importlib.import_module(module_path)
+    mod_file = getattr(module, "__file__", None)
+    if mod_file and os.path.isfile(mod_file):
+      real_mod_file = os.path.realpath(mod_file)
+      fp = _file_fingerprint(real_mod_file)
+      if fp is not None:
+        _LOADED_MODULE_HASHES[real_mod_file] = fp
     func = getattr(module, func_name)
     if not callable(func):
       raise TypeError(f"Object '{func_name}' is not callable.")
@@ -1385,12 +1434,17 @@ class LightflowEngine:
         f"  Stage '{stage_name}' failed. Executing rollback action"
         f" '{action_id}'..."
     )
+    rollback_timeout = (
+        stage.timeout_seconds if stage.HasField("timeout_seconds") else None
+    )
     try:
-      rollback_payload, rollback_msg = self._execute_action(
-          stage_name, stage.rollback_action, payload_dict
+      rollback_payload, rollback_msg = self._execute_action_with_timeout(
+          stage_name,
+          stage.rollback_action,
+          payload_dict,
+          timeout=rollback_timeout,
       )
-      payload_dict.update(rollback_payload)
-      record_stage_outputs(payload_dict, stage_name, rollback_payload)
+      merge_stage_payload(payload_dict, stage_name, rollback_payload)
       passport.payload.CopyFrom(payload_dict)
       suffix = f": {rollback_msg}" if rollback_msg else "."
       failed_stamp.message += f"\nRollback executed successfully{suffix}"
@@ -1617,8 +1671,7 @@ class LightflowEngine:
           new_payload, message = self._execute_action_with_timeout(
               stage_name, action, payload_dict, timeout=tick_timeout
           )
-          payload_dict.update(new_payload)
-          record_stage_outputs(payload_dict, stage_name, new_payload)
+          merge_stage_payload(payload_dict, stage_name, new_payload)
           passport.payload.CopyFrom(payload_dict)
           if save_callback:
             save_callback(passport)
@@ -1754,8 +1807,7 @@ class LightflowEngine:
               stage_name, python_action, payload_dict, timeout=timeout
           )
 
-          payload_dict.update(new_payload)
-          record_stage_outputs(payload_dict, stage_name, new_payload)
+          merge_stage_payload(payload_dict, stage_name, new_payload)
           passport.payload.CopyFrom(payload_dict)
 
           completed_stamp = passport.stamps.add()

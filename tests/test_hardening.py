@@ -22,6 +22,7 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 from typing import Any
 import unittest
 from unittest import mock
@@ -35,11 +36,13 @@ try:
   from ..lightflow import engine
   from ..lightflow import lib
   from ..lightflow import mcp_server
+  from ..lightflow import runner
   from ..lightflow import schema
 except (ImportError, ValueError):
   from lightflow import engine  # pyrefly: ignore[missing-import]
   from lightflow import lib  # pyrefly: ignore[missing-import]
   from lightflow import mcp_server  # pyrefly: ignore[missing-import]
+  from lightflow import runner  # pyrefly: ignore[missing-import]
   from lightflow import schema  # pyrefly: ignore[missing-import]
 # pylint: enable=g-import-not-at-top,g-bad-import-order
 
@@ -63,6 +66,19 @@ def act_step_2(payload: dict[str, Any], **_: Any) -> tuple[dict[str, Any], str]:
 def act_step_3(payload: dict[str, Any], **_: Any) -> tuple[dict[str, Any], str]:
   _CALLS.append("step_3")
   return {"step_3_done": True}, "step 3 ok"
+
+
+def act_clobber_outputs(
+    payload: dict[str, Any], **_: Any
+) -> tuple[dict[str, Any], str]:
+  return {"outputs": "corrupted", "real_val": 42}, "tried to clobber outputs"
+
+
+def act_slow_rollback(
+    payload: dict[str, Any], **_: Any
+) -> tuple[dict[str, Any], str]:
+  time.sleep(2.0)
+  return {"rolled_back": True}, "too slow"
 
 
 class HardeningTest(unittest.TestCase):
@@ -430,6 +446,314 @@ stages:
         os.environ.pop("ANTIGRAVITY_CONVERSATION_ID", None)
       else:
         os.environ["ANTIGRAVITY_CONVERSATION_ID"] = orig_conv
+
+  def test_utf8_stdio_reconfigure_and_payload_file_and_split_json_argv(
+      self,
+  ) -> None:
+    reconfigured: list[tuple[str, str]] = []
+
+    class FakeCp1252Stream:
+      encoding = "cp1252"
+
+      def reconfigure(
+          self, *, encoding: str = "", errors: str = ""
+      ) -> None:
+        reconfigured.append((encoding, errors))
+
+    with (
+        mock.patch.object(sys, "stdout", FakeCp1252Stream()),
+        mock.patch.object(sys, "stderr", FakeCp1252Stream()),
+    ):
+      lib._ensure_utf8_stdio()
+    self.assertEqual(reconfigured, [("utf-8", "replace"), ("utf-8", "replace")])
+
+    wf = self._write(
+        "simple.yaml",
+        f"""
+name: simple_wf
+actions:
+  - id: ok
+    python_import: {__name__}.act_ok
+stages:
+  - name: s1
+    python_action:
+      action_id: ok
+""",
+    )
+    payload_file = os.path.join(self.temp_dir, "payload.json")
+    # Write with UTF-8 BOM to simulate Windows PowerShell Out-File / Set-Content
+    with open(payload_file, "wb") as f:
+      f.write(b'\xef\xbb\xbf{"greeting": "hello world", "count": 3}')
+
+    wrapper = runner.CliWrapper(lib.LightflowRunnerCLI())
+    runner._dispatch_argv(
+        wrapper,
+        [
+            "start",
+            f"--lightflow={wf}",
+            "--log_id=run_at_file",
+            f"--payload=@{payload_file}",
+        ],
+    )
+    loaded = lib.PassportManager("run_at_file").load_passport()
+    assert loaded is not None
+    self.assertEqual(loaded.payload.to_dict()["greeting"], "hello world")
+    self.assertEqual(loaded.payload.to_dict()["count"], 3)
+
+    # Also test --payload_file=<path> and PowerShell split-JSON token reassembly
+    runner._dispatch_argv(
+        wrapper,
+        [
+            "start",
+            f"--lightflow={wf}",
+            "--log_id=run_split_tokens",
+            '--payload={"msg":',
+            '"split',
+            'across",',
+            '"n":',
+            "7}",
+        ],
+    )
+    loaded_split = lib.PassportManager("run_split_tokens").load_passport()
+    assert loaded_split is not None
+    self.assertEqual(loaded_split.payload.to_dict()["msg"], "split across")
+    self.assertEqual(loaded_split.payload.to_dict()["n"], 7)
+
+    # Unexpected positional arguments when --lightflow is already set raise a
+    # clear ValueError rather than TypeError: got multiple values for 'lightflow'
+    with self.assertRaisesRegex(
+        ValueError, "Unexpected positional argument.*--payload=@payload.json"
+    ):
+      runner._dispatch_argv(
+          wrapper,
+          ["start", f"--lightflow={wf}", "--log_id=r_bad", "stray_arg"],
+      )
+
+  def test_reserved_outputs_key_rejected_in_payload_and_stripped_from_actions(
+      self,
+  ) -> None:
+    wf = self._gate_manifest()
+    cli = lib.LightflowRunnerCLI()
+    with self.assertRaisesRegex(
+        ValueError, "cannot contain reserved key 'outputs'"
+    ):
+      cli.start(
+          lightflow=wf,
+          log_id="forged_start",
+          payload='{"outputs": {"s1": {"ok": true}}}',
+      )
+
+    with self.assertRaises(engine.OperatorActionSuspended):
+      cli.start(lightflow=wf, log_id="forged_resume")
+
+    with self.assertRaisesRegex(
+        ValueError, "cannot contain reserved key 'outputs'"
+    ):
+      cli.resume(
+          lightflow=wf,
+          log_id="forged_resume",
+          stage="human_gate",
+          payload='{"note": "hi", "outputs": {"s1": {"forged": true}}}',
+      )
+
+    # Action returning {"outputs": "corrupted"} cannot clobber payload.outputs
+    clobber_wf = self._write(
+        "clobber.yaml",
+        f"""
+name: clobber_wf
+actions:
+  - id: ok
+    python_import: {__name__}.act_ok
+  - id: clobber
+    python_import: {__name__}.act_clobber_outputs
+stages:
+  - name: s1
+    python_action:
+      action_id: ok
+  - name: s2
+    run_after: [s1]
+    python_action:
+      action_id: clobber
+""",
+    )
+    cli.start(lightflow=clobber_wf, log_id="clobber_run")
+    passport = lib.PassportManager("clobber_run").load_passport()
+    assert passport is not None
+    p_dict = passport.payload.to_dict()
+    self.assertEqual(p_dict["outputs"]["s1"], {"ok": True})
+    self.assertEqual(p_dict["outputs"]["s2"], {"real_val": 42})
+
+  def test_start_force_preserves_held_lockfile_inode(self) -> None:
+    wf = self._write(
+        "force_lock.yaml",
+        f"""
+name: force_lock_wf
+actions:
+  - id: ok
+    python_import: {__name__}.act_ok
+stages:
+  - name: s1
+    python_action:
+      action_id: ok
+""",
+    )
+    cli = lib.LightflowRunnerCLI()
+    cli.start(lightflow=wf, log_id="force_lock_run")
+    pm = lib.PassportManager("force_lock_run")
+    lock_path = pm.resolved_path + ".lock"
+    self.assertTrue(os.path.exists(lock_path))
+    inode_before = os.stat(lock_path).st_ino
+
+    cli.start(lightflow=wf, log_id="force_lock_run", force=True)
+    self.assertTrue(os.path.exists(lock_path))
+    inode_after = os.stat(lock_path).st_ino
+    self.assertEqual(inode_before, inode_after)
+
+  def test_multi_gate_required_fields_do_not_leak_from_earlier_gates(
+      self,
+  ) -> None:
+    wf = self._write(
+        "two_gates.yaml",
+        """
+name: two_gates_wf
+stages:
+  - name: gate_1
+    operator_action:
+      instructions: "'First gate'"
+      json_schema: >
+        {"type": "object",
+         "properties": {"project": {"type": "string"}, "reviewer": {"type": "string"}},
+         "required": ["project", "reviewer"]}
+  - name: gate_2
+    run_after: [gate_1]
+    operator_action:
+      instructions: "'Second gate'"
+      json_schema: >
+        {"type": "object",
+         "properties": {"reviewer": {"type": "string"}},
+         "required": ["reviewer"]}
+""",
+    )
+    cli = lib.LightflowRunnerCLI()
+    # Start with initial payload containing "project"
+    with self.assertRaises(engine.OperatorActionSuspended):
+      cli.start(
+          lightflow=wf,
+          log_id="two_gates_run",
+          payload='{"project": "apollo"}',
+      )
+
+    # gate_1 inherits "project" from initial start --payload, and receives "reviewer"
+    with self.assertRaises(engine.OperatorActionSuspended):
+      cli.resume(
+          lightflow=wf,
+          log_id="two_gates_run",
+          stage="gate_1",
+          payload='{"reviewer": "alice"}',
+      )
+
+    # gate_2 must NOT inherit "reviewer" from gate_1's output
+    with self.assertRaisesRegex(
+        ValueError, "failed JSON schema validation.*'reviewer'"
+    ):
+      cli.resume(
+          lightflow=wf,
+          log_id="two_gates_run",
+          stage="gate_2",
+          payload="{}",
+      )
+
+    # Supplying "reviewer" explicitly for gate_2 succeeds
+    cli.resume(
+        lightflow=wf,
+        log_id="two_gates_run",
+        stage="gate_2",
+        payload='{"reviewer": "bob"}',
+    )
+    passport = lib.PassportManager("two_gates_run").load_passport()
+    assert passport is not None
+    p_dict = passport.payload.to_dict()
+    self.assertEqual(p_dict["outputs"]["gate_1"]["reviewer"], "alice")
+    self.assertEqual(p_dict["outputs"]["gate_2"]["reviewer"], "bob")
+
+  def test_local_action_module_reloads_when_edited_on_disk(self) -> None:
+    wf_dir = os.path.join(self.temp_dir, "hot_reload_wf")
+    os.makedirs(wf_dir, exist_ok=True)
+    actions_py = os.path.join(wf_dir, "hot_actions.py")
+    with open(actions_py, "w", encoding="utf-8") as f:
+      f.write(
+          "def run_step(payload, **kwargs):\n"
+          "  raise RuntimeError('buggy v1')\n"
+      )
+    wf_path = os.path.join(wf_dir, "lightflow.yaml")
+    with open(wf_path, "w", encoding="utf-8") as f:
+      f.write(
+          "name: hot_reload\n"
+          "actions:\n"
+          "  - id: step\n"
+          "    python_import: hot_actions.run_step\n"
+          "stages:\n"
+          "  - name: s1\n"
+          "    python_action:\n"
+          "      action_id: step\n"
+      )
+
+    cli = lib.LightflowRunnerCLI()
+    with self.assertRaisesRegex(engine.EngineError, "s1"):
+      cli.start(lightflow=wf_path, log_id="hot_run")
+
+    # Edit hot_actions.py in place and resume within the same process
+    with open(actions_py, "w", encoding="utf-8") as f:
+      f.write(
+          "def run_step(payload, **kwargs):\n"
+          "  return {'reloaded': True}, 'fixed v2'\n"
+      )
+
+    cli.resume(lightflow=wf_path, log_id="hot_run")
+    passport = lib.PassportManager("hot_run").load_passport()
+    assert passport is not None
+    self.assertTrue(passport.payload.to_dict().get("reloaded"))
+
+  def test_mermaid_collision_free_ids_and_empty_rollback_msg_and_timeout(
+      self,
+  ) -> None:
+    wf = schema.Lightflow.from_dict({
+        "name": "mermaid_wf",
+        "actions": [
+            {"id": "fail_act", "python_import": f"{__name__}.act_step_2"},
+            {"id": "slow_rb", "python_import": f"{__name__}.act_slow_rollback"},
+        ],
+        "stages": [
+            {
+                "name": "build-api",
+                "python_action": {"action_id": "fail_act"},
+                "rollback_action": {"action_id": "slow_rb"},
+                "timeout_seconds": 1,
+            },
+            {
+                "name": "build_api",
+                "run_after": ["build-api"],
+                "python_action": {"action_id": "fail_act"},
+            },
+        ],
+    })
+    passport = schema.Passport()
+    stamp = passport.stamps.add()
+    stamp.stage_name = "build-api"
+    stamp.status = schema.StampStatus.FAILED
+    stamp.message = "Failed.\nRollback executed successfully."
+    mermaid = lib.generate_status_mermaid(wf, passport)
+    self.assertIn("build_api[", mermaid)
+    self.assertIn("build_api_2[", mermaid)
+    self.assertIn("build_api --> build_api_2", mermaid)
+    self.assertIn("[rolled back]", mermaid)
+
+    # Verify rollback_action honors stage.timeout_seconds
+    global _STAGE_2_SHOULD_FAIL
+    _STAGE_2_SHOULD_FAIL = True
+    runner_eng = engine.LightflowEngine(wf)
+    p_timeout = runner_eng.execute_stage("build-api", schema.Passport())
+    self.assertIn("timed out after 1s", p_timeout.stamps[-1].message)
 
 
 if __name__ == "__main__":

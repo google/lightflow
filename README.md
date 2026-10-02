@@ -158,7 +158,9 @@ lightflow visualize --lightflow=examples/hn_digest/lightflow.yaml --log_id=hn_de
 ```
 
 `python3 -m lightflow ...` is equivalent to `lightflow ...` whenever the console
-script is not on your `PATH`.
+script is not on your `PATH`. On shells that strip inner double quotes (such as
+Windows PowerShell 5.1), you can also pass JSON payloads from a file or stdin via
+`--payload=@payload.json` (or `--payload=@-`).
 
 --------------------------------------------------------------------------------
 
