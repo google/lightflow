@@ -1,3 +1,4 @@
+<!-- mdformat global-off -->
 # Lightflow Unified A/B Benchmark: Lightflow DAG (`Arm A`) vs. Traditional Skill (`Arm B`)
 
 This benchmark evaluates whether **Lightflow (`Arm A`)** earns its keep against
@@ -27,7 +28,7 @@ runs)** on the 8-stage and 9-stage failure-recovery workflows:
     LLM generate (`cmd`), and how many total session tokens (`Skill + cmd +
     stdout`) are consumed?
 
---------------------------------------------------------------------------------
+---
 
 ## 1. Experimental Design: Two Steelmanned Arms
 
@@ -60,7 +61,7 @@ To ensure neither arm is strawmanned:
         between turns (steelmanned `Arm B0` state file pattern, avoiding
         command-line JSON state-bus bloat).
 
---------------------------------------------------------------------------------
+---
 
 ## 2. Live Zero-Context LLM Subagent Benchmark (`N=5` Trials per Cohort = `15` Sessions / `30` Workflow Runs)
 
@@ -71,22 +72,20 @@ both new `>5`-stage failure-recovery workflows back-to-back in a single session
 (`30` live workflow executions total):
 
 1.  **`examples/blue_green_release` (8 stages)**: Parallel validation diamond
-    (`run_security_scan` $\parallel$ `run_integration_suite`) $\rightarrow$
-    2-tick `warm_green_environment` poll $\rightarrow$ `approve_canary_cutover`
-    gate $\rightarrow$ `shift_and_verify_canary` SLO breach (`exit 1`) +
-    automatic `revert_canary_traffic` rollback $\rightarrow$ surgical recovery
-    (`Stages 6-8` only) $\rightarrow$ `promote_green_to_prod` $\rightarrow$
-    `decommission_old_slot`.
-2.  **`examples/incident_db_failover` (9 stages)**: `detect_primary_outage`
-    $\rightarrow$ `elect_failover_candidate` $\rightarrow$ mutually exclusive
-    `run_if` WAL replay poll (`replay_missing_wal_segments` vs. skipped
-    `verify_zero_loss_sync`) $\rightarrow$ `trigger_rule: ALL_DONE`
-    `fence_old_primary` join $\rightarrow$ `approve_replica_promotion` IC gate
-    $\rightarrow$ one-way `promote_standby_replica` (`promotion_count == 1`)
-    $\rightarrow$ `cutover_pooler_and_verify_writes` canary write failure (`exit
-    1`) + automatic `revert_pooler_to_maintenance` rollback $\rightarrow$
-    surgical recovery (`Stages 8-9` only, preserving `promotion_count == 1`)
-    $\rightarrow$ `publish_failover_ledger`.
+    (`run_security_scan` ‖ `run_integration_suite`) → 2-tick
+    `warm_green_environment` poll → `approve_canary_cutover` gate →
+    `shift_and_verify_canary` SLO breach (`exit 1`) + automatic
+    `revert_canary_traffic` rollback → surgical recovery (`Stages 6-8` only) →
+    `promote_green_to_prod` → `decommission_old_slot`.
+2.  **`examples/incident_db_failover` (9 stages)**: `detect_primary_outage` →
+    `elect_failover_candidate` → mutually exclusive `run_if` WAL replay poll
+    (`replay_missing_wal_segments` vs. skipped `verify_zero_loss_sync`) →
+    `trigger_rule: ALL_DONE` `fence_old_primary` join →
+    `approve_replica_promotion` IC gate → one-way `promote_standby_replica`
+    (`promotion_count == 1`) → `cutover_pooler_and_verify_writes` canary write
+    failure (`exit 1`) + automatic `revert_pooler_to_maintenance` rollback →
+    surgical recovery (`Stages 8-9` only, preserving `promotion_count == 1`) →
+    `publish_failover_ledger`.
 
 ### The 3 Controlled Cohorts (`N=5` Sessions Each)
 
@@ -102,69 +101,29 @@ both new `>5`-stage failure-recovery workflows back-to-back in a single session
     `actions.py` helpers return `(output_dict, message_str)` instead of a bare
     `dict`.
 
-| Metric (Across  | **Cohort 1:  | **Cohort 2:    | **Cohort 3: Arm | Key Takeaway   |
-: `N=5`           : Arm A        : Arm B          : B               : (`Arm A` vs.   :
-: Independent     : (`Lightflow  : (`Synchronized : (`Prose-Drifted : `Arm B`)       :
-: Live Subagent   : DAG`,        : SKILL.md`,     : SKILL.md`,      :                :
-: Sessions = `10` : `N=5`)**     : `N=5`)**       : `N=5`)**        :                :
-: Workflow Runs / :              :                :                 :                :
-: Cohort)         :              :                :                 :                :
-| :-------------- | :----------: | :------------: | :-------------: | :------------: |
-| **First-Try     | **`10/10`    | **`10/10`      | **`5/10`        | **Synchronized |
-: Invariant       : (`100%`)**   : (`100%`)**     : (`50%`)** *(all : `SKILL.md`     :
-: Compliance**    :              :                : 5 crashed on    : reaches        :
-: *(zero          :              :                : Task 1 Stage 2  : `10/10`, but 1 :
-: mid-script      :              :                : after Stage 1   : omitted return :
-: crash, zero     :              :                : mutated disk    : detail drops   :
-: duplicate Stage :              :                : state)*         : Arm B to       :
-: 1 calls)*       :              :                :                 : `5/10`**       :
-| **Post-Recovery | **`10/10`    | **`10/10`      | **`10/10`       | All cohorts    |
-: Final State &   : (`100%`)**   : (`100%`)**     : (`100%`)**      : reach valid    :
-: Rollback        :              :                : *(after manual  : final state    :
-: Validity**      :              :                : `rm -f` cleanup :                :
-:                 :              :                : & retry)*       :                :
-| **Shell         | **`6.0 ±     | **`6.0 ± 0.0`  | **`7.2 ± 0.4`   | **Zero command |
-: Commands per    : 0.0` cmds**  : cmds** (`6-6`) : cmds** (`7-8`)  : variance when  :
-: 2-Workflow      : (`6-6`)      :                :                 : synchronized;  :
-: Session (`Mean  :              :                :                 : `+1.2` extra   :
-: ± SD`)**        :              :                :                 : retry turns    :
-:                 :              :                :                 : under prose    :
-:                 :              :                :                 : drift**        :
-| **Agent Command | **`~502 ± 4  | **`~1,565 ± 97 | **`~1,954 ± 136 | **`3.1x` less  |
-: Output `cmd`    : tok`**       : tok`** (`6,259 : tok`** (`7,816  : code (`3.9x`   :
-: (`Mean ± SD`,   : (`2,009 ± 17 : ± 389 ch`,     : ± 542 ch`,      : under drift) • :
-: `Min-Max`)**    : ch`,         : `5,854-6,738   : `7,259-8,673    : `23x` lower    :
-:                 : `1,995-2,039 : ch`)           : ch`)            : code-gen SD**  :
-:                 : ch`)         :                :                 :                :
-| **Warm Runtime  | **`~1,847 ±  | **`~2,433 ±    | **`~2,992 ± 233 | **`24%` fewer  |
-: `cmd + stdout`  : 4 tok`**     : 144 tok`**     : tok`** (`11,969 : runtime tok    :
-: (`Mean ± SD`,   : (`7,389 ± 15 : (`9,731 ± 576  : ± 931 ch`,      : (`38%` under   :
-: `Min-Max`)**    : ch`,         : ch`,           : `10,817-13,077  : drift) • `38x` :
-:                 : `7,382-7,416 : `9,054-10,428  : ch`)            : lower runtime  :
-:                 : ch`)         : ch`)           :                 : SD**           :
-| **Skill Context | **`~1,097    | **`~3,471      | **`~3,176       | **`3.2x`       |
-: Loaded (`1`     : tok`**       : tok`**         : tok`** (`12,704 : smaller skill  :
-: Reusable vs.    : (`4,388 ch`) : (`13,886 ch`)  : ch`)            : footprint**    :
-: `2` Bespoke     :              :                :                 :                :
-: Skills)**       :              :                :                 :                :
-| **2-Workflow    | **`~2,944 ±  | **`~5,904 ±    | **`~6,168 ± 233 | **`50%` lower  |
-: Session Total   : 4 tok`**     : 144 tok`**     : tok`** (`24,673 : total session  :
-: (`Skill + cmd + : (`11,777 ±   : (`23,617 ± 576 : ± 931 ch`)      : tokens (`2.0x` :
-: stdout`)**      : 15 ch`)      : ch`)           :                 : reduction)**   :
+| Metric (Across `N=5` Independent Live Subagent Sessions = `10` Workflow Runs / Cohort) | **Cohort 1: Arm A (`Lightflow DAG`, `N=5`)** | **Cohort 2: Arm B (`Synchronized SKILL.md`, `N=5`)** | **Cohort 3: Arm B (`Prose-Drifted SKILL.md`, `N=5`)** | Key Takeaway (`Arm A` vs. `Arm B`) |
+| :--- | :---: | :---: | :---: | :---: |
+| **First-Try Invariant Compliance** *(zero mid-script crash, zero duplicate Stage 1 calls)* | **`10/10` (`100%`)** | **`10/10` (`100%`)** | **`5/10` (`50%`)** *(all 5 crashed on Task 1 Stage 2 after Stage 1 mutated disk state)* | **Synchronized `SKILL.md` reaches `10/10`, but 1 omitted return detail drops Arm B to `5/10`** |
+| **Post-Recovery Final State & Rollback Validity** | **`10/10` (`100%`)** | **`10/10` (`100%`)** | **`10/10` (`100%`)** *(after manual `rm -f` cleanup & retry)* | All cohorts reach valid final state |
+| **Shell Commands per 2-Workflow Session (`Mean ± SD`)** | **`6.0 ± 0.0` cmds** (`6-6`) | **`6.0 ± 0.0` cmds** (`6-6`) | **`7.2 ± 0.4` cmds** (`7-8`) | **Zero command variance when synchronized; `+1.2` extra retry turns under prose drift** |
+| **Agent Command Output `cmd` (`Mean ± SD`, `Min-Max`)** | **`~502 ± 4 tok`** (`2,009 ± 17 ch`, `1,995-2,039 ch`) | **`~1,565 ± 97 tok`** (`6,259 ± 389 ch`, `5,854-6,738 ch`) | **`~1,954 ± 136 tok`** (`7,816 ± 542 ch`, `7,259-8,673 ch`) | **`3.1x` less code (`3.9x` under drift) • `23x` lower code-gen SD** |
+| **Warm Runtime `cmd + stdout` (`Mean ± SD`, `Min-Max`)** | **`~1,847 ± 4 tok`** (`7,389 ± 15 ch`, `7,382-7,416 ch`) | **`~2,433 ± 144 tok`** (`9,731 ± 576 ch`, `9,054-10,428 ch`) | **`~2,992 ± 233 tok`** (`11,969 ± 931 ch`, `10,817-13,077 ch`) | **`24%` fewer runtime tok (`38%` under drift) • `38x` lower runtime SD** |
+| **Skill Context Loaded (`1` Reusable vs. `2` Bespoke Skills)** | **`~1,097 tok`** (`4,388 ch`) | **`~3,471 tok`** (`13,886 ch`) | **`~3,176 tok`** (`12,704 ch`) | **`3.2x` smaller skill footprint** |
+| **2-Workflow Session Total (`Skill + cmd + stdout`)** | **`~2,944 ± 4 tok`** (`11,777 ± 15 ch`) | **`~5,904 ± 144 tok`** (`23,617 ± 576 ch`) | **`~6,168 ± 233 tok`** (`24,673 ± 931 ch`) | **`50%` lower total session tokens (`2.0x` reduction)** |
 
 ### Why Both Cohorts 2 and 3 Matter
 
 1.  **Even when `SKILL.md` is 100% synchronized (`Cohort 2`, `10/10` pass rate),
     Lightflow cuts LLM-generated code by `3.1x` and runtime token variance by
     `38x`**: In Arm A, every subagent emitted the exact same 6 declarative CLI
-    calls (`start` $\rightarrow$ `resume --resolution=APPROVE` $\rightarrow$
-    `resume`), yielding a standard deviation of just **`15 chars` (`~4
-    tokens`)** across 5 runs. In Cohort 2, even with zero errors, each subagent
-    synthesized `5,854-6,738 chars` (`~1,565 ± 97 tok`) of custom `python3 -c`
-    glue (`while True:` polling loops, `if/else` WAL branches, `try/except`
-    rollback blocks, and `json.dump` state checkpoints), resulting in **`38x`
-    higher runtime token standard deviation** (`±144 tok` vs. `±4 tok`) and
-    **`2.0x` higher total session tokens** (`5,904` vs. `2,944` tok).
+    calls (`start` → `resume --resolution=APPROVE` → `resume`), yielding a
+    standard deviation of just **`15 chars` (`~4 tokens`)** across 5 runs. In
+    Cohort 2, even with zero errors, each subagent synthesized `5,854-6,738
+    chars` (`~1,565 ± 97 tok`) of custom `python3 -c` glue (`while True:`
+    polling loops, `if/else` WAL branches, `try/except` rollback blocks, and
+    `json.dump` state checkpoints), resulting in **`38x` higher runtime token
+    standard deviation** (`±144 tok` vs. `±4 tok`) and **`2.0x` higher total
+    session tokens** (`5,904` vs. `2,944` tok).
 2.  **Prose-to-Code Drift Sensitivity (`Cohort 3`, `5/10` first-try pass
     rate)**: In a Traditional Skill, the contract between `SKILL.md` and
     `actions.py` is unverified prose. When `SKILL.md` omitted a single
@@ -175,7 +134,7 @@ both new `>5`-stage failure-recovery workflows back-to-back in a single session
     validates the DAG via `lightflow compile`, checkpoints `passport.json` at
     every stage boundary, and handles action return unpacking inside the engine.
 
---------------------------------------------------------------------------------
+---
 
 ## 3. Unified 7-Pair Domain Complexity Ladder (`run_benchmark.py --trials=5`)
 
@@ -183,60 +142,18 @@ Run `python3 benchmarks/run_benchmark.py --trials=5` to execute both arms across
 all **7 domain workflow pairs** (`3, 3, 3, 4, 8, 9, and 22` stages) and verify
 all ground-truth invariants (`35/35` domain trial checks passed):
 
-| Workflow Pair (Stages)     | Arm A /   | Skill      | Agent   | Warm      | Session    |
-:                            : Arm B     : Loaded     : Command : Runtime   : Total      :
-:                            : Checks    : (`Arm A`   : Output  : `cmd +    : (`Skill +  :
-:                            : (`N=5`)   : vs. `Arm   : `cmd`   : stdout`   : Warm`)     :
-:                            :           : B`)        : (`Arm   : (`Arm A`  : (`Arm A`   :
-:                            :           :            : A` vs.  : vs. `Arm  : vs. `Arm   :
-:                            :           :            : `Arm    : B`)       : B`)        :
-:                            :           :            : B`)     :           :            :
-| :------------------------- | :-------: | :--------: | :-----: | :-------: | :--------: |
-| 1. `hn_digest` (`3`        | `5/5` vs. | `~1,097    | **`~83  | `~398     | `~1,495    |
-: stages)                    : `5/5`     : tok` (1st) : tok`**  : tok` vs.  : tok` vs.   :
-:                            :           : vs. `~507  : vs.     : `~225     : **`~732    :
-:                            :           : tok`       : `~178   : tok`      : tok`**     :
-:                            :           :            : tok`    :           :            :
-| 2. `usgs_seismic_alert`    | `5/5` vs. | **`0 tok`  | **`~89  | `~386     | **`~386    |
-: (`3` stages)               : `5/5`     : (reused)** : tok`**  : tok` vs.  : tok`** vs. :
-:                            :           : vs. `~548  : vs.     : `~226     : `~774 tok` :
-:                            :           : tok`       : `~195   : tok`      :            :
-:                            :           :            : tok`    :           :            :
-| 3. `pypi_upgrade_guard`    | `5/5` vs. | **`0 tok`  | **`~122 | `~653     | **`~653    |
-: (`3` stages + rollback)    : `5/5`     : (reused)** : tok`**  : tok` vs.  : tok`** vs. :
-:                            :           : vs. `~656  : vs.     : `~452     : `~1,107    :
-:                            :           : tok`       : `~337   : tok`      : tok`       :
-:                            :           :            : tok`    :           :            :
-| 4. `async_job_watcher`     | `5/5` vs. | **`0 tok`  | **`~50  | **`~211   | **`~211    |
-: (`4` stages + poll)        : `5/5`     : (reused)** : tok`**  : tok`**    : tok`** vs. :
-:                            :           : vs. `~522  : vs.     : vs. `~285 : `~807 tok` :
-:                            :           : tok`       : `~212   : tok`      :            :
-:                            :           :            : tok`    :           :            :
-| 5. `blue_green_release`    | `5/5` vs. | **`0 tok`  | **`~139 | `~814     | **`~814    |
-: (`8` stages + rollback)    : `5/5`     : (reused)** : tok`**  : tok` vs.  : tok`** vs. :
-:                            :           : vs.        : vs.     : `~605     : `~2,200    :
-:                            :           : `~1,594    : `~481   : tok`      : tok`       :
-:                            :           : tok`       : tok`    :           :            :
-| 6. `incident_db_failover`  | `5/5` vs. | **`0 tok`  | **`~154 | `~838     | **`~838    |
-: (`9` stages + rollback)    : `5/5`     : (reused)** : tok`**  : tok` vs.  : tok`** vs. :
-:                            :           : vs.        : vs.     : `~711     : `~2,588    :
-:                            :           : `~1,877    : `~562   : tok`      : tok`       :
-:                            :           : tok`       : tok`    :           :            :
-| 7.                         | `5/5` vs. | **`0 tok`  | **`~158 | **`~1,171 | **`~1,171  |
-: `tenant_gitops_onboarding` : `5/5`     : (reused)** : tok`**  : tok`**    : tok`** vs. :
-: (`22` stages, 2 gates, 6   :           : vs.        : vs.     : vs.       : `~2,784    :
-: polls)                     :           : `~1,370    : `~1,026 : `~1,414   : tok`       :
-:                            :           : tok`       : tok`    : tok`      :            :
-| **7-Workflow Session       | **`35/35` | **`~1,097  | **`~795 | **`~4,472 | **`~5,570  |
-: Total**                    : vs.       : tok` (1    : tok`    : tok` vs.  : tok` vs.   :
-:                            : `35/35`** : skill) vs. : vs.     : `~3,917   : `~10,992   :
-:                            :           : `~7,075    : `~2,992 : tok`**    : tok`       :
-:                            :           : tok` (7    : tok`    :           : (`-49%`)** :
-:                            :           : skills,    : (`3.8x` :           :            :
-:                            :           : `-84%`)**  : less    :           :            :
-:                            :           :            : code)** :           :            :
+| Workflow Pair (Stages) | Arm A / Arm B Checks (`N=5`) | Skill Loaded (`Arm A` vs. `Arm B`) | Agent Command Output `cmd` (`Arm A` vs. `Arm B`) | Warm Runtime `cmd + stdout` (`Arm A` vs. `Arm B`) | Session Total (`Skill + Warm`) (`Arm A` vs. `Arm B`) |
+| :--- | :---: | :---: | :---: | :---: | :---: |
+| 1. `hn_digest` (`3` stages) | `5/5` vs. `5/5` | `~1,097 tok` (1st) vs. `~507 tok` | **`~83 tok`** vs. `~178 tok` | `~398 tok` vs. `~225 tok` | `~1,495 tok` vs. **`~732 tok`** |
+| 2. `usgs_seismic_alert` (`3` stages) | `5/5` vs. `5/5` | **`0 tok` (reused)** vs. `~548 tok` | **`~89 tok`** vs. `~195 tok` | `~386 tok` vs. `~226 tok` | **`~386 tok`** vs. `~774 tok` |
+| 3. `pypi_upgrade_guard` (`3` stages + rollback) | `5/5` vs. `5/5` | **`0 tok` (reused)** vs. `~656 tok` | **`~122 tok`** vs. `~337 tok` | `~653 tok` vs. `~452 tok` | **`~653 tok`** vs. `~1,107 tok` |
+| 4. `async_job_watcher` (`4` stages + poll) | `5/5` vs. `5/5` | **`0 tok` (reused)** vs. `~522 tok` | **`~50 tok`** vs. `~212 tok` | **`~211 tok`** vs. `~285 tok` | **`~211 tok`** vs. `~807 tok` |
+| 5. `blue_green_release` (`8` stages + rollback) | `5/5` vs. `5/5` | **`0 tok` (reused)** vs. `~1,594 tok` | **`~139 tok`** vs. `~481 tok` | `~814 tok` vs. `~605 tok` | **`~814 tok`** vs. `~2,200 tok` |
+| 6. `incident_db_failover` (`9` stages + rollback) | `5/5` vs. `5/5` | **`0 tok` (reused)** vs. `~1,877 tok` | **`~154 tok`** vs. `~562 tok` | `~838 tok` vs. `~711 tok` | **`~838 tok`** vs. `~2,588 tok` |
+| 7. `tenant_gitops_onboarding` (`22` stages, 2 gates, 6 polls) | `5/5` vs. `5/5` | **`0 tok` (reused)** vs. `~1,370 tok` | **`~158 tok`** vs. `~1,026 tok` | **`~1,171 tok`** vs. `~1,414 tok` | **`~1,171 tok`** vs. `~2,784 tok` |
+| **7-Workflow Session Total** | **`35/35` vs. `35/35`** | **`~1,097 tok` (1 skill) vs. `~7,075 tok` (7 skills, `-84%`)** | **`~795 tok` vs. `~2,992 tok` (`3.8x` less code)** | **`~4,472 tok` vs. `~3,917 tok`** | **`~5,570 tok` vs. `~10,992 tok` (`-49%`)** |
 
---------------------------------------------------------------------------------
+---
 
 ## 4. State-Passing & Failure-Recovery Ablation (`pypi_upgrade_guard`)
 
@@ -245,29 +162,14 @@ What happens when a workflow pauses at an approval gate, fails mid-flight
 `passport.json`, an Arm B agent must choose one of three state-passing
 mechanisms:
 
-| Arm                  | State-Passing         | Agent   | Warm     | `audit_pypi_versions` | No          | Rollback & |
-:                      : Mechanism             : Command : Runtime  : Executions            : Duplicate   : Final      :
-:                      :                       : Output  : (`cmd +  :                       : Side        : State      :
-:                      :                       : (`cmd`) : stdout`) :                       : Effects     : Valid      :
-| :------------------- | :-------------------- | :-----: | :------: | :-------------------: | :---------: | :--------: |
-| **Arm A (`Lightflow  | `lightflow start` /   | **`486  | **`2,613 | **`1x`**              | **`True`**  | **`True`** |
-: DAG`)**              : `resume` +            : ch`     : ch`      :                       :             :            :
-:                      : `passport.json`       : (`~122  : (`~653   :                       :             :            :
-:                      :                       : tok`)** : tok`)**  :                       :             :            :
-| **Arm B0             | `python3 -c`          | `1,349  | `1,806   | `1x`                  | `True`      | `True`     |
-: (`Traditional Skill` : reading/writing       : ch`     : ch`      :                       :             :            :
-: —                    : `/tmp/state.json`     : (`~337  : (`~452   :                       :             :            :
-: `/tmp/state.json`)** :                       : tok`)   : tok`)    :                       :             :            :
-| **Arm B1             | `python3 -c` passing  | `1,872  | `3,031   | `1x`                  | `True`      | `True`     |
-: (`Traditional Skill` : `outputs` JSON in CLI : ch`     : ch`      :                       :             :            :
-: — Context            : args                  : (`~468  : (`~758   :                       :             :            :
-: State-Bus)**         :                       : tok`)   : tok`)    :                       :             :            :
-| **Arm B2             | `python3 -c`          | `1,024  | `1,448   | **`3x`                | **`False`** | `True`     |
-: (`Traditional Skill` : re-running            : ch`     : ch`      : (duplicated!)**       :             :            :
-: — Naive Re-Exec)**   : `audit_pypi_versions` : (`~256  : (`~362   :                       :             :            :
-:                      : each turn             : tok`)   : tok`)    :                       :             :            :
+| Arm | State-Passing Mechanism | Agent Command Output (`cmd`) | Warm Runtime (`cmd + stdout`) | `audit_pypi_versions` Executions | No Duplicate Side Effects | Rollback & Final State Valid |
+| :--- | :--- | :---: | :---: | :---: | :---: | :---: |
+| **Arm A (`Lightflow DAG`)** | `lightflow start` / `resume` + `passport.json` | **`486 ch` (`~122 tok`)** | **`2,613 ch` (`~653 tok`)** | **`1x`** | **`True`** | **`True`** |
+| **Arm B0 (`Traditional Skill` — `/tmp/state.json`)** | `python3 -c` reading/writing `/tmp/state.json` | `1,349 ch` (`~337 tok`) | `1,806 ch` (`~452 tok`) | `1x` | `True` | `True` |
+| **Arm B1 (`Traditional Skill` — Context State-Bus)** | `python3 -c` passing `outputs` JSON in CLI args | `1,872 ch` (`~468 tok`) | `3,031 ch` (`~758 tok`) | `1x` | `True` | `True` |
+| **Arm B2 (`Traditional Skill` — Naive Re-Exec)** | `python3 -c` re-running `audit_pypi_versions` each turn | `1,024 ch` (`~256 tok`) | `1,448 ch` (`~362 tok`) | **`3x` (duplicated!)** | **`False`** | `True` |
 
---------------------------------------------------------------------------------
+---
 
 ## 5. Candid Assessment: Where Lightflow Wins vs. Where Traditional Skills Tie
 
