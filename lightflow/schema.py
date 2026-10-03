@@ -1482,6 +1482,11 @@ def resolve_lightflow_path(path: str) -> str:
 def load_lightflow(path: str) -> Lightflow:
   """Loads a Lightflow manifest from a YAML, JSON, or Textproto file."""
   expanded = resolve_lightflow_path(path)
+  if os.path.isdir(expanded):
+    raise FileNotFoundError(
+        "No lightflow manifest (lightflow.yaml, lightflow.yml, lightflow.json,"
+        f" or lightflow.textproto) found in directory: '{expanded}'"
+    )
   _, ext = os.path.splitext(expanded)
   ext_lower = ext.lower()
   fmt = None

@@ -1,0 +1,117 @@
+name: incident_db_failover
+description: >-
+  9-stage database high-availability failover workflow demonstrating mutually
+  exclusive run_if WAL-sync branches joined via trigger_rule: ALL_DONE,
+  STONITH fencing, Incident Commander promotion gate, standby promotion with
+  retry_policy, PgBouncer pooler cutover with automatic maintenance rollback on
+  write-canary error, and surgical recovery without re-promoting the replica.
+
+actions:
+  - id: detect_primary_outage
+    python_import: examples.incident_db_failover.actions.detect_primary_outage
+  - id: elect_failover_candidate
+    python_import: examples.incident_db_failover.actions.elect_failover_candidate
+  - id: replay_missing_wal_segments
+    python_import: examples.incident_db_failover.actions.replay_missing_wal_segments
+  - id: verify_zero_loss_sync
+    python_import: examples.incident_db_failover.actions.verify_zero_loss_sync
+  - id: fence_old_primary
+    python_import: examples.incident_db_failover.actions.fence_old_primary
+  - id: promote_standby_replica
+    python_import: examples.incident_db_failover.actions.promote_standby_replica
+  - id: cutover_pooler_and_verify_writes
+    python_import: examples.incident_db_failover.actions.cutover_pooler_and_verify_writes
+  - id: revert_pooler_to_maintenance
+    python_import: examples.incident_db_failover.actions.revert_pooler_to_maintenance
+  - id: publish_failover_ledger
+    python_import: examples.incident_db_failover.actions.publish_failover_ledger
+
+stages:
+  - name: detect_primary_outage
+    description: Probe primary database health and replication lag
+    python_action:
+      action_id: detect_primary_outage
+
+  - name: elect_failover_candidate
+    description: Elect best standby replica and classify lag_mode (wal_replay_needed vs zero_loss)
+    run_after:
+      - detect_primary_outage
+    python_action:
+      action_id: elect_failover_candidate
+
+  - name: replay_missing_wal_segments
+    description: Conditional Branch A — poll WAL segment replay until caught up
+    run_after:
+      - elect_failover_candidate
+    run_if: "payload.outputs.elect_failover_candidate.lag_mode == 'wal_replay_needed'"
+    python_action:
+      action_id: replay_missing_wal_segments
+    polling_policy:
+      condition: "payload.outputs.replay_missing_wal_segments.wal_caught_up == true"
+      interval_seconds: 1
+      timeout_seconds: 15
+
+  - name: verify_zero_loss_sync
+    description: Conditional Branch B — fast-path synchronous LSN check when lag is zero
+    run_after:
+      - elect_failover_candidate
+    run_if: "payload.outputs.elect_failover_candidate.lag_mode == 'zero_loss'"
+    python_action:
+      action_id: verify_zero_loss_sync
+
+  - name: fence_old_primary
+    description: ALL_DONE branch join — apply STONITH fence to old primary after WAL sync
+    run_after:
+      - replay_missing_wal_segments
+      - verify_zero_loss_sync
+    trigger_rule: ALL_DONE
+    run_if: "payload.outputs.replay_missing_wal_segments.wal_caught_up == true || payload.outputs.verify_zero_loss_sync.wal_caught_up == true"
+    python_action:
+      action_id: fence_old_primary
+
+  - name: approve_replica_promotion
+    description: Incident Commander approval gate before promoting standby replica
+    run_after:
+      - fence_old_primary
+    operator_action:
+      instructions: >-
+        'Old primary is fenced and candidate "' + payload.outputs.elect_failover_candidate.candidate_replica + '" is caught up to LSN ' + payload.outputs.elect_failover_candidate.target_lsn + '. Approve standby promotion:'
+      json_schema:
+        type: object
+        required:
+          - approved
+          - incident_ticket
+        properties:
+          approved:
+            type: boolean
+          incident_ticket:
+            type: string
+            minLength: 1
+
+  - name: promote_standby_replica
+    description: Promote standby replica to read-write primary (must run only once)
+    run_after:
+      - approve_replica_promotion
+    run_if: "payload.outputs.approve_replica_promotion.approved == true"
+    python_action:
+      action_id: promote_standby_replica
+    retry_policy:
+      max_attempts: 2
+      initial_backoff_seconds: 1
+      backoff_multiplier: 1.0
+
+  - name: cutover_pooler_and_verify_writes
+    description: Repoint PgBouncer pooler to new primary and verify write canary
+    run_after:
+      - promote_standby_replica
+    python_action:
+      action_id: cutover_pooler_and_verify_writes
+    rollback_action:
+      action_id: revert_pooler_to_maintenance
+
+  - name: publish_failover_ledger
+    description: Record verified failover timeline and close incident checkpoint
+    run_after:
+      - cutover_pooler_and_verify_writes
+    python_action:
+      action_id: publish_failover_ledger

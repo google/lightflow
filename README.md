@@ -62,13 +62,13 @@ flowchart LR
         (authoring new workflows), and
         [`benchmarks/SKILL.md`](./benchmarks/SKILL.md), plus live Mermaid
         progress notifications when running inside `agentapi`-compatible hosts.
--   **Negative-Cost Structural Rigor ([Benchmarks](./benchmarks/README.md))**:
-    Because the workflow blueprint lives in `lightflow.yaml` + `actions.py` and
-    intermediate data flows between stages on disk via `passport.json` (instead
-    of using the LLM as a state bus), Lightflow enforces hard `EXIT_CODE=2`
-    gates, JSON Schema validation, and automatic rollbacks at **lower token and
-    latency cost** than unstructured skills ($2.9\times$ fewer LLM tool-input
-    tokens in live A/B trials).
+-   **Consistency & Token Efficiency ([Benchmarks](./benchmarks/README.md))**:
+    Evaluated across 7 matched domain workflow pairs (`3` to `22` stages) and
+    `15` live zero-context LLM subagent sessions (`N=5` per cohort), Lightflow
+    achieves **`38x` lower runtime token variance** (`±4 tok` vs. `±144 tok`),
+    **`3.1x-3.8x` less LLM-generated code**, **`6.4x` fewer session skill
+    tokens** (`1` universal runner skill vs. `7` workflow skills), and **`100%`
+    vs. `50%` first-try compliance** under prose-to-code drift.
 
 --------------------------------------------------------------------------------
 
@@ -100,6 +100,18 @@ Look elsewhere when:
 | **Distributed Orchestrators** | Temporal, Prefect, Airflow | Server daemon + database | Distributed workers | Zero daemon or DB; state is a single atomic local JSON ledger (`passport.json`). |
 | **Cyclic Agent Graphs** | LangGraph, Burr | In-process Python library | Cyclic state machines | Process-boundary suspension (`exit 2`) with auto-generated CLI `resume` commands and AST-restricted CEL-like conditions. |
 | **Function / Task DAGs** | Hamilton, doit, Kedro | Local Python library | Single-run in-memory DAG | Built-in `operator_action` JSON Schema gates, `rollback_action` hooks, and append-only `Stamp` history. |
+
+### Lightflow DAG vs. Traditional `SKILL.md` + `actions.py` ([Full A/B Benchmark](./benchmarks/README.md))
+
+| Dimension | Lightflow DAG (`Arm A`) | Steelmanned Traditional Skill (`Arm B`: `SKILL.md` + `actions.py`) | Empirical Delta ([`benchmarks/`](./benchmarks/README.md)) |
+| :--- | :--- | :--- | :--- |
+| **Skill Context Loaded** | **1 universal runner skill** (`~1,097 tok` once per session; `0 tok` on workflows 2–7) | **1 bespoke `SKILL.md` per workflow** (`~7,075 tok` across 7 workflows) | **`6.4x` fewer skill tokens (`O(1)` vs. `O(N)`)** |
+| **Agent-Generated Code (`cmd`)** | Declarative CLI (`lightflow start` / `resume`, `~795 tok` across 7 workflows) | Inline `python3 -c` polling loops, branches & rollbacks (`~2,992 tok`) | **`3.8x` less generated code (`6.5x` on 22-stage DAG)** |
+| **Multi-Run Consistency (`N=5` Live Subagent Sessions, 8 & 9 Stages)** | `~1,847 ± 4 tok` warm runtime (`~502 ± 4 tok` `cmd`, `10/10` pass) | `~2,433 ± 144 tok` warm runtime (`~1,565 ± 97 tok` `cmd`, `10/10` pass) | **`38x` lower runtime token SD (`±4` vs. `±144` tok) & `3.1x` less code** |
+| **Prose-to-Code Drift Resilience** | Engine unpacks returns & enforces DAG schema (`10/10` first-try pass) | 1 omitted return-type detail crashes Stage 2 after Stage 1 mutates disk (`5/10` first-try pass) | **`100%` vs. `50%` first-try compliance under drift** |
+| **Session Total (`Skill + cmd + stdout`)** | `~2,944 ± 4 tok` (live 2-wf) • `~5,570 tok` (7-wf ladder) | `~5,904 ± 144 tok` (live 2-wf) • `~10,992 tok` (7-wf ladder) | **`49%–50%` lower total session tokens** |
+
+> **Crossover point:** For a single 3-stage linear workflow in a one-off session, a bespoke `SKILL.md` + `/tmp/state.json` is ~760 tokens lighter (`~732` vs. `~1,495 tok`); Lightflow breaks even by the 2nd–3rd workflow in a session or on any single workflow with $\ge 8$ stages, conditional branches, polling, or rollbacks.
 
 --------------------------------------------------------------------------------
 
@@ -143,37 +155,41 @@ Run the included live Hacker News curation workflow right out of the box:
 
 ```bash
 # 1. Dry-run simulation (validates DAG topology, CEL-like expressions & JSON Schemas)
-lightflow dry_run --lightflow=examples/hn_digest/lightflow.yaml
+lightflow dry_run --lightflow=examples/hn_digest
 
 # 2. Start execution (fetches live HN top stories, then suspends at 'editorial_gate' with exit code 2)
-lightflow start --lightflow=examples/hn_digest/lightflow.yaml --log_id=hn_demo
+lightflow start --lightflow=examples/hn_digest --log_id=hn_demo
 
 # 3. Approve the human gate and finish the workflow
-lightflow resume --lightflow=examples/hn_digest/lightflow.yaml --log_id=hn_demo \
+lightflow resume --lightflow=examples/hn_digest --log_id=hn_demo \
   --stage=editorial_gate --resolution=APPROVE \
   --payload='{"editor_note": "Top engineering reads today.", "output_path": "/tmp/hn_digest.md"}'
 
 # 4. Generate a standalone interactive HTML5 DAG & timeline visualizer
-lightflow visualize --lightflow=examples/hn_digest/lightflow.yaml --log_id=hn_demo --output=/tmp/viz.html
+lightflow visualize --lightflow=examples/hn_digest --log_id=hn_demo --output=/tmp/viz.html
 ```
 
-`python3 -m lightflow ...` is equivalent to `lightflow ...` whenever the console
-script is not on your `PATH`. On shells that strip inner double quotes (such as
-Windows PowerShell 5.1), you can also pass JSON payloads from a file or stdin via
-`--payload=@payload.json` (or `--payload=@-`).
+`--lightflow` accepts a workflow directory (containing `lightflow.yaml`,
+`lightflow.yml`, `lightflow.json`, or `lightflow.textproto`) or a direct file
+path. `python3 -m lightflow ...` is equivalent to `lightflow ...` whenever the
+console script is not on your `PATH`. On shells that strip inner double quotes
+(such as Windows PowerShell 5.1), you can also pass JSON payloads from a file or
+stdin via `--payload=@payload.json` (or `--payload=@-`).
 
 --------------------------------------------------------------------------------
 
 ## Included Runnable Examples (`examples/`)
 
-| # | Example | Pattern Demonstrated | External API / Mechanism |
-| :-- | :-- | :-- | :-- |
-| 1 | **[`examples/hn_digest/`](./examples/hn_digest/README.md)** | **Live API → Human Editorial Gate → Idempotent Publish**: Fetches top stories, previews the #1 story in the gate prompt, and writes a Markdown digest. | Hacker News Firebase API (zero auth) |
-| 2 | **[`examples/usgs_seismic_alert/`](./examples/usgs_seismic_alert/README.md)** | **Live Telemetry Triage**: Polls 24h M4.5+ global seismic events, pauses for severity classification (`INFO` / `ADVISORY` / `WATCH`), and emits a bulletin. | USGS GeoJSON Feed (zero auth) |
-| 3 | **[`examples/pypi_upgrade_guard/`](./examples/pypi_upgrade_guard/README.md)** | **Live Audit → Approval Gate → Automatic `rollback_action`**: Compares pinned packages against live PyPI, applies upgrades, and automatically restores `.bak` if smoke tests fail. | PyPI JSON API (zero auth) |
-| 4 | **[`examples/async_job_watcher/`](./examples/async_job_watcher/README.md)** | **Async Background Polling & `ALL_DONE` Cleanup**: Spawns a 10–20s background process, polls its status file via `polling_policy` until `READY`, and cleans up temp files. | Detached Worker + Local JSON Status File |
-| 5 | **[`examples/create_lightflow/`](./examples/create_lightflow/README.md)** | **Staggered Agent Skill Delivery ("A Lightflow to Create Lightflows")**: 3 human/agent design & coding gates interleaved with deterministic AST, `unittest`, and `dry_run` verification stages. | Python `ast` + `unittest` + `LightflowEngine` |
-| 6 | **[`examples/tenant_gitops_onboarding/`](./examples/tenant_gitops_onboarding/README.md)** | **39-Stage Enterprise Kubernetes & GitOps Onboarding**: 4-phase control-plane orchestration with RBAC branching, 2 human gates, 5 GitOps PR merge loops, 6 reconciler polling loops, automatic rollback, and `ALL_DONE` joins. | Local Mocked GitOps / OIDC / SCIM / Vault Sandbox |
+| Tier | Example | Stages & Control Flow | Pattern Demonstrated | External API / Sandbox |
+| :--- | :--- | :--- | :--- | :--- |
+| **Starter** | **[`examples/hn_digest/`](./examples/hn_digest/README.md)** | `3` stages · `1` gate · retry | **Live API → Editorial Gate → Idempotent Publish**: Fetches top stories, previews #1 in the gate prompt, and writes a Markdown digest. | Hacker News Firebase API (zero auth) |
+| **Starter** | **[`examples/usgs_seismic_alert/`](./examples/usgs_seismic_alert/README.md)** | `3` stages · `1` gate · retry | **Live Telemetry Triage**: Polls 24h M4.5+ global seismic events, pauses for severity classification (`INFO` / `ADVISORY` / `WATCH`), and emits a bulletin. | USGS GeoJSON Feed (zero auth) |
+| **Starter** | **[`examples/pypi_upgrade_guard/`](./examples/pypi_upgrade_guard/README.md)** | `3` stages · `1` gate · `1` rollback | **Live Audit → Approval Gate → Automatic `rollback_action`**: Audits pinned packages against PyPI, applies upgrades, and auto-restores `.bak` on smoke failure. | PyPI JSON API (zero auth) |
+| **Starter** | **[`examples/async_job_watcher/`](./examples/async_job_watcher/README.md)** | `4` stages · `1` poll · `ALL_DONE` | **Async Background Polling & Cleanup**: Spawns a detached background worker, polls its status file via `polling_policy` until `READY`, and cleans up temp files. | Detached Worker + Local JSON Status |
+| **Production Recovery** | **[`examples/blue_green_release/`](./examples/blue_green_release/README.md)** | `8` stages · `1` gate · `1` poll · `1` rollback | **Blue/Green Canary Release & Traffic Rollback**: Parallel security/integration diamond, green warmup poll, cutover gate, automatic `revert_canary_traffic` on 5xx SLO breach, and surgical recovery. | Local Deployment Slot & Canary State Machine |
+| **Production Recovery** | **[`examples/incident_db_failover/`](./examples/incident_db_failover/README.md)** | `9` stages · `1` gate · `1` poll · `1` rollback | **Regional DB Failover & Pooler Rollback**: Mutually exclusive `run_if` WAL replay vs. zero-loss branch, `ALL_DONE` STONITH fence, IC gate, one-way standby promotion, and PgBouncer rollback. | Local HA PostgreSQL & PgBouncer Sandbox |
+| **Enterprise Scale** | **[`examples/tenant_gitops_onboarding/`](./examples/tenant_gitops_onboarding/README.md)** | `22` stages · `2` gates · `6` polls | **Multi-Branch Kubernetes, Cloud IAM & GitOps Onboarding**: 4-phase pipeline with 3 branching patterns (early handoff, 3-way IAM fan-out + `ALL_DONE` join, S3/Vault + KMS diamond) and ArgoCD sync loops. | Local GitOps / Cloud IAM / SCIM / KMS / ArgoCD Sandbox |
+| **Authoring Meta-DAG** | **[`examples/create_lightflow/`](./examples/create_lightflow/README.md)** | `7` stages · `3` gates | **Staggered Agent Skill Delivery ("A Lightflow to Create Lightflows")**: 3 design & coding gates interleaved with deterministic AST, `unittest`, and `dry_run` verification stages. | Python `ast` + `unittest` + `LightflowEngine` |
 
 --------------------------------------------------------------------------------
 
@@ -253,10 +269,10 @@ stages:
 | `run_after` | Upstream stage names that must finish before this stage evaluates. |
 | `run_if` | CEL-like expression evaluated against `payload`; stage is stamped `SKIPPED` if `false`. |
 | `trigger_rule` | `ALL_SUCCESS` (default) or `ALL_DONE` (runs even if an upstream dependency failed or skipped, useful for cleanup stages). |
-| `timeout_seconds` | Bounds each attempt (`0`–`86400`s) using a background worker thread. |
+| `timeout_seconds` | Bounds how long the engine waits for each attempt (`0`–`86400`s). A timeout does not cancel the action: it keeps running in a background thread. Pass explicit timeouts to the action's own I/O clients, and make timed actions idempotent. |
 | `retry_policy` | Opt-in retry (`max_attempts`, `initial_backoff_seconds`, `backoff_multiplier`) with ±10% jitter for exceptions and timeouts. |
 | `polling_policy` | Polls `python_action` until `condition` evaluates to `true` (`interval_seconds`, `timeout_seconds`, `max_attempts`). |
-| `rollback_action` | Compensating `python_action` invoked automatically after a stage exhausts its retries; its output delta is merged into `payload`. |
+| `rollback_action` | Compensating `python_action` invoked automatically after a stage exhausts its retries (skipped if a timed-out attempt's background thread is still running); its output delta is merged into `payload`. |
 
 **Expression Evaluator (`run_if`, `polling_policy.condition`,
 `operator_action.instructions`)**:
@@ -305,7 +321,11 @@ When a stage fails:
 3.  Running `lightflow resume` appends a fresh `PENDING` stamp to the failed
     stage and its collateral dependents—re-running only the broken subgraph
     while preserving completed upstream work and keeping the earlier `FAILED`
-    stamp in history.
+    stamp in history. To selectively re-run an already `COMPLETED` or `SKIPPED`
+    stage (and its downstream dependents) without wiping upstream completed
+    work, pass `--rerun=<stage_name>` (`lightflow resume --lightflow=<dir>
+    --log_id=<id> --rerun=<stage_name>`, or add `--no-cascade` to re-run only
+    that stage).
 
 ### CLI Exit Codes
 

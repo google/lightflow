@@ -750,12 +750,45 @@ stages:
     self.assertIn("build_api --> build_api_2", mermaid)
     self.assertIn("[rolled back]", mermaid)
 
-    # Verify rollback_action honors stage.timeout_seconds
+    # Verify rollback_action honors stage.timeout_seconds when primary fails
     global _STAGE_2_SHOULD_FAIL
     _STAGE_2_SHOULD_FAIL = True
     runner_eng = engine.LightflowEngine(wf)
     p_timeout = runner_eng.execute_stage("build-api", schema.Passport())
     self.assertIn("timed out after 1s", p_timeout.stamps[-1].message)
+
+    # Verify rollback_action is skipped if the timed-out primary attempt thread
+    # is still alive (so a rollback cannot race a still-running attempt).
+    wf_skip_rb = schema.Lightflow.from_dict({
+        "name": "skip_rb_wf",
+        "actions": [
+            {
+                "id": "slow_primary",
+                "python_import": f"{__name__}.act_slow_rollback",
+            },
+            {"id": "fast_rb", "python_import": f"{__name__}.act_step_3"},
+        ],
+        "stages": [
+            {
+                "name": "timed-stage",
+                "python_action": {"action_id": "slow_primary"},
+                "rollback_action": {"action_id": "fast_rb"},
+                "timeout_seconds": 1,
+            },
+        ],
+    })
+    _CALLS.clear()
+    p_skip = schema.Passport()
+    with self.assertRaises(engine.StageTimeoutError):
+      engine.LightflowEngine(wf_skip_rb).execute_stage("timed-stage", p_skip)
+    self.assertEqual(p_skip.stamps[-1].status, schema.StampStatus.FAILED)
+    self.assertIn(
+        "Rollback skipped: the timed-out attempt is still running",
+        p_skip.stamps[-1].message,
+    )
+    self.assertNotIn("step_3", _CALLS)
+    mermaid_skip = lib.generate_status_mermaid(wf_skip_rb, p_skip)
+    self.assertIn("[rollback skipped]", mermaid_skip)
 
 
 if __name__ == "__main__":

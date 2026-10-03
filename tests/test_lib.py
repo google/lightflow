@@ -82,6 +82,24 @@ def act_step_3(
   return {"step_3_done": True}, "Step 3 done"
 
 
+_VERIFY_ATTEMPT = 0
+
+
+def act_verify_adjustable(
+    payload: dict[str, Any], **static_kwargs: Any
+) -> tuple[dict[str, Any], str]:
+  del payload, static_kwargs
+  global _VERIFY_ATTEMPT
+  _VERIFY_ATTEMPT += 1
+  _EXEC_TRACE.append(f"verify_{_VERIFY_ATTEMPT}")
+  if _VERIFY_ATTEMPT == 1:
+    return {
+        "verdict": "FAIL",
+        "stale_detail": "missing_entry",
+    }, "Verification attempt 1"
+  return {"verdict": "PASS"}, "Verification attempt 2"
+
+
 class PassportAndLightflowRunnerTest(unittest.TestCase):
   """Tests state management, operator gates, subgraph re-arming, and HTML output."""
 
@@ -89,8 +107,9 @@ class PassportAndLightflowRunnerTest(unittest.TestCase):
     super().setUp()
     os.environ.pop("ANTIGRAVITY_CONVERSATION_ID", None)
     _EXEC_TRACE.clear()
-    global _STAGE_2_SHOULD_FAIL
+    global _STAGE_2_SHOULD_FAIL, _VERIFY_ATTEMPT
     _STAGE_2_SHOULD_FAIL = True
+    _VERIFY_ATTEMPT = 0
     self.temp_dir = tempfile.mkdtemp(prefix="lightflow_oss_test_")
     self.old_env = os.environ.get("LIGHTFLOW_STATE_DIR")
     os.environ["LIGHTFLOW_STATE_DIR"] = self.temp_dir
@@ -224,6 +243,125 @@ stages:
     self.assertEqual(latest["s1"], schema.StampStatus.COMPLETED)
     self.assertEqual(latest["s2"], schema.StampStatus.COMPLETED)
     self.assertEqual(latest["s3"], schema.StampStatus.COMPLETED)
+
+  def test_rerun_completed_stage_cascades_and_replaces_stage_outputs(
+      self,
+  ) -> None:
+    module_name = __name__
+    manifest_path = os.path.join(self.temp_dir, "rerun.yaml")
+    with open(manifest_path, "w", encoding="utf-8") as f:
+      f.write(f"""
+name: rerun_pipeline
+actions:
+  - id: step_1
+    python_import: {module_name}.act_step_1
+  - id: verify
+    python_import: {module_name}.act_verify_adjustable
+  - id: step_3
+    python_import: {module_name}.act_step_3
+stages:
+  - name: s1
+    python_action:
+      action_id: step_1
+  - name: verify_spec
+    run_after: [s1]
+    python_action:
+      action_id: verify
+  - name: review_gate
+    run_after: [verify_spec]
+    operator_action:
+      instructions: "'Verdict: ' + payload.outputs.verify_spec.verdict"
+  - name: s3
+    run_after: [review_gate]
+    python_action:
+      action_id: step_3
+""")
+
+    cli = lib.LightflowRunnerCLI()
+    # 1. Initial start runs s1 + verify_spec (verdict=FAIL,
+    # stale_detail=missing_entry) and pauses at review_gate.
+    with self.assertRaises(engine.OperatorActionSuspended) as ctx:
+      cli.start(lightflow=manifest_path, log_id="rerun_run")
+    self.assertIn("Verdict: FAIL", str(ctx.exception))
+    self.assertEqual(_EXEC_TRACE, ["step_1", "verify_1"])
+
+    pm = lib.PassportManager("rerun_run")
+    passport = pm.load_passport()
+    assert passport is not None
+    self.assertEqual(
+        dict(passport.payload)["outputs"]["verify_spec"],
+        {"verdict": "FAIL", "stale_detail": "missing_entry"},
+    )
+
+    # 2. Re-run `verify_spec` while paused at downstream `review_gate` using
+    # `--rerun=verify_spec`. `s1` stays COMPLETED, `verify_spec` re-runs and
+    # replaces `payload.outputs.verify_spec` (dropping `stale_detail`), and
+    # `review_gate` re-suspends with updated instructions ("Verdict: PASS").
+    with self.assertRaises(engine.OperatorActionSuspended) as ctx2:
+      cli.resume(
+          lightflow=manifest_path,
+          log_id="rerun_run",
+          rerun="verify_spec",
+      )
+    self.assertIn("Verdict: PASS", str(ctx2.exception))
+    self.assertEqual(_EXEC_TRACE, ["step_1", "verify_1", "verify_2"])
+
+    passport = pm.load_passport()
+    assert passport is not None
+    self.assertEqual(
+        dict(passport.payload)["outputs"]["verify_spec"],
+        {"verdict": "PASS"},
+    )
+
+    # 2a. Re-running `verify_spec` with `cascade=False` while paused at
+    # downstream `review_gate` raises LightflowAlreadyPausedError because
+    # `review_gate` is not re-armed when cascade is False.
+    with self.assertRaises(lib.LightflowAlreadyPausedError):
+      cli.resume(
+          lightflow=manifest_path,
+          log_id="rerun_run",
+          rerun="verify_spec",
+          cascade=False,
+      )
+
+    # 2b. Combining `--rerun` with `--resolution=REJECT` raises ValueError.
+    with self.assertRaisesRegex(ValueError, "Cannot combine '--rerun'"):
+      cli.resume(
+          lightflow=manifest_path,
+          log_id="rerun_run",
+          rerun="verify_spec",
+          resolution="REJECT",
+      )
+
+    # 3. Approve `review_gate` -> workflow completes (`s3` runs).
+    cli.resume(
+        lightflow=manifest_path,
+        log_id="rerun_run",
+        stage="review_gate",
+        resolution="APPROVE",
+    )
+    self.assertEqual(_EXEC_TRACE, ["step_1", "verify_1", "verify_2", "step_3"])
+
+    # 4. Re-run `s3` after workflow completion via `--stage=s3 --rerun`
+    # (`rerun=True`).
+    cli.resume(
+        lightflow=manifest_path,
+        log_id="rerun_run",
+        stage="s3",
+        rerun=True,
+    )
+    self.assertEqual(
+        _EXEC_TRACE, ["step_1", "verify_1", "verify_2", "step_3", "step_3"]
+    )
+
+    # 5. Conflicting `--stage` and `--rerun` raises ValueError.
+    with self.assertRaises(ValueError):
+      cli.resume(
+          lightflow=manifest_path,
+          log_id="rerun_run",
+          stage="s1",
+          rerun="s3",
+      )
 
   def test_passport_manager_blocks_path_traversal_and_non_state_dirs(
       self,
@@ -404,14 +542,16 @@ stages:
     except ImportError:
       from lightflow import runner  # type: ignore[no-redef]  # pylint: disable=g-import-not-at-top
 
+    self.assertEqual(runner._VERSION, "0.2.0")  # pylint: disable=protected-access
     examples_dir = os.path.join(_OSS_ROOT, "examples")
     cli = lib.LightflowRunnerCLI()
 
-    # 1. Verify all 5 example manifests compile and dry-run cleanly end-to-end
+    # 1. Verify all 8 example manifests compile and dry-run cleanly end-to-end
     dry_run_buf = io.StringIO()
     with contextlib.redirect_stdout(dry_run_buf):
       for name in (
           "async_job_watcher",
+          "blue_green_release",
           "create_lightflow",
           "hn_digest",
           "pypi_upgrade_guard",
@@ -446,6 +586,22 @@ stages:
     self.assertIn("/tmp/usgs_bulletin.md", dry_run_out)
     self.assertIn("--log_id=custom_preview_id", dry_run_out)
     self.assertIsNone(lib.PassportManager("custom_preview_id").load_passport())
+
+    branch_dry_run_buf = io.StringIO()
+    with contextlib.redirect_stdout(branch_dry_run_buf):
+      for name in ("incident_db_failover", "tenant_gitops_onboarding"):
+        wf_dir = os.path.join(examples_dir, name)
+        wf_path = os.path.join(wf_dir, "lightflow.yaml")
+        self.assertTrue(os.path.isfile(wf_path), f"Missing {wf_path}")
+        self.assertEqual(schema.resolve_lightflow_path(wf_dir), wf_path)
+        runner._dispatch_argv(  # pylint: disable=protected-access
+            runner.CliWrapper(cli),
+            ["dry_run", f"--lightflow={wf_path}"],
+        )
+    branch_dry_run_out = branch_dry_run_buf.getvalue()
+    self.assertIn("Stage: publish_failover_ledger", branch_dry_run_out)
+    self.assertIn("Stage: wait_argocd_mesh_sync", branch_dry_run_out)
+    self.assertIn("Status: [SKIPPED]", branch_dry_run_out)
 
     viz_out = os.path.join(self.temp_dir, "usgs_viz.html")
     with contextlib.redirect_stdout(io.StringIO()):
@@ -601,7 +757,7 @@ stages:
         cli.status(lightflow=pypi_wf, log_id="pypi_test_run", verbose=True)
     self.assertIn("[rolled back]", status_buf.getvalue())
 
-    # 4. Dry-run and execute 39-stage tenant_gitops_onboarding across all paths
+    # 4. Dry-run and execute 22-stage tenant_gitops_onboarding across all paths
     tenant_wf = os.path.join(
         examples_dir, "tenant_gitops_onboarding", "lightflow.yaml"
     )
@@ -613,12 +769,12 @@ stages:
           ["dry_run", f"--lightflow={tenant_wf}"],
       )
     self.assertIn(
-        "Stage: wait_catalog_pr",
+        "Stage: wait_argocd_mesh_sync",
         tenant_dry_buf.getvalue(),
     )
     sandbox_dir = os.path.join(self.temp_dir, "tenant_sandbox")
     with contextlib.redirect_stdout(io.StringIO()):
-      # 4a. Rejecting Gate #2 skips wait_sa_activation and Phase 4
+      # 4a. Rejecting Gate #2 skips wait_iam_role_ready and Phases 3-4
       with self.assertRaises(engine.OperatorActionSuspended):
         cli.start(
             lightflow=tenant_wf,
@@ -626,7 +782,7 @@ stages:
             payload={
                 "alias": "payments-eu",
                 "sandbox_dir": sandbox_dir,
-                "require_manual_sa_portal": True,
+                "require_manual_quota_override": True,
             },
         )
       with self.assertRaises(engine.OperatorActionSuspended):
@@ -641,31 +797,32 @@ stages:
         cli.resume(
             lightflow=tenant_wf,
             log_id="tenant_reject_run",
-            stage="prompt_sa_activation",
+            stage="prompt_iam_quota_override",
             resolution="REJECT",
         )
       rej_passport = lib.PassportManager("tenant_reject_run").load_passport()
       assert rej_passport is not None
       rej_stamps = {s.stage_name: s.status for s in rej_passport.stamps}
       self.assertEqual(
-          rej_stamps["prompt_sa_activation"], schema.StampStatus.FAILED
+          rej_stamps["prompt_iam_quota_override"], schema.StampStatus.FAILED
       )
       self.assertEqual(
-          rej_stamps["wait_sa_activation"], schema.StampStatus.SKIPPED
+          rej_stamps["wait_iam_role_ready"], schema.StampStatus.SKIPPED
       )
       self.assertEqual(
-          rej_stamps["wait_catalog_pr"], schema.StampStatus.SKIPPED
+          rej_stamps["wait_argocd_mesh_sync"], schema.StampStatus.SKIPPED
       )
 
-      # 4b. Full 2-gate approval path
+      # 4b. Full 2-gate PCI approval path (dedicated KMS key branch)
       with self.assertRaises(engine.OperatorActionSuspended) as ctx1:
         cli.start(
             lightflow=tenant_wf,
             log_id="tenant_test_run",
             payload={
                 "alias": "payments-eu",
+                "compliance_tier": "pci",
                 "sandbox_dir": sandbox_dir,
-                "require_manual_sa_portal": True,
+                "require_manual_quota_override": True,
             },
         )
       self.assertIn("verify_spec", str(ctx1.exception))
@@ -677,13 +834,13 @@ stages:
             resolution="APPROVE",
             payload={"approved": True},
         )
-      self.assertIn("prompt_sa_activation", str(ctx2.exception))
+      self.assertIn("prompt_iam_quota_override", str(ctx2.exception))
       cli.resume(
           lightflow=tenant_wf,
           log_id="tenant_test_run",
-          stage="prompt_sa_activation",
+          stage="prompt_iam_quota_override",
           resolution="APPROVE",
-          payload={"manually_activated": True},
+          payload={"approved": True, "quota_override_approved": True},
       )
 
       # 4c. Non-admin requester early handoff branch
@@ -705,13 +862,15 @@ stages:
           payload={"approved": True},
       )
 
-      # 4d. Auto-SA (ALL_DONE skip) + artifact failure rollback + resume
+      # 4d. Standard compliance tier (shared KMS branch) + auto-IAM (ALL_DONE
+      #     bypass) + artifact failure rollback + surgical resume
       with self.assertRaises(engine.OperatorActionSuspended):
         cli.start(
             lightflow=tenant_wf,
             log_id="tenant_rollback_run",
             payload={
-                "alias": "payments-eu",
+                "alias": "analytics-us",
+                "compliance_tier": "standard",
                 "sandbox_dir": sandbox_dir,
                 "simulate_artifact_failure": True,
             },
@@ -735,15 +894,22 @@ stages:
     self.assertIsNotNone(tenant_passport)
     assert tenant_passport is not None
     stamps_by_stage = {s.stage_name: s.status for s in tenant_passport.stamps}
-    self.assertEqual(len(stamps_by_stage), 39)
+    self.assertEqual(len(stamps_by_stage), 22)
     self.assertEqual(
-        stamps_by_stage["wait_catalog_pr"], schema.StampStatus.COMPLETED
+        stamps_by_stage["provision_dedicated_kms_key"],
+        schema.StampStatus.COMPLETED,
+    )
+    self.assertEqual(
+        stamps_by_stage["apply_shared_kms_policy"], schema.StampStatus.SKIPPED
+    )
+    self.assertEqual(
+        stamps_by_stage["wait_argocd_mesh_sync"], schema.StampStatus.COMPLETED
     )
     self.assertEqual(
         stamps_by_stage["stop_non_admin_stage"], schema.StampStatus.SKIPPED
     )
     self.assertEqual(
-        stamps_by_stage["fail_on_sa_failed"], schema.StampStatus.SKIPPED
+        stamps_by_stage["fail_on_iam_failed"], schema.StampStatus.SKIPPED
     )
 
     na_passport = lib.PassportManager("tenant_non_admin_run").load_passport()
@@ -752,18 +918,28 @@ stages:
     self.assertEqual(
         na_stamps["stop_non_admin_stage"], schema.StampStatus.COMPLETED
     )
-    self.assertEqual(na_stamps["wait_catalog_pr"], schema.StampStatus.SKIPPED)
+    self.assertEqual(
+        na_stamps["wait_argocd_mesh_sync"], schema.StampStatus.SKIPPED
+    )
 
     rb_passport = lib.PassportManager("tenant_rollback_run").load_passport()
     assert rb_passport is not None
     rb_stamps = {s.stage_name: s.status for s in rb_passport.stamps}
     self.assertEqual(
-        rb_stamps["prompt_sa_activation"], schema.StampStatus.SKIPPED
+        rb_stamps["prompt_iam_quota_override"], schema.StampStatus.SKIPPED
     )
     self.assertEqual(
-        rb_stamps["wait_sa_activation"], schema.StampStatus.COMPLETED
+        rb_stamps["wait_iam_role_ready"], schema.StampStatus.COMPLETED
     )
-    self.assertEqual(rb_stamps["wait_catalog_pr"], schema.StampStatus.COMPLETED)
+    self.assertEqual(
+        rb_stamps["provision_dedicated_kms_key"], schema.StampStatus.SKIPPED
+    )
+    self.assertEqual(
+        rb_stamps["apply_shared_kms_policy"], schema.StampStatus.COMPLETED
+    )
+    self.assertEqual(
+        rb_stamps["wait_argocd_mesh_sync"], schema.StampStatus.COMPLETED
+    )
 
   def test_stage_timeout_allows_all_done_cleanup_in_engine_loop(self) -> None:
     wf = schema.Lightflow(

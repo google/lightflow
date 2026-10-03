@@ -1,0 +1,100 @@
+name: blue_green_release
+description: >-
+  8-stage Blue-Green / Canary service release workflow demonstrating parallel
+  validation diamond join, green slot warmup polling, operator cutover gate,
+  canary SLO verification with automatic traffic rollback, surgical recovery,
+  and old-slot decommissioning.
+
+actions:
+  - id: build_release_bundle
+    python_import: examples.blue_green_release.actions.build_release_bundle
+  - id: run_security_scan
+    python_import: examples.blue_green_release.actions.run_security_scan
+  - id: run_integration_suite
+    python_import: examples.blue_green_release.actions.run_integration_suite
+  - id: warm_green_environment
+    python_import: examples.blue_green_release.actions.warm_green_environment
+  - id: shift_and_verify_canary
+    python_import: examples.blue_green_release.actions.shift_and_verify_canary
+  - id: revert_canary_traffic
+    python_import: examples.blue_green_release.actions.revert_canary_traffic
+  - id: promote_green_to_prod
+    python_import: examples.blue_green_release.actions.promote_green_to_prod
+  - id: decommission_old_slot
+    python_import: examples.blue_green_release.actions.decommission_old_slot
+
+stages:
+  - name: build_release_bundle
+    description: Build release bundle digest and initialize deployment slot state
+    python_action:
+      action_id: build_release_bundle
+
+  - name: run_security_scan
+    description: Parallel Track A — verify container CVE and SBOM policy
+    run_after:
+      - build_release_bundle
+    python_action:
+      action_id: run_security_scan
+
+  - name: run_integration_suite
+    description: Parallel Track B — run hermetic API contract test suite
+    run_after:
+      - build_release_bundle
+    python_action:
+      action_id: run_integration_suite
+
+  - name: warm_green_environment
+    description: Diamond join + poll until green target group reports ready
+    run_after:
+      - run_security_scan
+      - run_integration_suite
+    python_action:
+      action_id: warm_green_environment
+    polling_policy:
+      condition: "payload.outputs.warm_green_environment.green_ready == true"
+      interval_seconds: 1
+      timeout_seconds: 15
+
+  - name: approve_canary_cutover
+    description: Operator approval gate before shifting canary traffic to green
+    run_after:
+      - warm_green_environment
+    operator_action:
+      instructions: >-
+        'Release bundle "' + payload.outputs.build_release_bundle.bundle_digest + '" passed security scan and integration tests, and green slot is warm. Approve canary traffic shift:'
+      json_schema:
+        type: object
+        required:
+          - approved
+          - canary_percent
+        properties:
+          approved:
+            type: boolean
+          canary_percent:
+            type: integer
+            minimum: 1
+            maximum: 50
+
+  - name: shift_and_verify_canary
+    description: Shift canary traffic to green and verify error-rate SLO (auto-reverts on failure)
+    run_after:
+      - approve_canary_cutover
+    run_if: "payload.outputs.approve_canary_cutover.approved == true"
+    python_action:
+      action_id: shift_and_verify_canary
+    rollback_action:
+      action_id: revert_canary_traffic
+
+  - name: promote_green_to_prod
+    description: Promote green slot to 100% production traffic
+    run_after:
+      - shift_and_verify_canary
+    python_action:
+      action_id: promote_green_to_prod
+
+  - name: decommission_old_slot
+    description: Drain retiring blue slot and finalize release state
+    run_after:
+      - promote_green_to_prod
+    python_action:
+      action_id: decommission_old_slot

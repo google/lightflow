@@ -32,13 +32,13 @@ execution jumps straight from `align_on_design` to `draft_and_explain_manifest`.
 ### 0. Dry-Run the Meta-Workflow
 
 ```bash
-lightflow dry_run --lightflow=examples/create_lightflow/lightflow.yaml
+lightflow dry_run --lightflow=examples/create_lightflow
 ```
 
 ### 1. Start the Workflow (Pauses at Step 1: `align_on_design`)
 
 ```bash
-lightflow start --lightflow=examples/create_lightflow/lightflow.yaml --log_id=demo_scaffold
+lightflow start --lightflow=examples/create_lightflow --log_id=demo_scaffold
 ```
 
 Lightflow exits with code `2` (`SUSPENDED`) and prompts the agent to align with
@@ -52,7 +52,7 @@ Suppose you and the agent agree to build a new workflow `hello_billing` in
 ```bash
 mkdir -p /tmp/hello_billing
 
-lightflow resume --lightflow=examples/create_lightflow/lightflow.yaml \
+lightflow resume --lightflow=examples/create_lightflow \
   --log_id=demo_scaffold \
   --stage=align_on_design \
   --resolution=APPROVE \
@@ -76,7 +76,7 @@ def calculate_invoice(payload: dict[str, Any], **kwargs: Any) -> tuple[dict[str,
     return {"invoice_total": total}, f"Calculated invoice total ${total}"
 EOF
 
-lightflow resume --lightflow=examples/create_lightflow/lightflow.yaml \
+lightflow resume --lightflow=examples/create_lightflow \
   --log_id=demo_scaffold \
   --stage=implement_and_test_actions \
   --resolution=APPROVE \
@@ -114,7 +114,7 @@ stages:
       json_schema: '{"type": "object", "required": ["approved"]}'
 EOF
 
-lightflow resume --lightflow=examples/create_lightflow/lightflow.yaml \
+lightflow resume --lightflow=examples/create_lightflow \
   --log_id=demo_scaffold \
   --stage=draft_and_explain_manifest \
   --resolution=APPROVE \

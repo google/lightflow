@@ -125,7 +125,12 @@ def fetch_metrics(
 2.  **Consistent Output Keys (`payload.outputs.<stage_name>`)**: Every return
     path of an action (including any `offline` test mode for external APIs) must
     return a JSON-serializable `(dict, str)` with the **exact same dictionary
-    keys** so downstream `run_if` and `instructions` expressions never crash.
+    keys** so downstream `run_if` and `instructions` expressions never crash. If
+    an action cannot do its job (including its own plumbing failing), raise an
+    exception: the stage is stamped `FAILED` and `resume` re-runs only it (or
+    use `lightflow resume --lightflow=. --log_id=<id> --rerun=<stage>` to re-run
+    an already completed stage and its downstream dependents). Never return a
+    failure verdict as a normal result.
 3.  **Cross-Check `payload.outputs.<stage>` Against `run_after`**: Any stage
     whose `run_if` or `instructions` reads `payload.outputs.<upstream>.<key>`
     must list `<upstream>` (directly or transitively) in `run_after`.
@@ -136,7 +141,7 @@ Before handing off or running in production, always verify compilation, CEL-like
 expression evaluation, and gate schemas:
 
 ```bash
-lightflow dry_run --lightflow=lightflow.yaml
-lightflow render --lightflow=lightflow.yaml
-lightflow visualize --lightflow=lightflow.yaml --out=/tmp/visualizer.html
+lightflow dry_run --lightflow=.
+lightflow render --lightflow=.
+lightflow visualize --lightflow=. --out=/tmp/visualizer.html
 ```

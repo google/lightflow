@@ -12,13 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Mocked platform actions for the 39-stage GitOps tenant onboarding workflow.
+"""Mocked cloud-native actions for the 22-stage GitOps tenant onboarding DAG.
 
-All external infrastructure systems (ticketing, GitOps pull requests, OIDC
-identity reconciler, SCIM group sync, workload ServiceAccount portal, cloud
-storage/Vault artifacts, and FinOps cost-center catalog) are simulated against
-a local JSON state file inside `sandbox_dir` so the full 39-stage enterprise
-pipeline runs hermetically in under 2 seconds without cloud credentials.
+All control-plane systems (change-advisory ticketing, Identity Provider groups,
+SCIM 2.0 push, Cloud IAM OIDC Workload Identity federation, AWS KMS / Vault /
+Terraform state storage, GitOps pull requests, and ArgoCD application sync)
+read and mutate a local JSON state ledger (`control_plane_state.json`) inside
+`sandbox_dir` so the entire multi-branch enterprise pipeline runs hermetically
+in under 2 seconds without cloud credentials.
 """
 
 from __future__ import annotations
@@ -32,13 +33,31 @@ from typing import Any
 
 def _resolve_sandbox(payload: dict[str, Any]) -> str:
   """Returns the sandbox directory for the current onboarding run."""
-  sandbox = str(payload.get("sandbox_dir", "")).strip()
+  init_out = payload.get("outputs", {}).get("init_spec", {})
+  sandbox = str(
+      init_out.get("sandbox_dir") or payload.get("sandbox_dir") or ""
+  ).strip()
   if not sandbox or sandbox.startswith("<mock_"):
-    alias = str(payload.get("alias", "payments-eu")).strip() or "payments-eu"
+    alias = (
+        str(
+            init_out.get("alias") or payload.get("alias") or "payments-eu"
+        ).strip()
+        or "payments-eu"
+    )
     sandbox = os.path.join(
         tempfile.gettempdir(), f"lightflow_tenant_onboarding_{alias}"
     )
   return os.path.abspath(os.path.expanduser(sandbox))
+
+
+def _resolve_alias(payload: dict[str, Any]) -> str:
+  init_out = payload.get("outputs", {}).get("init_spec", {})
+  return (
+      str(
+          init_out.get("alias") or payload.get("alias") or "payments-eu"
+      ).strip()
+      or "payments-eu"
+  )
 
 
 def _state_file(sandbox: str) -> str:
@@ -52,11 +71,15 @@ def _load_state(sandbox: str) -> dict[str, Any]:
       return json.load(f)
   return {
       "prs": {},
+      "argocd_apps": {},
       "groups": [],
       "admins": [],
+      "scim_status": "UNINITIALIZED",
+      "iam_role": {},
+      "kms": {},
+      "cloud_artifacts": {},
       "checkpoints": [],
       "files": [],
-      "cloud_artifacts": {},
   }
 
 
@@ -69,45 +92,50 @@ def _save_state(sandbox: str, state: dict[str, Any]) -> None:
 def initialize_spec(
     payload: dict[str, Any], dry_run: bool = False, **kwargs: Any
 ) -> tuple[dict[str, Any], str]:
-  """Normalizes tenant onboarding parameters and initializes local state."""
+  """Normalizes tenant onboarding parameters and resets the local sandbox."""
   del kwargs
   alias = str(payload.get("alias", "payments-eu")).strip() or "payments-eu"
-  spec_name = (
-      str(payload.get("spec_name", "Payments EU Checkout")).strip()
+  display_name = (
+      str(payload.get("display_name", "Payments EU Checkout")).strip()
       or "Payments EU Checkout"
   )
-  spec_rbac_root = (
-      str(payload.get("spec_rbac_root", f"oidc-{alias}")).strip()
-      or f"oidc-{alias}"
+  idp_group_prefix = (
+      str(payload.get("idp_group_prefix", f"idp-{alias}")).strip()
+      or f"idp-{alias}"
   )
-  spec_primary_admin = (
-      str(payload.get("spec_primary_admin", "alice@example.com")).strip()
+  primary_admin = (
+      str(payload.get("primary_admin", "alice@example.com")).strip()
       or "alice@example.com"
   )
-  spec_secondary_admin = (
-      str(payload.get("spec_secondary_admin", "bob@example.com")).strip()
+  secondary_admin = (
+      str(payload.get("secondary_admin", "bob@example.com")).strip()
       or "bob@example.com"
   )
-  spec_cost_center_id = (
-      str(payload.get("spec_cost_center_id", "CC-4820")).strip() or "CC-4820"
+  cost_center_id = (
+      str(payload.get("cost_center_id", "CC-4820")).strip() or "CC-4820"
+  )
+  compliance_tier = (
+      str(payload.get("compliance_tier", "pci")).strip().lower() or "pci"
   )
   sandbox_dir = _resolve_sandbox({**payload, "alias": alias})
 
   out = {
       "alias": alias,
-      "spec_name": spec_name,
-      "spec_rbac_root": spec_rbac_root,
-      "spec_primary_admin": spec_primary_admin,
-      "spec_secondary_admin": spec_secondary_admin,
-      "spec_cost_center_id": spec_cost_center_id,
+      "display_name": display_name,
+      "k8s_namespace": f"tenant-{alias}",
+      "idp_group_prefix": idp_group_prefix,
+      "primary_admin": primary_admin,
+      "secondary_admin": secondary_admin,
+      "cost_center_id": cost_center_id,
+      "compliance_tier": compliance_tier,
       "sandbox_dir": sandbox_dir,
   }
   if dry_run:
     return (
         out,
         (
-            f"[DRY RUN] Would initialize tenant spec for '{alias}' in"
-            f" '{sandbox_dir}'."
+            f"[DRY RUN] Would initialize tenant spec for '{alias}'"
+            f" (tier={compliance_tier}) in '{sandbox_dir}'."
         ),
     )
 
@@ -117,7 +145,10 @@ def initialize_spec(
   _save_state(sandbox_dir, state)
   return (
       out,
-      f"Initialized tenant specification for '{alias}' ({spec_name}).",
+      (
+          f"Initialized tenant specification for '{alias}' ({display_name},"
+          f" tier={compliance_tier})."
+      ),
   )
 
 
@@ -137,68 +168,41 @@ def check_operator_is_admin(
 def create_provisioning_request(
     payload: dict[str, Any], dry_run: bool = False, **kwargs: Any
 ) -> tuple[dict[str, Any], str]:
-  """Creates a mocked change-management onboarding ticket."""
+  """Creates a change-management onboarding request ticket in local state."""
   del kwargs
-  alias = str(payload.get("alias", "payments-eu"))
+  alias = _resolve_alias(payload)
   code = sum(ord(ch) * (idx + 1) for idx, ch in enumerate(alias)) % 9000 + 1000
-  ticket_id = f"ONBOARD-{code}"
+  ticket_id = f"CAB-{code}"
   if dry_run:
     return (
-        {"ticket_id": ticket_id},
-        f"[DRY RUN] Would create change-management ticket {ticket_id}.",
+        {"ticket_id": ticket_id, "ticket_status": "PENDING_CAB"},
+        f"[DRY RUN] Would create change-advisory ticket {ticket_id}.",
     )
   sandbox = _resolve_sandbox(payload)
   state = _load_state(sandbox)
-  state["ticket_id"] = ticket_id
+  state["ticket"] = {"ticket_id": ticket_id, "status": "PENDING_CAB"}
   _save_state(sandbox, state)
   return (
-      {"ticket_id": ticket_id},
-      f"Created onboarding change-management ticket {ticket_id}.",
-  )
-
-
-def checkpoint_registry(
-    payload: dict[str, Any], dry_run: bool = False, **kwargs: Any
-) -> tuple[dict[str, Any], str]:
-  """Writes a progress checkpoint into the mocked platform catalog."""
-  del kwargs
-  alias = str(payload.get("alias", "payments-eu"))
-  ticket_id = str(payload.get("ticket_id", "ONBOARD-1000"))
-  if dry_run:
-    return (
-        {"registry_checkpointed": True},
-        f"[DRY RUN] Would checkpoint catalog state for '{alias}'.",
-    )
-  sandbox = _resolve_sandbox(payload)
-  state = _load_state(sandbox)
-  checkpoints = list(state.get("checkpoints", []))
-  checkpoints.append({
-      "alias": alias,
-      "ticket_id": ticket_id,
-      "has_cloud_artifacts": bool(payload.get("state_bucket_uri")),
-  })
-  state["checkpoints"] = checkpoints
-  _save_state(sandbox, state)
-  return (
-      {"registry_checkpointed": True, "checkpoint_count": len(checkpoints)},
-      (
-          f"Checkpointed tenant '{alias}' in platform catalog"
-          f" (#{len(checkpoints)})."
-      ),
+      {"ticket_id": ticket_id, "ticket_status": "PENDING_CAB"},
+      f"Created change-advisory onboarding ticket {ticket_id}.",
   )
 
 
 def stop_non_admin(
     payload: dict[str, Any], dry_run: bool = False, **kwargs: Any
 ) -> tuple[dict[str, Any], str]:
-  """Records early handoff when initiated by a non-admin requester."""
+  """Records early ticket handoff when initiated by a non-admin requester."""
   del dry_run, kwargs
-  ticket_id = str(payload.get("ticket_id", "ONBOARD-1000"))
+  ticket_id = str(
+      payload.get("outputs", {})
+      .get("create_ticket", {})
+      .get("ticket_id", "CAB-1000")
+  )
   return (
-      {"non_admin_handoff": True},
+      {"non_admin_handoff": True, "ticket_id": ticket_id},
       (
           f"Non-admin request recorded under {ticket_id}; platform admins will"
-          " complete actuation."
+          " complete infrastructure actuation."
       ),
   )
 
@@ -206,312 +210,188 @@ def stop_non_admin(
 def check_governance_approval(
     payload: dict[str, Any], dry_run: bool = False, **kwargs: Any
 ) -> tuple[dict[str, Any], str]:
-  """Polls change-advisory approval status on the onboarding ticket."""
-  del dry_run, kwargs
-  ticket_id = str(payload.get("ticket_id", "ONBOARD-1000"))
-  return (
-      {"governance_approved": True},
-      f"Change-advisory board approved ticket {ticket_id}.",
-  )
-
-
-def write_oidc_rbac_manifest(
-    payload: dict[str, Any], dry_run: bool = False, **kwargs: Any
-) -> tuple[dict[str, Any], str]:
-  """Generates the declarative OIDC RBAC group manifest in the GitOps repo."""
+  """Polls change-advisory board approval and transitions ticket status."""
   del kwargs
-  alias = str(payload.get("alias", "payments-eu"))
-  rel_path = f"gitops/rbac/{alias}/groups.yaml"
-  if dry_run:
-    return (
-        {"rbac_manifest_path": rel_path},
-        f"[DRY RUN] Would write OIDC RBAC manifest '{rel_path}'.",
-    )
-  sandbox = _resolve_sandbox(payload)
-  full_path = os.path.join(sandbox, rel_path)
-  os.makedirs(os.path.dirname(full_path), exist_ok=True)
-  with open(full_path, "w", encoding="utf-8") as f:
-    f.write(
-        "apiVersion: identity.example.io/v1alpha1\nkind: GroupSet\n"
-        f"metadata:\n  name: {payload.get('spec_rbac_root', f'oidc-{alias}')}\n"
-    )
-  state = _load_state(sandbox)
-  files = state.setdefault("files", [])
-  if rel_path not in files:
-    files.append(rel_path)
-  _save_state(sandbox, state)
-  return (
-      {"rbac_manifest_path": rel_path},
-      f"Generated OIDC RBAC manifest at '{rel_path}'.",
+  ticket_id = str(
+      payload.get("outputs", {})
+      .get("create_ticket", {})
+      .get("ticket_id", "CAB-1000")
   )
-
-
-def register_in_kustomize(
-    payload: dict[str, Any], dry_run: bool = False, **kwargs: Any
-) -> tuple[dict[str, Any], str]:
-  """Registers the tenant RBAC directory in the root kustomization.yaml."""
-  del kwargs
-  alias = str(payload.get("alias", "payments-eu"))
-  kustomize_path = "gitops/rbac/kustomization.yaml"
   if dry_run:
     return (
-        {"kustomize_registered": True},
-        f"[DRY RUN] Would register '{alias}' in '{kustomize_path}'.",
-    )
-  sandbox = _resolve_sandbox(payload)
-  full_path = os.path.join(sandbox, kustomize_path)
-  os.makedirs(os.path.dirname(full_path), exist_ok=True)
-  entry = f"- ./{alias}/groups.yaml\n"
-  existing = ""
-  if os.path.isfile(full_path):
-    with open(full_path, "r", encoding="utf-8") as f:
-      existing = f.read()
-  if entry not in existing:
-    with open(full_path, "a", encoding="utf-8") as f:
-      f.write(entry)
-  return (
-      {"kustomize_registered": True},
-      f"Registered '{alias}/groups.yaml' in '{kustomize_path}'.",
-  )
-
-
-def _open_mock_pr(
-    payload: dict[str, Any],
-    pr_key: str,
-    pr_number: int,
-    title: str,
-    dry_run: bool,
-) -> tuple[dict[str, Any], str]:
-  """Opens and records a simulated GitOps pull request in local state."""
-  pr_id = f"PR-{pr_number}"
-  if dry_run:
-    return (
-        {pr_key: pr_id},
-        f"[DRY RUN] Would open GitOps {pr_id} ({title}).",
+        {"governance_approved": True, "ticket_id": ticket_id},
+        f"Change-advisory board approved ticket {ticket_id}.",
     )
   sandbox = _resolve_sandbox(payload)
   state = _load_state(sandbox)
-  state.setdefault("prs", {})[pr_id] = {"title": title, "status": "MERGED"}
+  ticket = state.setdefault(
+      "ticket", {"ticket_id": ticket_id, "status": "PENDING_CAB"}
+  )
+  ticket["status"] = "APPROVED"
   _save_state(sandbox, state)
   return (
-      {pr_key: pr_id},
-      f"Opened and queued GitOps {pr_id}: '{title}'.",
+      {"governance_approved": True, "ticket_id": ticket["ticket_id"]},
+      f"Change-advisory board approved ticket {ticket['ticket_id']}.",
   )
 
 
-def package_rbac_pr(
+def provision_identity_groups(
     payload: dict[str, Any], dry_run: bool = False, **kwargs: Any
 ) -> tuple[dict[str, Any], str]:
-  """Packages the OIDC RBAC manifest changes into a GitOps pull request."""
+  """Creates IdP groups, binds tenant admins, and initiates SCIM push."""
   del kwargs
-  alias = str(payload.get("alias", "payments-eu"))
-  return _open_mock_pr(
-      payload,
-      "rbac_pr_id",
-      101,
-      f"feat(rbac): onboard OIDC group set for {alias}",
-      dry_run,
-  )
-
-
-def check_pr_merged(
-    payload: dict[str, Any],
-    target_pr_key: str = "rbac_pr_id",
-    dry_run: bool = False,
-    **kwargs: Any,
-) -> tuple[dict[str, Any], str]:
-  """Reusable polling action that checks whether a GitOps PR has merged."""
-  del dry_run, kwargs
-  pr_id = str(payload.get(target_pr_key, f"<{target_pr_key}>"))
-  merged_key = f"{target_pr_key}_merged"
-  return (
-      {merged_key: True},
-      f"GitOps pull request {pr_id} ({target_pr_key}) merged into main.",
-  )
-
-
-def check_oidc_absorbed(
-    payload: dict[str, Any], dry_run: bool = False, **kwargs: Any
-) -> tuple[dict[str, Any], str]:
-  """Polls the OIDC identity reconciler until the RBAC PR commit is absorbed."""
-  del dry_run, kwargs
-  root = str(payload.get("spec_rbac_root", "oidc-payments-eu"))
-  return (
-      {"oidc_absorbed": True},
-      f"OIDC identity reconciler absorbed spec for '{root}'.",
-  )
-
-
-def create_identity_groups(
-    payload: dict[str, Any], dry_run: bool = False, **kwargs: Any
-) -> tuple[dict[str, Any], str]:
-  """Actuates the tenant OIDC groups in the identity provider."""
-  del kwargs
-  root = str(payload.get("spec_rbac_root", "oidc-payments-eu"))
-  groups = [f"{root}-admins", f"{root}-devs", f"{root}-automation"]
+  init_out = payload.get("outputs", {}).get("init_spec", {})
+  prefix = str(init_out.get("idp_group_prefix") or "idp-payments-eu")
+  admins = [
+      str(init_out.get("primary_admin") or "alice@example.com"),
+      str(init_out.get("secondary_admin") or "bob@example.com"),
+  ]
+  groups = [f"{prefix}-admins", f"{prefix}-devs", f"{prefix}-workloads"]
+  out = {
+      "created_groups": groups,
+      "bound_admins": admins,
+      "scim_push_initiated": True,
+  }
   if dry_run:
     return (
-        {"actuated_groups": groups},
-        f"[DRY RUN] Would actuate {len(groups)} OIDC groups under '{root}'.",
+        out,
+        (
+            f"[DRY RUN] Would create IdP groups {', '.join(groups)} and bind"
+            f" {', '.join(admins)}."
+        ),
     )
   sandbox = _resolve_sandbox(payload)
   state = _load_state(sandbox)
   state["groups"] = groups
-  _save_state(sandbox, state)
-  return (
-      {"actuated_groups": groups},
-      f"Actuated {len(groups)} OIDC groups: {', '.join(groups)}.",
-  )
-
-
-def add_admins(
-    payload: dict[str, Any], dry_run: bool = False, **kwargs: Any
-) -> tuple[dict[str, Any], str]:
-  """Binds primary and secondary tenant admins to the admin group."""
-  del kwargs
-  primary = str(payload.get("spec_primary_admin", "alice@example.com"))
-  secondary = str(payload.get("spec_secondary_admin", "bob@example.com"))
-  admins = [primary, secondary]
-  if dry_run:
-    return (
-        {"bound_admins": admins},
-        f"[DRY RUN] Would bind {admins} to tenant admin group.",
-    )
-  sandbox = _resolve_sandbox(payload)
-  state = _load_state(sandbox)
   state["admins"] = admins
+  state["scim_status"] = "SYNCING"
   _save_state(sandbox, state)
   return (
-      {"bound_admins": admins},
-      f"Bound tenant administrators: {', '.join(admins)}.",
-  )
-
-
-def propose_trusted_issuer(
-    payload: dict[str, Any], dry_run: bool = False, **kwargs: Any
-) -> tuple[dict[str, Any], str]:
-  """Registers the tenant automation group as a trusted OIDC issuer."""
-  del dry_run, kwargs
-  root = str(payload.get("spec_rbac_root", "oidc-payments-eu"))
-  return (
-      {"trusted_issuer_proposed": True},
-      f"Proposed '{root}-automation' as a trusted workload OIDC issuer.",
-  )
-
-
-def check_trusted_issuer_ready(
-    payload: dict[str, Any], dry_run: bool = False, **kwargs: Any
-) -> tuple[dict[str, Any], str]:
-  """Polls until the OIDC trusted-issuer registration is active."""
-  del dry_run, kwargs
-  root = str(payload.get("spec_rbac_root", "oidc-payments-eu"))
-  return (
-      {"trusted_issuer_ready": True},
-      f"Trusted OIDC issuer '{root}-automation' is active.",
-  )
-
-
-def enable_automated_management(
-    payload: dict[str, Any], dry_run: bool = False, **kwargs: Any
-) -> tuple[dict[str, Any], str]:
-  """Enables automated SCIM lifecycle management on the tenant groups."""
-  del dry_run, kwargs
-  root = str(payload.get("spec_rbac_root", "oidc-payments-eu"))
-  return (
-      {"automated_management_enabled": True},
-      f"Enabled automated SCIM lifecycle management for '{root}'.",
-  )
-
-
-def trigger_group_reconciliation(
-    payload: dict[str, Any], dry_run: bool = False, **kwargs: Any
-) -> tuple[dict[str, Any], str]:
-  """Triggers an immediate SCIM group membership reconciliation pass."""
-  del dry_run, kwargs
-  root = str(payload.get("spec_rbac_root", "oidc-payments-eu"))
-  return (
-      {"reconciliation_triggered": True},
-      f"Triggered SCIM group membership reconciliation for '{root}'.",
+      out,
+      (
+          f"Provisioned IdP groups ({', '.join(groups)}), bound admins"
+          f" ({', '.join(admins)}), and initiated SCIM push."
+      ),
   )
 
 
 def check_scim_ready(
     payload: dict[str, Any], dry_run: bool = False, **kwargs: Any
 ) -> tuple[dict[str, Any], str]:
-  """Polls until two-way SCIM directory synchronization converges."""
-  del dry_run, kwargs
-  root = str(payload.get("spec_rbac_root", "oidc-payments-eu"))
+  """Polls SCIM directory push status and transitions SYNCING -> SYNCED."""
+  del kwargs
+  init_out = payload.get("outputs", {}).get("init_spec", {})
+  prefix = str(init_out.get("idp_group_prefix") or "idp-payments-eu")
+  if dry_run:
+    return (
+        {"scim_ready": True, "synced_group_count": 3},
+        f"SCIM 2.0 push converged for '{prefix}' (3 groups synced).",
+    )
+  sandbox = _resolve_sandbox(payload)
+  state = _load_state(sandbox)
+  groups = state.get("groups", [])
+  if not groups:
+    raise RuntimeError("SCIM sync failed: no IdP groups found in state.")
+  state["scim_status"] = "SYNCED"
+  _save_state(sandbox, state)
   return (
-      {"scim_ready": True},
-      f"SCIM directory synchronization converged for '{root}'.",
+      {"scim_ready": True, "synced_group_count": len(groups)},
+      f"SCIM 2.0 push converged for '{prefix}' ({len(groups)} groups synced).",
   )
 
 
-def create_service_account(
+def create_workload_iam_role(
     payload: dict[str, Any], dry_run: bool = False, **kwargs: Any
 ) -> tuple[dict[str, Any], str]:
-  """Creates the workload identity ServiceAccount (`<root>-jobs.svc`)."""
-  # Supports simulated outcomes via `sa_creation_mode` in payload:
-  # - 'PERMISSION_DENIED' (when require_manual_sa_portal=True): triggers Gate 2
-  # - 'SUCCESS' (default): auto-creates without human intervention
-  # - 'FAILED': triggers fail_on_sa_failed branch
-  del dry_run, kwargs
-  root = str(payload.get("spec_rbac_root", "oidc-payments-eu"))
-  sa_name = f"{root}-jobs.svc"
-  mode = str(payload.get("sa_creation_mode", "")).strip().upper()
+  """Creates the Cloud IAM OIDC Workload Identity Role for the tenant."""
+  # Supports simulated outcomes via `iam_creation_mode` or
+  # `require_manual_quota_override` in payload:
+  # - 'QUOTA_EXCEEDED' (when require_manual_quota_override=True): triggers
+  #   Gate #2 (prompt_iam_quota_override)
+  # - 'SUCCESS' (default): auto-provisions the IAM role without human action
+  # - 'FAILED': triggers fail_on_iam_failed
+  del kwargs
+  alias = _resolve_alias(payload)
+  role_arn = f"arn:aws:iam::123456789012:role/tenant-{alias}-workload"
+  mode = str(payload.get("iam_creation_mode", "")).strip().upper()
   if not mode:
-    mode = (
-        "PERMISSION_DENIED"
-        if payload.get("require_manual_sa_portal", False)
-        else "SUCCESS"
-    )
-  if mode not in ("SUCCESS", "PERMISSION_DENIED", "FAILED"):
+    if payload.get("require_manual_quota_override", False):
+      mode = "QUOTA_EXCEEDED"
+    else:
+      mode = "SUCCESS"
+  if mode not in ("SUCCESS", "QUOTA_EXCEEDED", "FAILED"):
     mode = "SUCCESS"
+
+  if not dry_run:
+    sandbox = _resolve_sandbox(payload)
+    state = _load_state(sandbox)
+    state["iam_role"] = {
+        "role_arn": role_arn,
+        "status": "ACTIVE" if mode == "SUCCESS" else mode,
+        "oidc_subject": (
+            f"system:serviceaccount:tenant-{alias}:{alias}-workload"
+        ),
+    }
+    _save_state(sandbox, state)
+
   return (
-      {"sa_creation_status": mode, "service_account_name": sa_name},
-      f"ServiceAccount '{sa_name}' provisioning status: {mode}.",
+      {"iam_status": mode, "iam_role_arn": role_arn},
+      f"Cloud IAM Workload Identity role '{role_arn}' status: {mode}.",
   )
 
 
 def fail_workflow(
     payload: dict[str, Any], dry_run: bool = False, **kwargs: Any
 ) -> tuple[dict[str, Any], str]:
-  """Raises an error when ServiceAccount creation fails terminally."""
+  """Raises a terminal error when Cloud IAM role creation fails."""
   del dry_run, kwargs
-  sa_name = str(payload.get("service_account_name", "jobs.svc"))
+  role_arn = str(
+      payload.get("outputs", {})
+      .get("create_workload_iam_role", {})
+      .get("iam_role_arn", "unknown-role")
+  )
   raise RuntimeError(
-      f"Fatal error creating workload ServiceAccount '{sa_name}'."
+      f"Cloud IAM role creation failed terminally for '{role_arn}'."
   )
 
 
-def check_sa_ready(
+def check_iam_role_ready(
     payload: dict[str, Any], dry_run: bool = False, **kwargs: Any
 ) -> tuple[dict[str, Any], str]:
-  """Polls until the workload ServiceAccount is active (auto or manual)."""
-  del dry_run, kwargs
-  sa_name = str(
-      payload.get("service_account_name", "oidc-payments-eu-jobs.svc")
+  """Polls until the Cloud IAM OIDC Workload Identity role is active."""
+  del kwargs
+  iam_out = payload.get("outputs", {}).get("create_workload_iam_role", {})
+  gate_out = payload.get("outputs", {}).get("prompt_iam_quota_override", {})
+  role_arn = str(
+      iam_out.get("iam_role_arn")
+      or "arn:aws:iam::123456789012:role/tenant-payments-eu-workload"
   )
   via = (
-      "manual portal confirmation"
-      if payload.get("manually_activated")
+      "quota override approval"
+      if gate_out.get("quota_override_approved")
       else "automated provisioning"
   )
+  if not dry_run:
+    sandbox = _resolve_sandbox(payload)
+    state = _load_state(sandbox)
+    state.setdefault("iam_role", {})["status"] = "ACTIVE"
+    _save_state(sandbox, state)
   return (
-      {"sa_ready": True},
-      f"Workload ServiceAccount '{sa_name}' is active (via {via}).",
+      {"iam_role_ready": True, "iam_role_arn": role_arn},
+      f"Cloud IAM role '{role_arn}' OIDC trust policy is active (via {via}).",
   )
 
 
 def provision_external_resources(
     payload: dict[str, Any], dry_run: bool = False, **kwargs: Any
 ) -> tuple[dict[str, Any], str]:
-  """Provisions the tenant Terraform state bucket and Vault secret mount."""
+  """Provisions the tenant Terraform state bucket and Vault KV mount."""
   del kwargs
-  alias = str(payload.get("alias", "payments-eu"))
+  alias = _resolve_alias(payload)
   bucket_uri = f"s3://platform-tfstate-{alias}"
   vault_mount = f"secret/tenants/{alias}"
   out = {
+      "storage_provisioned": True,
       "state_bucket_uri": bucket_uri,
       "vault_mount_path": vault_mount,
   }
@@ -529,7 +409,9 @@ def provision_external_resources(
   state["cloud_artifacts"] = dict(out)
   _save_state(sandbox, state)
 
-  if payload.get("simulate_artifact_failure", False):
+  if payload.get("simulate_artifact_failure", False) or payload.get(
+      "simulate_storage_failure", False
+  ):
     raise RuntimeError(
         f"Transient Vault mount failure while initializing '{vault_mount}'."
     )
@@ -546,7 +428,7 @@ def provision_external_resources(
 def rollback_external_resources(
     payload: dict[str, Any], dry_run: bool = False, **kwargs: Any
 ) -> tuple[dict[str, Any], str]:
-  """Rollback action that cleans up partially created cloud artifacts."""
+  """Compensating rollback action that cleans up partial cloud artifacts."""
   del dry_run, kwargs
   sandbox = _resolve_sandbox(payload)
   state = _load_state(sandbox)
@@ -554,166 +436,339 @@ def rollback_external_resources(
   _save_state(sandbox, state)
   return (
       {"cloud_artifacts_rolled_back": True},
-      "Rolled back partial cloud storage and Vault mount artifacts.",
+      "Rolled back partial Terraform state bucket and Vault mount artifacts.",
   )
 
 
-def scaffold_k8s_namespace(
+def provision_dedicated_kms_key(
     payload: dict[str, Any], dry_run: bool = False, **kwargs: Any
 ) -> tuple[dict[str, Any], str]:
-  """Scaffolds Kubernetes Namespace, NetworkPolicy, and ResourceQuota YAML."""
+  """Provisions a dedicated HSM-backed KMS CMK for PCI-regulated tenants."""
   del kwargs
-  alias = str(payload.get("alias", "payments-eu"))
-  ns_dir = f"gitops/namespaces/{alias}"
+  alias = _resolve_alias(payload)
+  kms_key_arn = f"arn:aws:kms:eu-west-1:123456789012:key/cmk-pci-{alias}"
+  out = {
+      "kms_ready": True,
+      "kms_mode": "dedicated_hsm_cmk",
+      "kms_key_arn": kms_key_arn,
+  }
   if dry_run:
     return (
-        {"namespace_manifest_dir": ns_dir},
-        f"[DRY RUN] Would scaffold Kubernetes manifests in '{ns_dir}'.",
+        out,
+        f"[DRY RUN] Would provision dedicated PCI HSM KMS key '{kms_key_arn}'.",
     )
   sandbox = _resolve_sandbox(payload)
-  full_dir = os.path.join(sandbox, ns_dir)
-  os.makedirs(full_dir, exist_ok=True)
-  for fname in ("namespace.yaml", "networkpolicy.yaml", "resourcequota.yaml"):
-    with open(os.path.join(full_dir, fname), "w", encoding="utf-8") as f:
-      f.write(f"# Generated for tenant {alias}\n")
+  state = _load_state(sandbox)
+  state["kms"] = dict(out)
+  _save_state(sandbox, state)
   return (
-      {"namespace_manifest_dir": ns_dir},
-      f"Scaffolded Namespace, NetworkPolicy, and ResourceQuota in '{ns_dir}'.",
+      out,
+      f"Provisioned dedicated PCI HSM KMS key '{kms_key_arn}'.",
   )
 
 
-def package_scaffolding_pr(
+def apply_shared_kms_policy(
     payload: dict[str, Any], dry_run: bool = False, **kwargs: Any
 ) -> tuple[dict[str, Any], str]:
-  """Opens a GitOps PR for the tenant Kubernetes namespace manifests."""
+  """Binds non-PCI standard tenants to the shared cluster KMS encryption key."""
   del kwargs
-  alias = str(payload.get("alias", "payments-eu"))
+  alias = _resolve_alias(payload)
+  kms_key_arn = "arn:aws:kms:eu-west-1:123456789012:key/cmk-shared-cluster"
+  out = {
+      "kms_ready": True,
+      "kms_mode": "shared_cluster_key",
+      "kms_key_arn": kms_key_arn,
+  }
+  if dry_run:
+    return (
+        out,
+        f"[DRY RUN] Would bind '{alias}' to shared KMS key '{kms_key_arn}'.",
+    )
+  sandbox = _resolve_sandbox(payload)
+  state = _load_state(sandbox)
+  state["kms"] = dict(out)
+  _save_state(sandbox, state)
+  return (
+      out,
+      f"Bound standard tenant '{alias}' to shared KMS key '{kms_key_arn}'.",
+  )
+
+
+def checkpoint_registry(
+    payload: dict[str, Any], dry_run: bool = False, **kwargs: Any
+) -> tuple[dict[str, Any], str]:
+  """Joins the parallel storage + KMS tracks and checkpoints the catalog."""
+  del kwargs
+  alias = _resolve_alias(payload)
+  ticket_id = str(
+      payload.get("outputs", {})
+      .get("create_ticket", {})
+      .get("ticket_id", "CAB-1000")
+  )
+  ext_out = payload.get("outputs", {}).get("provision_external_resources", {})
+  pci_kms = payload.get("outputs", {}).get("provision_dedicated_kms_key", {})
+  std_kms = payload.get("outputs", {}).get("apply_shared_kms_policy", {})
+  kms_arn = str(
+      pci_kms.get("kms_key_arn")
+      or std_kms.get("kms_key_arn")
+      or "arn:aws:kms:eu-west-1:123456789012:key/cmk-pci-payments-eu"
+  )
+  kms_mode = str(
+      pci_kms.get("kms_mode") or std_kms.get("kms_mode") or "dedicated_hsm_cmk"
+  )
+  out = {
+      "catalog_checkpointed": True,
+      "kms_key_arn": kms_arn,
+      "kms_mode": kms_mode,
+  }
+  if dry_run:
+    return (
+        out,
+        (
+            f"[DRY RUN] Would checkpoint backing resources for '{alias}'"
+            f" (kms={kms_mode})."
+        ),
+    )
+  sandbox = _resolve_sandbox(payload)
+  state = _load_state(sandbox)
+  checkpoints = list(state.get("checkpoints", []))
+  checkpoints.append({
+      "alias": alias,
+      "ticket_id": ticket_id,
+      "state_bucket_uri": ext_out.get("state_bucket_uri"),
+      "vault_mount_path": ext_out.get("vault_mount_path"),
+      "kms_key_arn": kms_arn,
+      "kms_mode": kms_mode,
+  })
+  state["checkpoints"] = checkpoints
+  _save_state(sandbox, state)
+  return (
+      out,
+      (
+          f"Checkpointed backing storage and {kms_mode} encryption for"
+          f" '{alias}' in platform catalog."
+      ),
+  )
+
+
+def _open_mock_pr(
+    payload: dict[str, Any],
+    pr_key: str,
+    pr_number: int,
+    title: str,
+    files: list[str],
+    dry_run: bool,
+) -> tuple[dict[str, Any], str]:
+  """Opens a simulated GitOps pull request in OPEN state with file list."""
+  pr_id = f"PR-{pr_number}"
+  if dry_run:
+    return (
+        {pr_key: pr_id, "pr_id": pr_id, "files": files},
+        f"[DRY RUN] Would open GitOps {pr_id} ({title}).",
+    )
+  sandbox = _resolve_sandbox(payload)
+  state = _load_state(sandbox)
+  tracked = state.setdefault("files", [])
+  for rel in files:
+    if rel not in tracked:
+      tracked.append(rel)
+  state.setdefault("prs", {})[pr_id] = {
+      "title": title,
+      "status": "OPEN",
+      "files": files,
+  }
+  _save_state(sandbox, state)
+  return (
+      {pr_key: pr_id, "pr_id": pr_id, "files": files},
+      f"Opened GitOps {pr_id} ({len(files)} files): '{title}'.",
+  )
+
+
+def scaffold_k8s_gitops_pr(
+    payload: dict[str, Any], dry_run: bool = False, **kwargs: Any
+) -> tuple[dict[str, Any], str]:
+  """Writes tenant K8s overlay manifests, updates kustomize, and opens PR-101."""
+  del kwargs
+  alias = _resolve_alias(payload)
+  iam_arn = str(
+      payload.get("outputs", {})
+      .get("wait_iam_role_ready", {})
+      .get(
+          "iam_role_arn",
+          f"arn:aws:iam::123456789012:role/tenant-{alias}-workload",
+      )
+  )
+  kms_arn = str(
+      payload.get("outputs", {})
+      .get("checkpoint_catalog", {})
+      .get("kms_key_arn", "")
+  )
+  ns_dir = f"gitops/tenants/{alias}"
+  kustomize_rel = "gitops/tenants/kustomization.yaml"
+  manifest_files = [
+      f"{ns_dir}/namespace.yaml",
+      f"{ns_dir}/networkpolicy.yaml",
+      f"{ns_dir}/resourcequota.yaml",
+      f"{ns_dir}/serviceaccount.yaml",
+      f"{ns_dir}/cronjob-rbac.yaml",
+      kustomize_rel,
+  ]
+  if not dry_run:
+    sandbox = _resolve_sandbox(payload)
+    full_dir = os.path.join(sandbox, ns_dir)
+    os.makedirs(full_dir, exist_ok=True)
+    for fname in (
+        "namespace.yaml",
+        "networkpolicy.yaml",
+        "resourcequota.yaml",
+        "cronjob-rbac.yaml",
+    ):
+      with open(os.path.join(full_dir, fname), "w", encoding="utf-8") as f:
+        f.write(f"# {fname} for tenant {alias}\n")
+    with open(
+        os.path.join(full_dir, "serviceaccount.yaml"), "w", encoding="utf-8"
+    ) as f:
+      f.write(
+          "apiVersion: v1\nkind: ServiceAccount\nmetadata:\n"
+          f"  name: {alias}-workload\n  namespace: tenant-{alias}\n"
+          "  annotations:\n"
+          f"    eks.amazonaws.com/role-arn: {iam_arn}\n"
+          f"    platform.example.io/kms-key-arn: {kms_arn}\n"
+      )
+    kust_full = os.path.join(sandbox, kustomize_rel)
+    os.makedirs(os.path.dirname(kust_full), exist_ok=True)
+    entry = f"- ./{alias}\n"
+    existing = ""
+    if os.path.isfile(kust_full):
+      with open(kust_full, "r", encoding="utf-8") as f:
+        existing = f.read()
+    if entry not in existing:
+      with open(kust_full, "a", encoding="utf-8") as f:
+        f.write(entry)
+
   return _open_mock_pr(
       payload,
-      "scaffolding_pr_id",
-      102,
-      f"feat(k8s): scaffold namespace and quotas for {alias}",
+      "k8s_pr_id",
+      101,
+      f"feat(k8s): scaffold namespace, ServiceAccount, and quotas for {alias}",
+      manifest_files,
       dry_run,
   )
 
 
-def bootstrap_cronjob_rbac(
+def package_mesh_and_catalog_pr(
     payload: dict[str, Any], dry_run: bool = False, **kwargs: Any
 ) -> tuple[dict[str, Any], str]:
-  """Generates CronJob RBAC RoleBinding for the tenant workload identity."""
+  """Writes Gateway API route and FinOps catalog manifest and opens PR-102."""
   del kwargs
-  alias = str(payload.get("alias", "payments-eu"))
-  cron_path = f"gitops/namespaces/{alias}/cronjob-rbac.yaml"
-  if dry_run:
-    return (
-        {"cronjob_rbac_path": cron_path},
-        f"[DRY RUN] Would write CronJob RBAC binding '{cron_path}'.",
-    )
-  sandbox = _resolve_sandbox(payload)
-  full_path = os.path.join(sandbox, cron_path)
-  os.makedirs(os.path.dirname(full_path), exist_ok=True)
-  with open(full_path, "w", encoding="utf-8") as f:
-    f.write(f"# CronJob RoleBinding for {alias}\n")
-  return (
-      {"cronjob_rbac_path": cron_path},
-      f"Bootstrapped CronJob RBAC binding at '{cron_path}'.",
-  )
+  alias = _resolve_alias(payload)
+  init_out = payload.get("outputs", {}).get("init_spec", {})
+  ext_out = payload.get("outputs", {}).get("provision_external_resources", {})
+  ckpt_out = payload.get("outputs", {}).get("checkpoint_catalog", {})
+  cost_center = str(init_out.get("cost_center_id") or "CC-4820")
+  route_rel = f"gitops/mesh/httproutes/{alias}.yaml"
+  catalog_rel = f"gitops/catalog/tenants/{alias}.yaml"
 
+  if not dry_run:
+    sandbox = _resolve_sandbox(payload)
+    route_full = os.path.join(sandbox, route_rel)
+    cat_full = os.path.join(sandbox, catalog_rel)
+    os.makedirs(os.path.dirname(route_full), exist_ok=True)
+    os.makedirs(os.path.dirname(cat_full), exist_ok=True)
+    with open(route_full, "w", encoding="utf-8") as f:
+      f.write(
+          "apiVersion: gateway.networking.k8s.io/v1\nkind: HTTPRoute\n"
+          f"metadata:\n  name: {alias}-ingress\n"
+      )
+    with open(cat_full, "w", encoding="utf-8") as f:
+      f.write(
+          "apiVersion: catalog.example.io/v1\nkind: TenantRegistration\n"
+          f"metadata:\n  name: {alias}\nspec:\n"
+          f"  costCenter: {cost_center}\n"
+          f"  stateBucket: {ext_out.get('state_bucket_uri', '')}\n"
+          f"  vaultMount: {ext_out.get('vault_mount_path', '')}\n"
+          f"  kmsMode: {ckpt_out.get('kms_mode', '')}\n"
+      )
 
-def package_cronjob_rbac_pr(
-    payload: dict[str, Any], dry_run: bool = False, **kwargs: Any
-) -> tuple[dict[str, Any], str]:
-  """Opens a GitOps PR for the CronJob RBAC RoleBinding."""
-  del kwargs
-  alias = str(payload.get("alias", "payments-eu"))
-  return _open_mock_pr(
-      payload,
-      "cronjob_pr_id",
-      103,
-      f"feat(cron): bind workload identity for {alias} scheduled jobs",
-      dry_run,
-  )
-
-
-def nest_in_root_groups(
-    payload: dict[str, Any], dry_run: bool = False, **kwargs: Any
-) -> tuple[dict[str, Any], str]:
-  """Nests the tenant OIDC groups into the cluster-wide mesh routing policy."""
-  del kwargs
-  alias = str(payload.get("alias", "payments-eu"))
-  wiring_path = "gitops/mesh/tenant-bindings.yaml"
-  if dry_run:
-    return (
-        {"mesh_wiring_path": wiring_path},
-        f"[DRY RUN] Would nest '{alias}' groups in '{wiring_path}'.",
-    )
-  sandbox = _resolve_sandbox(payload)
-  full_path = os.path.join(sandbox, wiring_path)
-  os.makedirs(os.path.dirname(full_path), exist_ok=True)
-  entry = f"- tenant: {alias}\n"
-  existing = ""
-  if os.path.isfile(full_path):
-    with open(full_path, "r", encoding="utf-8") as f:
-      existing = f.read()
-  if entry not in existing:
-    with open(full_path, "a", encoding="utf-8") as f:
-      f.write(entry)
-  return (
-      {"mesh_wiring_path": wiring_path},
-      f"Nested '{alias}' OIDC groups into '{wiring_path}'.",
-  )
-
-
-def package_wiring_pr(
-    payload: dict[str, Any], dry_run: bool = False, **kwargs: Any
-) -> tuple[dict[str, Any], str]:
-  """Opens a GitOps PR for the root mesh and group wiring."""
-  del kwargs
-  alias = str(payload.get("alias", "payments-eu"))
-  return _open_mock_pr(
-      payload,
-      "wiring_pr_id",
-      104,
-      f"feat(mesh): wire {alias} into root gateway and group hierarchy",
-      dry_run,
-  )
-
-
-def check_wiring_oidc_absorbed(
-    payload: dict[str, Any], dry_run: bool = False, **kwargs: Any
-) -> tuple[dict[str, Any], str]:
-  """Polls until the root mesh and OIDC hierarchy reconciler absorbs wiring."""
-  del dry_run, kwargs
-  alias = str(payload.get("alias", "payments-eu"))
-  return (
-      {"wiring_oidc_absorbed": True},
-      f"Root mesh and OIDC reconciler absorbed wiring for '{alias}'.",
-  )
-
-
-def propose_cost_center_association(
-    payload: dict[str, Any], dry_run: bool = False, **kwargs: Any
-) -> tuple[dict[str, Any], str]:
-  """Associates the tenant namespace with its FinOps cost center ID."""
-  del dry_run, kwargs
-  alias = str(payload.get("alias", "payments-eu"))
-  cc_id = str(payload.get("spec_cost_center_id", "CC-4820"))
-  return (
-      {"cost_center_associated": True},
-      f"Associated tenant '{alias}' with FinOps cost center '{cc_id}'.",
-  )
-
-
-def package_catalog_pr(
-    payload: dict[str, Any], dry_run: bool = False, **kwargs: Any
-) -> tuple[dict[str, Any], str]:
-  """Opens the final GitOps PR registering the tenant in the service catalog."""
-  del kwargs
-  alias = str(payload.get("alias", "payments-eu"))
   return _open_mock_pr(
       payload,
       "catalog_pr_id",
-      105,
-      f"feat(catalog): finalize active tenant registration for {alias}",
+      102,
+      (
+          f"feat(mesh,catalog): wire {alias} ingress route and FinOps cost"
+          f" center {cost_center}"
+      ),
+      [route_rel, catalog_rel],
       dry_run,
+  )
+
+
+def check_pr_merged(
+    payload: dict[str, Any],
+    target_stage: str = "scaffold_k8s_gitops_pr",
+    target_pr_key: str = "k8s_pr_id",
+    dry_run: bool = False,
+    **kwargs: Any,
+) -> tuple[dict[str, Any], str]:
+  """Verifies the target GitOps PR in state and transitions OPEN -> MERGED."""
+  del kwargs
+  stage_out = payload.get("outputs", {}).get(target_stage, {})
+  pr_id = str(stage_out.get(target_pr_key) or "PR-100")
+  if dry_run:
+    return (
+        {"pr_id": pr_id, "pr_merged": True},
+        f"GitOps pull request {pr_id} ({target_pr_key}) merged into main.",
+    )
+  sandbox = _resolve_sandbox(payload)
+  state = _load_state(sandbox)
+  pr_record = state.get("prs", {}).get(pr_id)
+  if not pr_record:
+    raise RuntimeError(f"GitOps PR '{pr_id}' not found in control-plane state.")
+  pr_record["status"] = "MERGED"
+  _save_state(sandbox, state)
+  return (
+      {"pr_id": pr_id, "pr_merged": True},
+      f"GitOps pull request {pr_id} ({target_pr_key}) merged into main.",
+  )
+
+
+def check_argocd_synced(
+    payload: dict[str, Any],
+    app_name: str = "tenant-namespace",
+    required_pr_stage: str = "wait_k8s_gitops_pr",
+    dry_run: bool = False,
+    **kwargs: Any,
+) -> tuple[dict[str, Any], str]:
+  """Polls until ArgoCD reconciles the merged GitOps commit into the cluster."""
+  del kwargs
+  alias = _resolve_alias(payload)
+  pr_out = payload.get("outputs", {}).get(required_pr_stage, {})
+  pr_id = str(pr_out.get("pr_id") or "PR-100")
+  if dry_run:
+    return (
+        {"app_name": app_name, "app_synced": True},
+        (
+            f"ArgoCD application '{app_name}' ({alias}) is Synced & Healthy"
+            f" at {pr_id}."
+        ),
+    )
+  sandbox = _resolve_sandbox(payload)
+  state = _load_state(sandbox)
+  pr_status = state.get("prs", {}).get(pr_id, {}).get("status")
+  if pr_status != "MERGED":
+    raise RuntimeError(
+        f"ArgoCD cannot sync '{app_name}': {pr_id} is {pr_status!r}."
+    )
+  state.setdefault("argocd_apps", {})[app_name] = {
+      "status": "Synced",
+      "health": "Healthy",
+      "synced_pr": pr_id,
+  }
+  _save_state(sandbox, state)
+  return (
+      {"app_name": app_name, "app_synced": True},
+      (
+          f"ArgoCD application '{app_name}' ({alias}) is Synced & Healthy"
+          f" at {pr_id}."
+      ),
   )

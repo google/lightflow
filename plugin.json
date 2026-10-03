@@ -1,6 +1,6 @@
 {
   "name": "lightflow",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Lightweight deterministic DAG workflow engine and human-in-the-loop guardrails for AI agents.",
   "skills": [
     "skills"

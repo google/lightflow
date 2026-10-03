@@ -14,37 +14,40 @@ directly:
     (`run_if`, `instructions`), and JSON schemas before executing.
 2.  **`run_lightflow`**: Launch or continue a lightflow (`lightflow`, `log_id`,
     `payload`).
-    -   When `status == "SUSPENDED"` (`exit_code == 2`), present the
-        `instructions` and `json_schema` to the user and wait for explicit human
-        confirmation before calling `resume_lightflow`.
+    -   When `status == "SUSPENDED"` (`exit_code == 2`), follow the stage's
+        `instructions`. If they ask for a person's decision, present the
+        `instructions` and `json_schema` to that person and resume only with
+        their answer; never decide for them.
 3.  **`resume_lightflow`**: Resolve an `operator_action` (`resolution="APPROVE"`
-    or `"REJECT"`) or re-arm a repaired failed stage without repeating
+    or `"REJECT"`), re-arm a repaired failed stage, or re-run a completed stage
+    and its downstream dependents (`rerun="<stage>"`) without repeating
     already-completed upstream stages.
-4.  **`get_lightflow_status`**: Inspect the `Passport` append-only stamp log and
-    Mermaid diagram.
+4.  **`get_lightflow_status`**: Inspect the `Passport` summary (or pass
+    `fields=[...]` for targeted values / `verbose=true` for full stamps and
+    Mermaid diagram).
 5.  **`visualize_lightflow`**: Generate a self-contained HTML5 DAG canvas and
     timeline playback artifact.
 
 ## Terminal CLI Commands
 
 When working via the bash tool in Claude Code (`python3 -m lightflow` is
-equivalent to `lightflow` whenever the console script is not on `PATH`):
+equivalent to `lightflow` whenever the console script is not on `PATH`;
+`--lightflow` accepts the workflow directory or manifest file):
 
 ```bash
-# 1. Validate manifest
-lightflow dry_run --lightflow=lightflow.yaml
+# 1. Validate manifest in the current directory (or pass --lightflow=path/to/workflow_dir)
+lightflow dry_run --lightflow=.
 
 # 2. Start run
-lightflow start --lightflow=lightflow.yaml --log_id=my_run --payload='{}'
+lightflow start --lightflow=. --log_id=my_run --payload='{}'
 
 # 3. Check status (exit 0 done, 1 failed, 2 paused, 3 no state, 4 running;
 #    add --verbose for payload + Mermaid)
-lightflow status --lightflow=lightflow.yaml --log_id=my_run
+lightflow status --lightflow=. --log_id=my_run
 
-# 4. Resume paused gate after user approval (--resolution=APPROVE sets
-#    approved=true automatically; --payload only needs the keys the gate's
-#    json_schema requires)
-lightflow resume --lightflow=lightflow.yaml --log_id=my_run \
+# 4. Resume paused gate (--resolution=APPROVE sets approved=true automatically;
+#    --payload only needs the keys the gate's json_schema requires)
+lightflow resume --lightflow=. --log_id=my_run \
   --stage=approve --resolution=APPROVE --payload='{}'
 ```
 
@@ -58,9 +61,11 @@ lightflow resume --lightflow=lightflow.yaml --log_id=my_run \
     `examples/create_lightflow` in your clone: `lightflow start
     --lightflow=/path/to/lightflow/examples/create_lightflow
     --log_id=scaffold_<name>`.
--   **Never bypass an `operator_action` gate**: If a workflow exits with code
-    `2` (`SUSPENDED`), always surface the stage's `instructions` to the human
-    operator and await their decision before invoking `resume`.
--   **Prefer `resume` over `start --force` after failures**: Lightflow's
-    append-only `Passport` preserves completed stages so side effects are never
-    duplicated. Fix the failing action and call `resume`.
+-   **Respect `operator_action` gates**: If a workflow exits with code `2`
+    (`SUSPENDED`), follow the stage's `instructions`. When a gate asks for a
+    person's review or approval, present the `instructions` to them and wait for
+    their decision before invoking `resume`.
+-   **Prefer `resume` over `start --force` after failures or edits**:
+    Lightflow's append-only `Passport` preserves completed stages so side
+    effects are never duplicated. Fix a failing action and call `resume`, or
+    call `resume --rerun=<stage>` to re-run a modified stage and its dependents.

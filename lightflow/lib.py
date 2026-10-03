@@ -465,6 +465,8 @@ def generate_status_mermaid(
         rollback_suffix = " [rolled back]"
       elif "Rollback action " in msg and " failed:" in msg:
         rollback_suffix = " [rollback failed]"
+      elif "Rollback skipped:" in msg:
+        rollback_suffix = " [rollback skipped]"
 
     if stage.HasField("python_action") and stage.python_action:
       node_str = (
@@ -599,8 +601,11 @@ def _raise_for_run_state(
     )
   if state == "PAUSED":
     raise LightflowAlreadyPausedError(
-        f"Lightflow is paused at operator action '{paused[0]}'. Present the"
-        " gate to the operator, then run 'resume' with their decision."
+        f"Lightflow is paused at operator action '{paused[0]}'. Follow the"
+        " Instructions above (if they ask for a person's decision, present"
+        " them to that person and resume only with their answer; never decide"
+        " for them), then run 'resume' with a payload matching the Payload"
+        " Schema."
     )
   if state == "FAILED":
     suffix = f" Rejected gates: {rejected}." if rejected else ""
@@ -673,34 +678,66 @@ def _parse_payload_arg(
   return dict(parsed)
 
 
+def _resolve_rerun_stage(
+    stage: Optional[str], rerun: Optional[str | bool]
+) -> Optional[str]:
+  """Resolves a target stage to re-run from `--rerun=<stage>` or `--stage=<stage> --rerun`."""
+  if rerun is None or (isinstance(rerun, bool) and not rerun):
+    return None
+  if isinstance(rerun, bool):
+    if not stage:
+      raise ValueError(
+          "Pass a stage name to '--rerun=<stage>' (or combine '--rerun' with"
+          " '--stage=<stage>')."
+      )
+    return stage
+  rerun_str = str(rerun).strip()
+  if not rerun_str or rerun_str.lower() == "false":
+    return None
+  if rerun_str.lower() == "true":
+    if not stage:
+      raise ValueError(
+          "Pass a stage name to '--rerun=<stage>' (or combine '--rerun' with"
+          " '--stage=<stage>')."
+      )
+    return stage
+  if stage and stage != rerun_str:
+    raise ValueError(
+        f"Conflicting stage names: --stage={stage!r} vs --rerun={rerun_str!r}."
+    )
+  return rerun_str
+
+
 class LightflowRunnerCLI:
   """CLI interface for executing, inspecting, and resuming Lightflow DAGs.
 
   Core Lifecycle & Exit Codes:
-    - start --lightflow=<path> --log_id=<id> [--payload='{...}' |
+    - start --lightflow=<dir> --log_id=<id> [--payload='{...}' |
       --payload=@file.json] [--dry_run]:
       Starts a new run (or previews the DAG trace with --dry_run).
       * Exit 0: Completed all stages.
-      * Exit 2 (SUSPENDED): Paused at an `operator_action` human-in-the-loop
-        checkpoint. STOP and present the printed Instructions and Payload Schema
-        to the human operator/user. Do NOT self-approve or run `resume` until
-        the operator provides their explicit decision.
+      * Exit 2 (SUSPENDED): Paused at an `operator_action` checkpoint. Follow
+        the printed Instructions. If they ask for a person's decision, present
+        them to that person and resume only with their answer; never decide for
+        them. Then resume with a payload matching the Payload Schema.
       * Exit 1 (FAILED): A stage failed. Fix the root cause and run `resume`
         (never `start --force`, which wipes the Passport and repeats completed
         upstream side effects).
-    - resume --lightflow=<path> --log_id=<id> [--stage=<gate>
-      --resolution=APPROVE|REJECT --payload='{...}' | --payload=@file.json]:
-      Resolves a paused `operator_action` gate or re-arms failed stages and
-      their downstream dependents without re-running completed upstream stages.
-    - status --lightflow=<path> --log_id=<id> [--verbose]:
+    - resume --lightflow=<dir> --log_id=<id> [--stage=<gate>
+      --resolution=APPROVE|REJECT --payload='{...}' | --payload=@file.json]
+      [--rerun=<stage>]:
+      Resolves a paused `operator_action` gate, re-arms failed stages, or
+      re-runs a completed stage (`--rerun=<stage>`) and its downstream
+      dependents without re-running completed upstream stages.
+    - status --lightflow=<dir> --log_id=<id> [--verbose]:
       Prints each stage's latest status and any paused gate's Instructions,
       Payload Schema, and resume command. Exits like the run: 0 completed,
       1 failed, rejected, or interrupted, 2 paused, 3 no saved state,
       4 running in another process. `--verbose` adds the Passport payload,
       full stamp log, and Mermaid progress diagram.
-    - visualize --lightflow=<path> [--log_id=<id>] [--out=<file.html>]:
+    - visualize --lightflow=<dir> [--log_id=<id>] [--out=<file.html>]:
       Generates a standalone interactive HTML5 DAG & Passport visualizer.
-    - cleanup --log_id=<id> [--lightflow=<path>]:
+    - cleanup --log_id=<id> [--lightflow=<dir>]:
       Deletes the saved Passport state directory for `--log_id`.
   """
 
@@ -782,6 +819,10 @@ class LightflowRunnerCLI:
         rearmed = self._rearm_failed_stages(
             runner, ordered_stages, passport, operator=_current_operator()
         )
+        if rearmed:
+          payload_dict = passport.payload.to_dict()
+          engine.clear_stage_outputs(payload_dict, rearmed)
+          passport.payload.CopyFrom(payload_dict)
         if rearmed or payload_updated:
           pm.save_passport(passport)
         if rearmed:
@@ -809,10 +850,11 @@ class LightflowRunnerCLI:
       comment: Optional[str] = None,
       operator: Optional[str] = None,
       cascade: bool = True,
+      rerun: Optional[str | bool] = None,
       *,
       workflow: Optional[str] = None,
   ) -> None:
-    """Continues an existing lightflow run or resolves an operator action."""
+    """Continues an existing lightflow run, resolves a gate, or re-runs a stage."""
     resolved_lightflow = lightflow or workflow
     if not resolved_lightflow:
       raise ValueError("Missing required '--lightflow' manifest path.")
@@ -821,6 +863,8 @@ class LightflowRunnerCLI:
 
     if not operator:
       operator = _current_operator()
+
+    rerun_stage = _resolve_rerun_stage(stage, rerun)
 
     norm_resolution = str(resolution).upper().strip()
     if norm_resolution not in ("APPROVE", "REJECT", "1", "2"):
@@ -842,9 +886,21 @@ class LightflowRunnerCLI:
       for stamp in passport.stamps:
         latest_status[stamp.stage_name] = stamp.status
 
-      if stage is None or (
-          latest_status.get(stage) != schema.StampStatus.PAUSED
+      if (
+          rerun_stage is not None
+          or stage is None
+          or (latest_status.get(stage) != schema.StampStatus.PAUSED)
       ):
+        if rerun_stage is not None and (is_reject or comment is not None):
+          raise ValueError(
+              "Cannot combine '--rerun' with gate '--resolution=REJECT' or"
+              " '--comment'."
+          )
+        if is_reject:
+          raise ValueError(
+              "Cannot apply '--resolution=REJECT' because no paused"
+              " operator_action stage was specified."
+          )
         self._resume_execution(
             workflow_proto,
             workflow_path,
@@ -856,6 +912,7 @@ class LightflowRunnerCLI:
             cascade,
             operator,
             payload=payload,
+            rerun=rerun_stage,
         )
         return
 
@@ -905,6 +962,7 @@ class LightflowRunnerCLI:
         payload_dict["resolution"] = "REJECT"
         stage_output["approved"] = False
         stage_output["resolution"] = "REJECT"
+        engine.clear_stage_outputs(payload_dict, [stage])
         engine.record_stage_outputs(payload_dict, stage, stage_output)
         passport.payload.CopyFrom(payload_dict)
 
@@ -1009,6 +1067,7 @@ class LightflowRunnerCLI:
       payload_dict["resolution"] = "APPROVE"
       stage_output["approved"] = True
       stage_output["resolution"] = "APPROVE"
+      engine.clear_stage_outputs(payload_dict, [stage])
       engine.record_stage_outputs(payload_dict, stage, stage_output)
 
       passport.payload.CopyFrom(payload_dict)
@@ -1042,8 +1101,9 @@ class LightflowRunnerCLI:
       cascade: bool,
       operator: str,
       payload: str | dict[str, Any] = "{}",
+      rerun: Optional[str] = None,
   ) -> None:
-    """Re-arms failed stages, then runs whatever is left of the graph."""
+    """Re-arms failed or `--rerun` stages, then runs whatever is left of the graph."""
     del log_id
     runner = engine.LightflowEngine(
         workflow_proto, lightflow_path=workflow_path, log_id=pm.workflow_id
@@ -1053,9 +1113,10 @@ class LightflowRunnerCLI:
     except Exception as e:
       raise engine.EngineError(f"Compilation Error: {e}") from e
 
-    if stage and stage not in ordered_stages:
+    target_stage = rerun or stage
+    if target_stage and target_stage not in ordered_stages:
       raise ValueError(
-          f"Unknown stage '{stage}'. Stages in this lightflow:"
+          f"Unknown stage '{target_stage}'. Stages in this lightflow:"
           f" {ordered_stages}."
       )
 
@@ -1065,18 +1126,33 @@ class LightflowRunnerCLI:
         if status == schema.StampStatus.PAUSED
     )
     if paused:
-      raise LightflowAlreadyPausedError(
-          f"Lightflow is paused at operator action '{paused[0]}'. Answer it"
-          f" with 'resume --stage={paused[0]} --resolution=APPROVE|REJECT'."
-      )
-
-    if ordered_stages and all(
-        latest_status.get(name)
-        in (
-            schema.StampStatus.COMPLETED,
-            schema.StampStatus.SKIPPED,
+      if rerun:
+        rerun_dependents = (
+            set(runner.get_downstream_dependents(rerun)) if cascade else set()
         )
-        for name in ordered_stages
+        blocking_paused = [
+            p for p in paused if p != rerun and p not in rerun_dependents
+        ]
+      else:
+        blocking_paused = paused
+      if blocking_paused:
+        raise LightflowAlreadyPausedError(
+            f"Lightflow is paused at operator action '{blocking_paused[0]}'."
+            f" Answer it with 'resume --stage={blocking_paused[0]}"
+            " --resolution=APPROVE|REJECT'."
+        )
+
+    if (
+        not rerun
+        and ordered_stages
+        and all(
+            latest_status.get(name)
+            in (
+                schema.StampStatus.COMPLETED,
+                schema.StampStatus.SKIPPED,
+            )
+            for name in ordered_stages
+        )
     ):
       raise LightflowAlreadyCompletedError(
           "Lightflow has already completed successfully. Use 'start --force'"
@@ -1089,21 +1165,71 @@ class LightflowRunnerCLI:
           payload, context_label="Resume payload", allow_outputs=False
       )
 
-    rearmed = self._rearm_failed_stages(
-        runner, ordered_stages, passport, stage, cascade, operator
-    )
+    if rerun:
+      rearmed = self._rearm_rerun_stages(
+          runner, ordered_stages, passport, rerun, cascade, operator
+      )
+    else:
+      rearmed = self._rearm_failed_stages(
+          runner, ordered_stages, passport, stage, cascade, operator
+      )
     if rearmed or extra_payload:
       payload_dict = passport.payload.to_dict()
+      if rearmed:
+        engine.clear_stage_outputs(payload_dict, rearmed)
       if extra_payload:
         payload_dict.update(extra_payload)
       payload_dict["operator"] = operator
       passport.payload.CopyFrom(payload_dict)
       pm.save_passport(passport)
     if rearmed:
-      print(f"Re-armed {len(rearmed)} failed stage(s): {rearmed}")
+      if rerun:
+        print(f"Re-armed {len(rearmed)} stage(s) for re-run: {rearmed}")
+      else:
+        print(f"Re-armed {len(rearmed)} failed stage(s): {rearmed}")
 
     print(f"Resuming execution of lightflow '{workflow_proto.name}'...")
     self._execute_engine_loop(runner, ordered_stages, passport, pm)
+
+  def _rearm_rerun_stages(
+      self,
+      runner: engine.LightflowEngine,
+      ordered_stages: list[str],
+      passport: schema.Passport,
+      rerun_stage: str,
+      cascade: bool = True,
+      operator: Optional[str] = None,
+  ) -> list[str]:
+    """Marks a stage (and optionally its dependents) eligible to re-run."""
+    latest_status = {
+        stamp.stage_name: stamp.status for stamp in passport.stamps
+    }
+    current = latest_status.get(rerun_stage)
+    if current is None:
+      raise ValueError(
+          f"Stage '{rerun_stage}' has not run yet (Current status: Unstarted)"
+          " and cannot be re-run."
+      )
+
+    rearm = {rerun_stage}
+    if cascade:
+      for dep in runner.get_downstream_dependents(rerun_stage):
+        if dep in latest_status:
+          rearm.add(dep)
+
+    for stage_name in ordered_stages:
+      if stage_name not in rearm:
+        continue
+      previous = schema.StampStatus.Name(latest_status[stage_name]).title()
+      stamp = passport.stamps.add()
+      stamp.stage_name = stage_name
+      stamp.status = schema.StampStatus.PENDING
+      stamp.timestamp.CopyFrom(engine.get_timestamp())
+      stamp.message = (
+          f"Re-armed for re-run by {operator} (previous status: {previous})."
+      )
+
+    return sorted(rearm)
 
   def _rearm_failed_stages(
       self,
@@ -1593,12 +1719,11 @@ class LightflowRunnerCLI:
       except engine.OperatorActionSuspended:
         pm.save_passport(passport)
         raise
-      except (engine.StageTimeoutError, engine.EngineError):
-        # Stage failure or timeout has already been stamped as FAILED (and
-        # rolled back if configured) inside execute_stage. Persist the passport
-        # and continue walking the DAG so independent branches and ALL_DONE
-        # cleanup stages can still execute before failing the overall workflow
-        # at the end.
+      except engine.StageTimeoutError:
+        # Stage timeout has already been stamped as FAILED (and rolled back if
+        # configured) inside execute_stage. Persist the passport and continue
+        # walking the DAG so independent branches and ALL_DONE cleanup stages
+        # can still execute before failing the overall workflow at the end.
         pm.save_passport(passport)
       except Exception as e:
         pm.save_passport(passport)

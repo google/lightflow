@@ -220,6 +220,8 @@ def verify_actions(
         env=env,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         check=False,
     )
     if proc.returncode != 0:
@@ -281,6 +283,15 @@ def validate_manifest_dry_run(
   target_dir = os.path.abspath(str(design.get("target_dir", ".")))
   manifest_rel = str(manifest_step.get("manifest_file", "lightflow.yaml"))
   manifest_path = os.path.join(target_dir, manifest_rel)
+  default_manifests = (
+      "lightflow.yaml",
+      "lightflow.yml",
+      "lightflow.json",
+      "lightflow.textproto",
+  )
+  cli_lightflow_ref = (
+      target_dir if manifest_rel in default_manifests else manifest_path
+  )
 
   if dry_run or _is_dry_run(payload, static_kwargs):
     return (
@@ -299,7 +310,7 @@ def validate_manifest_dry_run(
     )
 
   wf = schema.load_lightflow(manifest_path)
-  wf_engine = engine.LightflowEngine(wf, lightflow_path=manifest_path)
+  wf_engine = engine.LightflowEngine(wf, lightflow_path=cli_lightflow_ref)
   try:
     execution_order = wf_engine.compile()
   except engine.EngineError as e:
@@ -336,7 +347,9 @@ def validate_manifest_dry_run(
         )
       resolved_imports.append(action_def.python_import)
 
-    dry_run_report = lib.LightflowRunnerCLI().dry_run(lightflow=manifest_path)
+    dry_run_report = lib.LightflowRunnerCLI().dry_run(
+        lightflow=cli_lightflow_ref
+    )
   finally:
     for p in inserted_paths:
       if p in sys.path:

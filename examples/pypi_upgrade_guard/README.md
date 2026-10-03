@@ -16,10 +16,10 @@ flowchart LR
 
 ```bash
 # 1. Audit PyPI and pause at 'approve_upgrades'
-lightflow start --lightflow=examples/pypi_upgrade_guard/lightflow.yaml --log_id=pypi_01
+lightflow start --lightflow=examples/pypi_upgrade_guard --log_id=pypi_01
 
 # 2. Approve upgrade
-lightflow resume --lightflow=examples/pypi_upgrade_guard/lightflow.yaml \
+lightflow resume --lightflow=examples/pypi_upgrade_guard \
   --log_id=pypi_01 \
   --stage=approve_upgrades \
   --resolution=APPROVE \
@@ -35,17 +35,17 @@ the failed stage with `"simulate_smoke_failure": false`:
 
 ```bash
 # 1. Start a fresh run to test rollback recovery
-lightflow start --lightflow=examples/pypi_upgrade_guard/lightflow.yaml --log_id=pypi_rollback_01
+lightflow start --lightflow=examples/pypi_upgrade_guard --log_id=pypi_rollback_01
 
 # 2. Approve with simulated smoke failure -> triggers rollback_action & exits 1
-lightflow resume --lightflow=examples/pypi_upgrade_guard/lightflow.yaml \
+lightflow resume --lightflow=examples/pypi_upgrade_guard \
   --log_id=pypi_rollback_01 \
   --stage=approve_upgrades \
   --resolution=APPROVE \
   --payload='{"requirements_path": "/tmp/demo_requirements.txt", "simulate_smoke_failure": true}'
 
 # 3. Re-arm the failed stage without re-running audit_pypi_versions or approve_upgrades
-lightflow resume --lightflow=examples/pypi_upgrade_guard/lightflow.yaml \
+lightflow resume --lightflow=examples/pypi_upgrade_guard \
   --log_id=pypi_rollback_01 \
   --payload='{"simulate_smoke_failure": false}'
 ```

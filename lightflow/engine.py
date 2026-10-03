@@ -19,6 +19,7 @@ from __future__ import annotations
 # pylint: disable=g-long-ternary
 
 import ast
+from collections.abc import Sequence
 import copy
 import graphlib
 import hashlib
@@ -38,7 +39,7 @@ import sys
 import threading
 import time
 import traceback
-from typing import Any, Callable, Optional, Sequence
+from typing import Any, Callable, Optional
 
 # pylint: disable=g-import-not-at-top,g-bad-import-order
 try:
@@ -55,6 +56,15 @@ class EngineError(Exception):
 
 class StageTimeoutError(EngineError):
   """Raised when a stage execution exceeds its configured timeout."""
+
+  def __init__(
+      self,
+      message: str,
+      *,
+      worker: Optional[threading.Thread] = None,
+  ) -> None:
+    super().__init__(message)
+    self.worker = worker
 
 
 class OperatorActionSuspended(Exception):
@@ -727,6 +737,16 @@ def record_stage_outputs(
 
   outputs[stage_name] = merged
   payload_dict[STAGE_OUTPUTS_KEY] = outputs
+
+
+def clear_stage_outputs(
+    payload_dict: dict[str, Any], stage_names: Sequence[str]
+) -> None:
+  """Removes recorded `payload.outputs.<stage>` entries for re-armed stages."""
+  outputs = payload_dict.get(STAGE_OUTPUTS_KEY)
+  if isinstance(outputs, dict):
+    for stage_name in stage_names:
+      outputs.pop(stage_name, None)
 
 
 def merge_stage_payload(
@@ -1415,7 +1435,8 @@ class LightflowEngine:
     worker.join(timeout=timeout)
     if worker.is_alive():
       raise StageTimeoutError(
-          f"Stage '{stage_name}' execution timed out after {timeout}s."
+          f"Stage '{stage_name}' execution timed out after {timeout}s.",
+          worker=worker,
       )
     try:
       success, res = result_queue.get_nowait()
@@ -1434,9 +1455,26 @@ class LightflowEngine:
       passport: schema.Passport,
       payload_dict: dict[str, Any],
       failed_stamp: schema.Stamp,
+      *,
+      timed_out_workers: Optional[Sequence[threading.Thread]] = None,
   ) -> None:
     """Runs rollback_action if defined on the stage configuration."""
     if not stage.HasField("rollback_action") or not stage.rollback_action:
+      return
+
+    if timed_out_workers and any(w.is_alive() for w in timed_out_workers):
+      skip_msg = (
+          "Rollback skipped: the timed-out attempt is still running and could"
+          " re-apply its side effect after a rollback. Re-run the stage or"
+          " roll back manually once it has finished."
+      )
+      failed_stamp.message += f"\n{skip_msg}"
+      print(f"  {skip_msg}")
+      send_notification(
+          f"Rollback Skipped: {stage_name}",
+          f"⚠️ {stage_name}: rollback skipped (timed-out attempt still"
+          " running)",
+      )
       return
 
     action_id = stage.rollback_action.action_id
@@ -1573,6 +1611,19 @@ class LightflowEngine:
     should_run, target_status, reason = self.evaluate_trigger_rule(
         stage, passport
     )
+    payload_dict = passport.payload.to_dict()
+    if should_run or target_status in (
+        schema.StampStatus.SKIPPED,
+        schema.StampStatus.FAILED,
+    ):
+      had_prior_output = (
+          isinstance(payload_dict.get(STAGE_OUTPUTS_KEY), dict)
+          and stage_name in payload_dict[STAGE_OUTPUTS_KEY]
+      )
+      if had_prior_output:
+        clear_stage_outputs(payload_dict, [stage_name])
+        passport.payload.CopyFrom(payload_dict)
+
     if not should_run:
       stamp = passport.stamps.add()
       stamp.stage_name = stage_name
@@ -1593,8 +1644,6 @@ class LightflowEngine:
             f"{icon} {stage_name}: {status_name.lower()}",
         )
       return passport
-
-    payload_dict = passport.payload.to_dict()
 
     # 1. Evaluate skip condition if set
     if stage.run_if:
@@ -1674,6 +1723,7 @@ class LightflowEngine:
 
       start_time = time.monotonic()
       attempts = 0
+      timed_out_workers: list[threading.Thread] = []
 
       while True:
         attempts += 1
@@ -1686,6 +1736,8 @@ class LightflowEngine:
           if save_callback:
             save_callback(passport)
         except Exception as e:  # pylint: disable=broad-exception-caught
+          if isinstance(e, StageTimeoutError) and e.worker is not None:
+            timed_out_workers.append(e.worker)
           failed_stamp = passport.stamps.add()
           failed_stamp.stage_name = stage_name
           failed_stamp.status = schema.StampStatus.FAILED
@@ -1698,7 +1750,12 @@ class LightflowEngine:
               f"❌ {stage_name}: failed",
           )
           self.run_rollback_if_defined(
-              stage_name, stage, passport, payload_dict, failed_stamp
+              stage_name,
+              stage,
+              passport,
+              payload_dict,
+              failed_stamp,
+              timed_out_workers=timed_out_workers,
           )
           return passport
 
@@ -1717,7 +1774,12 @@ class LightflowEngine:
               f"❌ {stage_name}: failed",
           )
           self.run_rollback_if_defined(
-              stage_name, stage, passport, payload_dict, failed_stamp
+              stage_name,
+              stage,
+              passport,
+              payload_dict,
+              failed_stamp,
+              timed_out_workers=timed_out_workers,
           )
           return passport
 
@@ -1768,7 +1830,12 @@ class LightflowEngine:
               f"❌ {stage_name}: failed",
           )
           self.run_rollback_if_defined(
-              stage_name, stage, passport, payload_dict, failed_stamp
+              stage_name,
+              stage,
+              passport,
+              payload_dict,
+              failed_stamp,
+              timed_out_workers=timed_out_workers,
           )
           return passport
 
@@ -1809,6 +1876,7 @@ class LightflowEngine:
       )
       current_backoff = float(initial_backoff)
       attempts = 0
+      timed_out_workers = []
 
       while True:
         attempts += 1
@@ -1840,6 +1908,8 @@ class LightflowEngine:
           )
           return passport
         except EngineError as e:
+          if isinstance(e, StageTimeoutError) and e.worker is not None:
+            timed_out_workers.append(e.worker)
           if attempts < max_attempts and isinstance(e, StageTimeoutError):
             sleep_time = min(current_backoff, 300.0)
             jitter = random.uniform(0.9, 1.1)
@@ -1865,7 +1935,12 @@ class LightflowEngine:
               f"❌ {stage_name}: failed",
           )
           self.run_rollback_if_defined(
-              stage_name, stage, passport, payload_dict, failed_stamp
+              stage_name,
+              stage,
+              passport,
+              payload_dict,
+              failed_stamp,
+              timed_out_workers=timed_out_workers,
           )
           raise
         except Exception as e:  # pylint: disable=broad-exception-caught
@@ -1884,7 +1959,12 @@ class LightflowEngine:
                 f"❌ {stage_name}: failed",
             )
             self.run_rollback_if_defined(
-                stage_name, stage, passport, payload_dict, failed_stamp
+                stage_name,
+                stage,
+                passport,
+                payload_dict,
+                failed_stamp,
+                timed_out_workers=timed_out_workers,
             )
             return passport
 
@@ -1946,9 +2026,10 @@ class LightflowEngine:
         briefing += f"\n\nResume with:\n{resume_command}"
       briefing += (
           "\n\nOperator Action Required:\n"
-          "STOP and present the Instructions and Payload Schema above to the"
-          " human operator/user. Do NOT self-approve or run 'resume' until the"
-          " operator provides their explicit decision."
+          "Follow the Instructions above. If they ask for a person's decision,"
+          " present them to that person and resume only with their answer;"
+          " never decide for them. Then resume with a payload matching the"
+          " Payload Schema."
       )
 
       send_notification(

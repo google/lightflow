@@ -29,7 +29,7 @@ except ImportError:
   from lightflow import visualizer  # pyrefly: ignore[missing-import]
 # pylint: enable=g-import-not-at-top,g-bad-import-order
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 EngineError = engine.EngineError
 StageTimeoutError = engine.StageTimeoutError

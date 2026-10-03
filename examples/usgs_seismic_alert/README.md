@@ -17,10 +17,10 @@ flowchart LR
 
 ```bash
 # 1. Poll live USGS feed and pause at 'incident_commander_gate'
-lightflow start --lightflow=examples/usgs_seismic_alert/lightflow.yaml --log_id=usgs_01
+lightflow start --lightflow=examples/usgs_seismic_alert --log_id=usgs_01
 
 # 2. Approve and classify severity
-lightflow resume --lightflow=examples/usgs_seismic_alert/lightflow.yaml \
+lightflow resume --lightflow=examples/usgs_seismic_alert \
   --log_id=usgs_01 \
   --stage=incident_commander_gate \
   --resolution=APPROVE \

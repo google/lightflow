@@ -16,10 +16,10 @@ flowchart LR
 
 ```bash
 # 1. Start workflow - fetches live HN stories and suspends at 'editorial_gate' (exit code 2)
-lightflow start --lightflow=examples/hn_digest/lightflow.yaml --log_id=hn_run_01
+lightflow start --lightflow=examples/hn_digest --log_id=hn_run_01
 
 # 2. Approve the gate and attach your editorial commentary
-lightflow resume --lightflow=examples/hn_digest/lightflow.yaml \
+lightflow resume --lightflow=examples/hn_digest \
   --log_id=hn_run_01 \
   --stage=editorial_gate \
   --resolution=APPROVE \
