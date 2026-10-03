@@ -1,32 +1,70 @@
 <!-- mdformat global-off -->
 # Lightflow Unified A/B Benchmark: Lightflow DAG (`Arm A`) vs. Traditional Skill (`Arm B`)
 
-This benchmark evaluates whether **Lightflow (`Arm A`)** earns its keep against
-its natural baseline: a **Steelmanned Traditional Skill (`Arm B`: `SKILL.md` +
-`actions.py`)** where the Python business logic is already factored out into
-`actions.py`.
+## Executive Summary: The Goal Is Execution Consistency — And Token Efficiency Comes Mainly for Free
 
-Both arms execute the **exact same Python helper functions** in
-`examples/<name>/actions.py` across **7 matched domain workflow pairs** spanning
-a complexity ladder from **3 to 22 stages** (`3, 3, 3, 4, 8, 9, and 22` stages),
-evaluated across **`N=5` trials per workflow** in the deterministic harness
-(`run_benchmark.py --trials=5`) plus **`15` live zero-context LLM subagent
-sessions (`N=5` per cohort across 3 controlled cohorts = `30` live workflow
-runs)** on the 8-stage and 9-stage failure-recovery workflows:
+When evaluating **Lightflow (`Arm A`)** against its natural baseline — a
+**Steelmanned Traditional Skill (`Arm B`: `SKILL.md` + `actions.py`)** where the
+Python business logic is already factored out into `actions.py` — the
+conversation often starts with token count. However, evaluating both arms across
+**7 matched domain workflow pairs** (`3` to `22` stages, `N=5` trials per
+workflow in `run_benchmark.py`) and **15 independent live zero-context LLM
+subagent sessions** (`N=5` per cohort = `30` live workflow runs) shows a deeper
+engineering conclusion:
 
-1.  **Correctness & Side-Effect Safety** — Does every stage execute in valid
-    dependency order, honor `run_if` / `trigger_rule` branch conditions, execute
-    compensating rollbacks on mid-flight failures, and recover surgically from
-    the failed stage without re-executing completed upstream stages?
-2.  **Consistency (`N=5` Multi-Trial Variance + Prose-Drift Sensitivity)** —
-    Across `N=5` independent zero-context runs, how much variance (`Mean ± SD`,
-    `Min-Max`) exists in command count, agent-generated code (`cmd`), and
-    runtime tokens (`cmd + stdout`), and what happens when a single return-type
-    detail in `SKILL.md` drifts from `actions.py`?
-3.  **Context & Code-Generation Cost** — How many tokens of skill instructions
-    must enter the context window, how many tokens of shell/Python code must the
-    LLM generate (`cmd`), and how many total session tokens (`Skill + cmd +
-    stdout`) are consumed?
+> **The primary reason to use a declarative DAG is execution consistency and
+> side-effect safety — and token efficiency (`2.0x` lower session tokens) comes
+> along for free as a byproduct of moving orchestration out of the LLM's
+> improvisation loop.**
+
+1.  **Why Traditional Skills Drift Even When Python Work Is Factored Out**: Even
+    with domain logic cleanly factored into `actions.py`, a traditional
+    `SKILL.md` still relies on the LLM to act as the *runtime state machine*
+    across turns: writing ad-hoc `python3 -c` glue scripts, persisting
+    intermediate outputs between turns, evaluating branch conditions, catching
+    exceptions to trigger compensating rollbacks, and resuming from the exact
+    point of failure without re-executing completed upstream stages.
+    -   **Generative Glue Variance (even with 100% synchronized docs, `Cohort
+        2`)**: Across `N=5` live zero-context LLM sessions given a meticulously
+        synchronized `SKILL.md`, Arm B agents generated **`3.1x` more code**
+        (`~1,565 ± 97 tok` vs. `~502 ± 4 tok`) with **`23x` higher
+        code-generation SD** (`±389 chars` vs. `±17 chars`) and **`38x` higher
+        warm runtime token SD** (`±144 tok` vs. `±4 tok`). Every run improvised
+        a slightly different polling loop, state dictionary, and `try/except`
+        wrapper.
+    -   **Catastrophic Prose-Drift Fragility (1 omitted return-type detail →
+        `50%` first-try failure, `Cohort 3`)**: Because the prose `SKILL.md`
+        *is* the orchestrator, omitting a single implementation detail (that
+        `actions.py` helpers return a `(output_dict, message_str)` 2-tuple
+        rather than a bare `dict`) caused **`5/5` live Arm B subagents to crash
+        mid-flight on Task 1 Stage 2** (`TypeError: 'tuple' object is not
+        subscriptable`) *after* Stage 1 had already mutated disk state — forcing
+        manual cleanup and re-execution of Stage 1 (`5/10` first-try workflow
+        compliance).
+2.  **Why Lightflow Gives Us Consistency "Mainly for Free" (`Cohort 1`)**: With
+    Lightflow, the agent never reads `lightflow.yaml` or `actions.py` and never
+    synthesizes Python orchestration glue. It loads one universal `1,097`-token
+    runner skill once per session and issues uniform declarative CLI commands
+    (`start` → `resume` → `resume`):
+    -   **Zero-Variance Execution (`10/10` first-try pass, `±4 tok` runtime
+        SD)**: Across all `N=5` live LLM sessions (`10/10` workflow runs),
+        Lightflow achieved **`100%` first-try compliance**, **`0` duplicate
+        upstream executions** during failure recovery, and near-zero runtime
+        variance (`7,389 ± 15 chars` / `~1,847 ± 4 tok`).
+    -   **Consistency Comes Free — And Actually Cheaper (`-49%` to `-50%`
+        Session Tokens)**: Instead of paying a token tax for deterministic state
+        checkpointing (`passport.json`), JSON Schema gate validation, and
+        automatic rollbacks, Lightflow **cuts total session tokens in half**
+        (`~2,944 ± 4 tok` vs. `~5,904 ± 144 tok` on the live 2-workflow suite;
+        `~5,570 tok` vs. `~10,992 tok` across the 7-workflow ladder) because
+        **`1` universal runner skill** replaces **`N` verbose per-workflow
+        `SKILL.md` manuals** (`-84%` skill context) and declarative CLI calls
+        replace inline Python glue (`3.8x` less generated code).
+3.  **Candid Crossover Point**: On a single 3-stage linear workflow in a one-off
+    session (`hn_digest`), a bespoke `SKILL.md` + `/tmp/state.json` is ~760
+    tokens lighter (`~732` vs. `~1,495 tok`). Lightflow breaks even by the
+    **2nd–3rd workflow in a session** or on **any single workflow with `>= 8`
+    stages**, conditional branches, polling loops, or rollbacks.
 
 ---
 

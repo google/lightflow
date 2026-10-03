@@ -103,6 +103,20 @@ Look elsewhere when:
 
 ### Lightflow DAG vs. Traditional `SKILL.md` + `actions.py` ([Full A/B Benchmark](./benchmarks/README.md))
 
+**Core finding: The engineering goal is execution consistency and side-effect
+safety — and token efficiency comes mainly for free.** Even when Python business
+logic is cleanly factored into `actions.py`, a traditional `SKILL.md` still
+relies on the LLM to act as the *runtime state machine* across turns:
+improvising `python3 -c` glue scripts, persisting state files, evaluating branch
+conditions, catching exceptions to trigger rollbacks, and resuming from the
+failed stage without re-running completed upstream stages. Moving that
+orchestration into a deterministic DAG engine (`passport.json`) eliminates
+generative glue variance (**`38x` lower runtime token SD** across `N=5` live LLM
+sessions) and prose-to-code drift crashes (**`100%` vs. `50%` first-try
+compliance** when a single return-type detail is omitted from `SKILL.md`), while
+**cutting total session tokens in half (`2.0x` reduction)** because one
+universal runner skill replaces bespoke per-workflow `SKILL.md` manuals:
+
 | Dimension | Lightflow DAG (`Arm A`) | Steelmanned Traditional Skill (`Arm B`: `SKILL.md` + `actions.py`) | Empirical Delta ([`benchmarks/`](./benchmarks/README.md)) |
 | :--- | :--- | :--- | :--- |
 | **Skill Context Loaded** | **1 universal runner skill** (`~1,097 tok` once per session; `0 tok` on workflows 2–7) | **1 bespoke `SKILL.md` per workflow** (`~7,075 tok` across 7 workflows) | **`6.4x` fewer skill tokens (`O(1)` vs. `O(N)`)** |
@@ -111,7 +125,7 @@ Look elsewhere when:
 | **Prose-to-Code Drift Resilience** | Engine unpacks returns & enforces DAG schema (`10/10` first-try pass) | 1 omitted return-type detail crashes Stage 2 after Stage 1 mutates disk (`5/10` first-try pass) | **`100%` vs. `50%` first-try compliance under drift** |
 | **Session Total (`Skill + cmd + stdout`)** | `~2,944 ± 4 tok` (live 2-wf) • `~5,570 tok` (7-wf ladder) | `~5,904 ± 144 tok` (live 2-wf) • `~10,992 tok` (7-wf ladder) | **`49%–50%` lower total session tokens** |
 
-> **Crossover point:** For a single 3-stage linear workflow in a one-off session, a bespoke `SKILL.md` + `/tmp/state.json` is ~760 tokens lighter (`~732` vs. `~1,495 tok`); Lightflow breaks even by the 2nd–3rd workflow in a session or on any single workflow with $\ge 8$ stages, conditional branches, polling, or rollbacks.
+> **Crossover point:** For a single 3-stage linear workflow in a one-off session, a bespoke `SKILL.md` + `/tmp/state.json` is ~760 tokens lighter (`~732` vs. `~1,495 tok`); Lightflow breaks even by the 2nd–3rd workflow in a session or on any single workflow with `>= 8` stages, conditional branches, polling, or rollbacks.
 
 --------------------------------------------------------------------------------
 
