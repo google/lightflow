@@ -151,17 +151,9 @@ stages:
         run_data["json_schema"],
         {"type": "object", "required": ["confirmed"]},
     )
-    self.assertEqual(run_data["completed_count"], 1)
-    self.assertEqual(run_data["not_started_count"], 1)
-    self.assertEqual(
-        run_data["stages"],
-        [{"name": "confirm_gate", "status": "paused"}],
-    )
-    self.assertNotIn("mermaid_diagram", run_data)
-    self.assertNotIn("passport", run_data)
-    self.assertNotIn("Confirm 99 items", run_data["message"])
+    self.assertIn("```mermaid", run_data["mermaid_diagram"])
 
-    # 3. Get Lightflow Status (compact default)
+    # 3. Get Lightflow Status
     status_resp = mcp_server.handle_jsonrpc_message({
         "jsonrpc": "2.0",
         "id": 12,
@@ -180,57 +172,7 @@ stages:
     self.assertTrue(status_data["exists"])
     self.assertEqual(status_data["paused_stage"], "confirm_gate")
     self.assertEqual(status_data["exit_code"], 2)
-    self.assertEqual(status_data["completed_count"], 1)
-    self.assertNotIn("mermaid_diagram", status_data)
-    self.assertNotIn("passport", status_data)
-    self.assertNotIn("stdout", status_data)
-
-    # 3a. Get Lightflow Status with targeted `fields` extraction and `verbose`
-    fields_resp = mcp_server.handle_jsonrpc_message({
-        "jsonrpc": "2.0",
-        "id": 120,
-        "method": "tools/call",
-        "params": {
-            "name": "get_lightflow_status",
-            "arguments": {
-                "lightflow": manifest_path,
-                "log_id": "mcp_run_01",
-                "fields": [
-                    "payload.outputs.compute_stage.summary",
-                    "outputs.missing_stage",
-                ],
-            },
-        },
-    })
-    assert fields_resp is not None
-    fields_data = json.loads(fields_resp["result"]["content"][0]["text"])
-    self.assertEqual(
-        fields_data["fields"],
-        {
-            "payload.outputs.compute_stage.summary": "99 items",
-            "outputs.missing_stage": None,
-        },
-    )
-    self.assertNotIn("passport", fields_data)
-
-    verbose_resp = mcp_server.handle_jsonrpc_message({
-        "jsonrpc": "2.0",
-        "id": 122,
-        "method": "tools/call",
-        "params": {
-            "name": "get_lightflow_status",
-            "arguments": {
-                "lightflow": manifest_path,
-                "log_id": "mcp_run_01",
-                "verbose": True,
-            },
-        },
-    })
-    assert verbose_resp is not None
-    verbose_data = json.loads(verbose_resp["result"]["content"][0]["text"])
-    self.assertIn("```mermaid", verbose_data["mermaid_diagram"])
-    self.assertIn("passport", verbose_data)
-    self.assertIn("PASSPORT PAYLOAD:", verbose_data["stdout"])
+    self.assertIn("```mermaid", status_data["mermaid_diagram"])
 
     # 3b. Status on an unknown log ID is a result, not a tool error.
     missing_resp = mcp_server.handle_jsonrpc_message({
@@ -272,71 +214,6 @@ stages:
     resume_data = json.loads(resume_resp["result"]["content"][0]["text"])
     self.assertEqual(resume_data["status"], "COMPLETED")
     self.assertEqual(resume_data["exit_code"], 0)
-    self.assertEqual(resume_data["completed_count"], 3)
-    self.assertEqual(resume_data["stages"], [])
-    self.assertNotIn("passport", resume_data)
-
-    # 4b. Re-run a completed stage via `rerun` -> cascades to confirm_gate
-    rerun_resp = mcp_server.handle_jsonrpc_message({
-        "jsonrpc": "2.0",
-        "id": 131,
-        "method": "tools/call",
-        "params": {
-            "name": "resume_lightflow",
-            "arguments": {
-                "lightflow": manifest_path,
-                "log_id": "mcp_run_01",
-                "rerun": "compute_stage",
-            },
-        },
-    })
-    assert rerun_resp is not None
-    self.assertFalse(rerun_resp["result"]["isError"])
-    rerun_data = json.loads(rerun_resp["result"]["content"][0]["text"])
-    self.assertEqual(rerun_data["status"], "SUSPENDED")
-    self.assertEqual(rerun_data["exit_code"], 2)
-    self.assertEqual(rerun_data["paused_stage"], "confirm_gate")
-    self.assertEqual(rerun_data["completed_count"], 1)
-
-    # 4c. _inspect_run_state without `lightflow_path` derives stage order from
-    # stamps, and `_extract_passport_fields` supports dotted keys / payload.*.
-    status_no_wf_data = mcp_server._inspect_run_state("mcp_run_01", None)
-    self.assertEqual(status_no_wf_data["paused_stage"], "confirm_gate")
-    self.assertEqual(status_no_wf_data["completed_count"], 1)
-    self.assertEqual(
-        [s["name"] for s in status_no_wf_data["stages"]],
-        ["confirm_gate", "final_stage"],
-    )
-
-    extracted = mcp_server._extract_passport_fields(
-        {
-            "workflow_id": "top_id",
-            "payload": {
-                "workflow_id": "nested_payload_id",
-                "outputs": {
-                    "verify_actions": {
-                        "files": {"actions.py": {"syntax_ok": True}},
-                        "versions": {"6.0.2": "ok"},
-                    }
-                },
-            },
-        },
-        [
-            "workflow_id",
-            "payload.workflow_id",
-            "outputs.verify_actions.files.actions.py.syntax_ok",
-            "outputs.verify_actions.versions.6.0.2",
-        ],
-    )
-    self.assertEqual(
-        extracted,
-        {
-            "workflow_id": "top_id",
-            "payload.workflow_id": "nested_payload_id",
-            "outputs.verify_actions.files.actions.py.syntax_ok": True,
-            "outputs.verify_actions.versions.6.0.2": "ok",
-        },
-    )
 
     # 5. Visualize without output file -> returns inline HTML
     viz_resp = mcp_server.handle_jsonrpc_message({
@@ -409,6 +286,93 @@ stages:
     out_line = out_raw.getvalue().decode("utf-8").strip()
     parsed = json.loads(out_line)
     self.assertEqual(parsed["id"], 99)
+
+  def test_mcp_payload_file_support(self) -> None:
+    module_name = __name__
+    manifest_path = os.path.join(self.temp_dir, "mcp_pf_wf.yaml")
+    with open(manifest_path, "w", encoding="utf-8") as f:
+      f.write(f"""
+name: mcp_test_pipeline
+actions:
+  - id: compute
+    python_import: {module_name}.mcp_test_action
+stages:
+  - name: compute_stage
+    python_action:
+      action_id: compute
+  - name: confirm_gate
+    run_after: [compute_stage]
+    operator_action:
+      instructions: "'Confirm ' + payload.outputs.compute_stage.summary"
+      json_schema: '{{"type": "object", "required": ["confirmed"]}}'
+  - name: final_stage
+    run_after: [confirm_gate]
+    run_if: "payload.outputs.confirm_gate.confirmed == true"
+    python_action:
+      action_id: compute
+""")
+    init_file = os.path.join(self.temp_dir, "init_payload.json")
+    with open(init_file, "w", encoding="utf-8") as f:
+      json.dump({"seed_key": "from_file"}, f)
+
+    dry_resp = mcp_server.handle_jsonrpc_message({
+        "jsonrpc": "2.0",
+        "id": 201,
+        "method": "tools/call",
+        "params": {
+            "name": "dry_run_lightflow",
+            "arguments": {
+                "lightflow": manifest_path,
+                "payload_file": init_file,
+            },
+        },
+    })
+    assert dry_resp is not None
+    dry_data = json.loads(dry_resp["result"]["content"][0]["text"])
+    self.assertTrue(dry_data["valid"])
+    self.assertIn("from_file", dry_data["trace"])
+
+    run_resp = mcp_server.handle_jsonrpc_message({
+        "jsonrpc": "2.0",
+        "id": 202,
+        "method": "tools/call",
+        "params": {
+            "name": "run_lightflow",
+            "arguments": {
+                "lightflow": manifest_path,
+                "log_id": "mcp_pf_run",
+                "payload_file": init_file,
+            },
+        },
+    })
+    assert run_resp is not None
+    run_data = json.loads(run_resp["result"]["content"][0]["text"])
+    self.assertEqual(run_data["status"], "SUSPENDED")
+    self.assertEqual(run_data["passport"]["payload"]["seed_key"], "from_file")
+
+    resume_file = os.path.join(self.temp_dir, "resume_payload.json")
+    with open(resume_file, "w", encoding="utf-8") as f:
+      json.dump({"confirmed": True}, f)
+
+    resume_resp = mcp_server.handle_jsonrpc_message({
+        "jsonrpc": "2.0",
+        "id": 203,
+        "method": "tools/call",
+        "params": {
+            "name": "resume_lightflow",
+            "arguments": {
+                "lightflow": manifest_path,
+                "log_id": "mcp_pf_run",
+                "stage": "confirm_gate",
+                "resolution": "APPROVE",
+                "payload_file": resume_file,
+            },
+        },
+    })
+    assert resume_resp is not None
+    resume_data = json.loads(resume_resp["result"]["content"][0]["text"])
+    self.assertEqual(resume_data["status"], "COMPLETED")
+    self.assertEqual(resume_data["exit_code"], 0)
 
 
 if __name__ == "__main__":

@@ -355,6 +355,11 @@ class PassportManager:
             f"Failed to verify directory ownership of '{path}': {e}"
         ) from e
 
+  @property
+  def passport_file(self) -> str:
+    """Returns the absolute path to the passport.json file for this run."""
+    return os.path.join(self.resolved_path, "passport.json")
+
   def load_passport(self) -> Optional[schema.Passport]:
     """Loads the passport state from disk.
 
@@ -368,7 +373,7 @@ class PassportManager:
     Raises:
       StateCorruptedError: If the passport file exists but cannot be parsed.
     """
-    passport_file = os.path.join(self.resolved_path, "passport.json")
+    passport_file = self.passport_file
     if not os.path.exists(passport_file):
       return None
     try:
@@ -385,7 +390,7 @@ class PassportManager:
     """Saves the passport state to disk atomically."""
     os.makedirs(self.resolved_path, mode=0o700, exist_ok=True)
     self._validate_path_safety(self.resolved_path)
-    passport_file = os.path.join(self.resolved_path, "passport.json")
+    passport_file = self.passport_file
     json_str = json.dumps(passport.to_dict(), indent=2)
     temp_file = None
     try:
@@ -465,8 +470,6 @@ def generate_status_mermaid(
         rollback_suffix = " [rolled back]"
       elif "Rollback action " in msg and " failed:" in msg:
         rollback_suffix = " [rollback failed]"
-      elif "Rollback skipped:" in msg:
-        rollback_suffix = " [rollback skipped]"
 
     if stage.HasField("python_action") and stage.python_action:
       node_str = (
@@ -601,11 +604,8 @@ def _raise_for_run_state(
     )
   if state == "PAUSED":
     raise LightflowAlreadyPausedError(
-        f"Lightflow is paused at operator action '{paused[0]}'. Follow the"
-        " Instructions above (if they ask for a person's decision, present"
-        " them to that person and resume only with their answer; never decide"
-        " for them), then run 'resume' with a payload matching the Payload"
-        " Schema."
+        f"Lightflow is paused at operator action '{paused[0]}'. Present the"
+        " gate to the operator, then run 'resume' with their decision."
     )
   if state == "FAILED":
     suffix = f" Rejected gates: {rejected}." if rejected else ""
@@ -678,66 +678,56 @@ def _parse_payload_arg(
   return dict(parsed)
 
 
-def _resolve_rerun_stage(
-    stage: Optional[str], rerun: Optional[str | bool]
-) -> Optional[str]:
-  """Resolves a target stage to re-run from `--rerun=<stage>` or `--stage=<stage> --rerun`."""
-  if rerun is None or (isinstance(rerun, bool) and not rerun):
-    return None
-  if isinstance(rerun, bool):
-    if not stage:
-      raise ValueError(
-          "Pass a stage name to '--rerun=<stage>' (or combine '--rerun' with"
-          " '--stage=<stage>')."
-      )
-    return stage
-  rerun_str = str(rerun).strip()
-  if not rerun_str or rerun_str.lower() == "false":
-    return None
-  if rerun_str.lower() == "true":
-    if not stage:
-      raise ValueError(
-          "Pass a stage name to '--rerun=<stage>' (or combine '--rerun' with"
-          " '--stage=<stage>')."
-      )
-    return stage
-  if stage and stage != rerun_str:
-    raise ValueError(
-        f"Conflicting stage names: --stage={stage!r} vs --rerun={rerun_str!r}."
-    )
-  return rerun_str
+def _resolve_payload_input(
+    payload: str | dict[str, Any],
+    payload_file: Any = None,
+) -> Any:
+  """Normalizes `--payload` and `--payload_file` into one payload argument."""
+  if payload_file is None:
+    return payload
+  if not isinstance(payload_file, str) or not payload_file.strip():
+    raise ValueError("--payload_file requires a file path.")
+  cleaned = payload_file.strip()
+  if isinstance(payload, dict):
+    has_explicit_payload = bool(payload)
+  elif isinstance(payload, str):
+    has_explicit_payload = bool(payload.strip() not in ("{}", ""))
+  else:
+    has_explicit_payload = payload is not None
+  if has_explicit_payload:
+    raise ValueError("Cannot specify both --payload and --payload_file.")
+  return cleaned if cleaned.startswith("@") else f"@{cleaned}"
 
 
 class LightflowRunnerCLI:
   """CLI interface for executing, inspecting, and resuming Lightflow DAGs.
 
   Core Lifecycle & Exit Codes:
-    - start --lightflow=<dir> --log_id=<id> [--payload='{...}' |
-      --payload=@file.json] [--dry_run]:
+    - start --lightflow=<path> --log_id=<id> [--payload='{...}' |
+      --payload=@file.json | --payload_file=<file.json>] [--dry_run]:
       Starts a new run (or previews the DAG trace with --dry_run).
       * Exit 0: Completed all stages.
-      * Exit 2 (SUSPENDED): Paused at an `operator_action` checkpoint. Follow
-        the printed Instructions. If they ask for a person's decision, present
-        them to that person and resume only with their answer; never decide for
-        them. Then resume with a payload matching the Payload Schema.
+      * Exit 2 (SUSPENDED): Paused at an `operator_action` human-in-the-loop
+        checkpoint. STOP and present the printed Instructions and Payload Schema
+        to the human operator/user. Do NOT self-approve or run `resume` until
+        the operator provides their explicit decision.
       * Exit 1 (FAILED): A stage failed. Fix the root cause and run `resume`
         (never `start --force`, which wipes the Passport and repeats completed
         upstream side effects).
-    - resume --lightflow=<dir> --log_id=<id> [--stage=<gate>
-      --resolution=APPROVE|REJECT --payload='{...}' | --payload=@file.json]
-      [--rerun=<stage>]:
-      Resolves a paused `operator_action` gate, re-arms failed stages, or
-      re-runs a completed stage (`--rerun=<stage>`) and its downstream
-      dependents without re-running completed upstream stages.
-    - status --lightflow=<dir> --log_id=<id> [--verbose]:
+    - resume --lightflow=<path> --log_id=<id> [--stage=<gate>
+      --resolution=APPROVE|REJECT --payload='{...}' | --payload=@file.json |
+      --payload_file=<file.json>]:
+      Resolves a paused `operator_action` gate or re-arms failed stages and
+      their downstream dependents without re-running completed upstream stages.
+    - status --lightflow=<path> --log_id=<id> [--verbose]:
       Prints each stage's latest status and any paused gate's Instructions,
       Payload Schema, and resume command. Exits like the run: 0 completed,
       1 failed, rejected, or interrupted, 2 paused, 3 no saved state,
       4 running in another process. `--verbose` adds the Passport payload,
       full stamp log, and Mermaid progress diagram.
-    - visualize --lightflow=<dir> [--log_id=<id>] [--out=<file.html>]:
+    - visualize --lightflow=<path> [--log_id=<id>] [--out=<file.html>]:
       Generates a standalone interactive HTML5 DAG & Passport visualizer.
-    - cleanup --log_id=<id> [--lightflow=<dir>]:
+    - cleanup --log_id=<id> [--lightflow=<path>]:
       Deletes the saved Passport state directory for `--log_id`.
   """
 
@@ -749,13 +739,15 @@ class LightflowRunnerCLI:
       payload: str | dict[str, Any] = "{}",
       dry_run: bool = False,
       *,
+      payload_file: Optional[str] = None,
       workflow: Optional[str] = None,
   ) -> None:
     """Starts a new lightflow execution run."""
+    effective_payload = _resolve_payload_input(payload, payload_file)
     if dry_run:
       self.dry_run(
           lightflow=lightflow,
-          payload=payload,
+          payload=effective_payload,
           log_id=log_id,
           workflow=workflow,
       )
@@ -777,7 +769,7 @@ class LightflowRunnerCLI:
         raise engine.EngineError(f"Compilation Error: {e}") from e
 
       initial_payload = _parse_payload_arg(
-          payload, context_label="--payload", allow_outputs=False
+          effective_payload, context_label="--payload", allow_outputs=False
       )
 
       if force:
@@ -819,10 +811,6 @@ class LightflowRunnerCLI:
         rearmed = self._rearm_failed_stages(
             runner, ordered_stages, passport, operator=_current_operator()
         )
-        if rearmed:
-          payload_dict = passport.payload.to_dict()
-          engine.clear_stage_outputs(payload_dict, rearmed)
-          passport.payload.CopyFrom(payload_dict)
         if rearmed or payload_updated:
           pm.save_passport(passport)
         if rearmed:
@@ -838,6 +826,7 @@ class LightflowRunnerCLI:
         print(f"Starting execution of lightflow '{workflow_proto.name}'...")
       else:
         print(f"Resuming execution of lightflow '{workflow_proto.name}'...")
+      print(f"Passport: {pm.passport_file}")
       self._execute_engine_loop(runner, ordered_stages, passport, pm)
 
   def resume(
@@ -850,11 +839,12 @@ class LightflowRunnerCLI:
       comment: Optional[str] = None,
       operator: Optional[str] = None,
       cascade: bool = True,
-      rerun: Optional[str | bool] = None,
       *,
+      payload_file: Optional[str] = None,
       workflow: Optional[str] = None,
   ) -> None:
-    """Continues an existing lightflow run, resolves a gate, or re-runs a stage."""
+    """Continues an existing lightflow run or resolves an operator action."""
+    effective_payload = _resolve_payload_input(payload, payload_file)
     resolved_lightflow = lightflow or workflow
     if not resolved_lightflow:
       raise ValueError("Missing required '--lightflow' manifest path.")
@@ -863,8 +853,6 @@ class LightflowRunnerCLI:
 
     if not operator:
       operator = _current_operator()
-
-    rerun_stage = _resolve_rerun_stage(stage, rerun)
 
     norm_resolution = str(resolution).upper().strip()
     if norm_resolution not in ("APPROVE", "REJECT", "1", "2"):
@@ -886,21 +874,9 @@ class LightflowRunnerCLI:
       for stamp in passport.stamps:
         latest_status[stamp.stage_name] = stamp.status
 
-      if (
-          rerun_stage is not None
-          or stage is None
-          or (latest_status.get(stage) != schema.StampStatus.PAUSED)
+      if stage is None or (
+          latest_status.get(stage) != schema.StampStatus.PAUSED
       ):
-        if rerun_stage is not None and (is_reject or comment is not None):
-          raise ValueError(
-              "Cannot combine '--rerun' with gate '--resolution=REJECT' or"
-              " '--comment'."
-          )
-        if is_reject:
-          raise ValueError(
-              "Cannot apply '--resolution=REJECT' because no paused"
-              " operator_action stage was specified."
-          )
         self._resume_execution(
             workflow_proto,
             workflow_path,
@@ -911,8 +887,7 @@ class LightflowRunnerCLI:
             stage,
             cascade,
             operator,
-            payload=payload,
-            rerun=rerun_stage,
+            payload=effective_payload,
         )
         return
 
@@ -948,9 +923,9 @@ class LightflowRunnerCLI:
           stage_output["comment"] = comment
         payload_dict["resolution"] = "REJECT"
 
-        if payload and payload not in ("{}", ""):
+        if effective_payload and effective_payload not in ("{}", ""):
           input_dict = _parse_payload_arg(
-              payload,
+              effective_payload,
               context_label=f"Operator action stage '{stage}' resume payload",
               allow_outputs=False,
           )
@@ -962,7 +937,6 @@ class LightflowRunnerCLI:
         payload_dict["resolution"] = "REJECT"
         stage_output["approved"] = False
         stage_output["resolution"] = "REJECT"
-        engine.clear_stage_outputs(payload_dict, [stage])
         engine.record_stage_outputs(payload_dict, stage, stage_output)
         passport.payload.CopyFrom(payload_dict)
 
@@ -987,11 +961,12 @@ class LightflowRunnerCLI:
         )
 
         print(f"Resuming execution after rejection of stage '{stage}'...")
+        print(f"Passport: {pm.passport_file}")
         self._execute_engine_loop(runner, ordered_stages, passport, pm)
         return
 
       input_dict = _parse_payload_arg(
-          payload,
+          effective_payload,
           context_label=f"Operator action stage '{stage}' resume payload",
           allow_outputs=False,
       )
@@ -1067,7 +1042,6 @@ class LightflowRunnerCLI:
       payload_dict["resolution"] = "APPROVE"
       stage_output["approved"] = True
       stage_output["resolution"] = "APPROVE"
-      engine.clear_stage_outputs(payload_dict, [stage])
       engine.record_stage_outputs(payload_dict, stage, stage_output)
 
       passport.payload.CopyFrom(payload_dict)
@@ -1087,6 +1061,7 @@ class LightflowRunnerCLI:
       )
 
       print(f"Resuming execution of lightflow starting at stage '{stage}'...")
+      print(f"Passport: {pm.passport_file}")
       self._execute_engine_loop(runner, ordered_stages, passport, pm)
 
   def _resume_execution(
@@ -1101,9 +1076,8 @@ class LightflowRunnerCLI:
       cascade: bool,
       operator: str,
       payload: str | dict[str, Any] = "{}",
-      rerun: Optional[str] = None,
   ) -> None:
-    """Re-arms failed or `--rerun` stages, then runs whatever is left of the graph."""
+    """Re-arms failed stages, then runs whatever is left of the graph."""
     del log_id
     runner = engine.LightflowEngine(
         workflow_proto, lightflow_path=workflow_path, log_id=pm.workflow_id
@@ -1113,10 +1087,9 @@ class LightflowRunnerCLI:
     except Exception as e:
       raise engine.EngineError(f"Compilation Error: {e}") from e
 
-    target_stage = rerun or stage
-    if target_stage and target_stage not in ordered_stages:
+    if stage and stage not in ordered_stages:
       raise ValueError(
-          f"Unknown stage '{target_stage}'. Stages in this lightflow:"
+          f"Unknown stage '{stage}'. Stages in this lightflow:"
           f" {ordered_stages}."
       )
 
@@ -1126,33 +1099,18 @@ class LightflowRunnerCLI:
         if status == schema.StampStatus.PAUSED
     )
     if paused:
-      if rerun:
-        rerun_dependents = (
-            set(runner.get_downstream_dependents(rerun)) if cascade else set()
-        )
-        blocking_paused = [
-            p for p in paused if p != rerun and p not in rerun_dependents
-        ]
-      else:
-        blocking_paused = paused
-      if blocking_paused:
-        raise LightflowAlreadyPausedError(
-            f"Lightflow is paused at operator action '{blocking_paused[0]}'."
-            f" Answer it with 'resume --stage={blocking_paused[0]}"
-            " --resolution=APPROVE|REJECT'."
-        )
+      raise LightflowAlreadyPausedError(
+          f"Lightflow is paused at operator action '{paused[0]}'. Answer it"
+          f" with 'resume --stage={paused[0]} --resolution=APPROVE|REJECT'."
+      )
 
-    if (
-        not rerun
-        and ordered_stages
-        and all(
-            latest_status.get(name)
-            in (
-                schema.StampStatus.COMPLETED,
-                schema.StampStatus.SKIPPED,
-            )
-            for name in ordered_stages
+    if ordered_stages and all(
+        latest_status.get(name)
+        in (
+            schema.StampStatus.COMPLETED,
+            schema.StampStatus.SKIPPED,
         )
+        for name in ordered_stages
     ):
       raise LightflowAlreadyCompletedError(
           "Lightflow has already completed successfully. Use 'start --force'"
@@ -1165,71 +1123,22 @@ class LightflowRunnerCLI:
           payload, context_label="Resume payload", allow_outputs=False
       )
 
-    if rerun:
-      rearmed = self._rearm_rerun_stages(
-          runner, ordered_stages, passport, rerun, cascade, operator
-      )
-    else:
-      rearmed = self._rearm_failed_stages(
-          runner, ordered_stages, passport, stage, cascade, operator
-      )
+    rearmed = self._rearm_failed_stages(
+        runner, ordered_stages, passport, stage, cascade, operator
+    )
     if rearmed or extra_payload:
       payload_dict = passport.payload.to_dict()
-      if rearmed:
-        engine.clear_stage_outputs(payload_dict, rearmed)
       if extra_payload:
         payload_dict.update(extra_payload)
       payload_dict["operator"] = operator
       passport.payload.CopyFrom(payload_dict)
       pm.save_passport(passport)
     if rearmed:
-      if rerun:
-        print(f"Re-armed {len(rearmed)} stage(s) for re-run: {rearmed}")
-      else:
-        print(f"Re-armed {len(rearmed)} failed stage(s): {rearmed}")
+      print(f"Re-armed {len(rearmed)} failed stage(s): {rearmed}")
 
     print(f"Resuming execution of lightflow '{workflow_proto.name}'...")
+    print(f"Passport: {pm.passport_file}")
     self._execute_engine_loop(runner, ordered_stages, passport, pm)
-
-  def _rearm_rerun_stages(
-      self,
-      runner: engine.LightflowEngine,
-      ordered_stages: list[str],
-      passport: schema.Passport,
-      rerun_stage: str,
-      cascade: bool = True,
-      operator: Optional[str] = None,
-  ) -> list[str]:
-    """Marks a stage (and optionally its dependents) eligible to re-run."""
-    latest_status = {
-        stamp.stage_name: stamp.status for stamp in passport.stamps
-    }
-    current = latest_status.get(rerun_stage)
-    if current is None:
-      raise ValueError(
-          f"Stage '{rerun_stage}' has not run yet (Current status: Unstarted)"
-          " and cannot be re-run."
-      )
-
-    rearm = {rerun_stage}
-    if cascade:
-      for dep in runner.get_downstream_dependents(rerun_stage):
-        if dep in latest_status:
-          rearm.add(dep)
-
-    for stage_name in ordered_stages:
-      if stage_name not in rearm:
-        continue
-      previous = schema.StampStatus.Name(latest_status[stage_name]).title()
-      stamp = passport.stamps.add()
-      stamp.stage_name = stage_name
-      stamp.status = schema.StampStatus.PENDING
-      stamp.timestamp.CopyFrom(engine.get_timestamp())
-      stamp.message = (
-          f"Re-armed for re-run by {operator} (previous status: {previous})."
-      )
-
-    return sorted(rearm)
 
   def _rearm_failed_stages(
       self,
@@ -1412,13 +1321,14 @@ class LightflowRunnerCLI:
     if not os.path.isabs(os.path.expanduser(shown_id)):
       shown_id = shown_id.lower()
     print(f"Lightflow '{lightflow_proto.name}' (log ID: {shown_id}): {state}")
+    print(f"Passport: {pm.passport_file}")
     for stage_name in ordered_stages:
       name = effective[stage_name]
       if not name:
         print(f"  ⬜ {stage_name}: not started")
         continue
       detail = ""
-      if name in ("FAILED", "REJECTED"):
+      if name in ("FAILED", "REJECTED", "PENDING", "COMPLETED"):
         summary = engine.summarise(latest[stage_name].message)
         detail = f" ({summary})" if summary else ""
       elif name == "BLOCKED":
@@ -1462,9 +1372,11 @@ class LightflowRunnerCLI:
       payload: str | dict[str, Any] = "{}",
       log_id: str = "",
       *,
+      payload_file: Optional[str] = None,
       workflow: Optional[str] = None,
   ) -> None:
     """Simulates lightflow execution paths without triggering side-effects."""
+    effective_payload = _resolve_payload_input(payload, payload_file)
     resolved_lightflow = lightflow or workflow
     if not resolved_lightflow:
       raise ValueError("Missing required '--lightflow' manifest path.")
@@ -1472,7 +1384,7 @@ class LightflowRunnerCLI:
     workflow_proto = schema.load_lightflow(workflow_path)
 
     current_payload = _parse_payload_arg(
-        payload, context_label="--payload", allow_outputs=True
+        effective_payload, context_label="--payload", allow_outputs=True
     )
 
     print(f"=== DRY RUN: {workflow_proto.name} ===")
@@ -1491,6 +1403,7 @@ class LightflowRunnerCLI:
 
     print("Simulated Execution Trace:")
     sim_passport = schema.Passport()
+    unsimulated_stages: set[str] = set()
     for stage_name in ordered_stages:
       stage_proto = runner.get_stage(stage_name)
       if not stage_proto:
@@ -1499,6 +1412,12 @@ class LightflowRunnerCLI:
       print(f"Stage: {stage_name}")
       if stage_proto.description:
         print(f"  Description: {stage_proto.description}")
+      if (
+          isinstance(stage_proto, schema.Stage)
+          and stage_proto.HasField("timeout_seconds")
+          and stage_proto.timeout_seconds is not None
+      ):
+        print(f"  Timeout: {stage_proto.timeout_seconds}s")
 
       if stage_proto.run_after:
         trigger_res = runner.evaluate_trigger_rule(stage_proto, sim_passport)
@@ -1517,12 +1436,51 @@ class LightflowRunnerCLI:
 
       should_run = True
       if stage_proto.run_if:
-        try:
-          should_run = engine.evaluate_cel(stage_proto.run_if, current_payload)
-          print(f"  Condition '{stage_proto.run_if}' -> {should_run}")
-        except engine.EngineError as e:
-          print(f"  Condition evaluation failed: {e}")
-          should_run = False
+        output_refs: list[str] = []
+        if isinstance(stage_proto.run_if, str):
+          try:
+            ast_tree = engine.parse_expression(stage_proto.run_if)
+            output_refs = engine.extract_payload_output_stage_refs(ast_tree)
+          except Exception:  # pylint: disable=broad-exception-caught
+            output_refs = []
+        outputs_ns = current_payload.get(engine.STAGE_OUTPUTS_KEY)
+        missing_refs = [
+            ref
+            for ref in output_refs
+            if ref in unsimulated_stages
+            and (not isinstance(outputs_ns, dict) or ref not in outputs_ns)
+        ]
+        if missing_refs:
+          print(
+              f"  Condition '{stage_proto.run_if}' -> [DEFERRED TO RUNTIME"
+              f" (awaits outputs of: {', '.join(missing_refs)})]"
+          )
+          should_run = True
+        else:
+          try:
+            should_run = engine.evaluate_cel(
+                stage_proto.run_if, current_payload
+            )
+            print(f"  Condition '{stage_proto.run_if}' -> {should_run}")
+          except engine.EngineError as e:
+            has_unsimulated_ancestor = any(
+                stage_name in runner.get_downstream_dependents(u)
+                for u in unsimulated_stages
+            )
+            if (
+                not output_refs
+                and has_unsimulated_ancestor
+                and isinstance(e.__cause__, TypeError)
+                and "NoneType" in str(e)
+            ):
+              print(
+                  f"  Condition '{stage_proto.run_if}' -> [DEFERRED TO RUNTIME"
+                  f" ({e})]"
+              )
+              should_run = True
+            else:
+              print(f"  Condition evaluation failed: {e}")
+              should_run = False
 
       if not should_run:
         print("  Status: [SKIPPED]\n")
@@ -1548,10 +1506,12 @@ class LightflowRunnerCLI:
           simulated = runner.simulate_dry_run_action(
               stage_name, tick_action, current_payload
           )
-          if simulated is not None:
+          if isinstance(simulated, tuple) and len(simulated) == 2:
             sim_payload, sim_msg = simulated
             engine.merge_stage_payload(current_payload, stage_name, sim_payload)
             print(f"    Dry-Run Output: {sim_msg}")
+          else:
+            unsimulated_stages.add(stage_name)
       elif stage_proto.HasField("python_action") and stage_proto.python_action:
         print(
             "  Action: [RUN] executes python_action"
@@ -1565,26 +1525,62 @@ class LightflowRunnerCLI:
         simulated = runner.simulate_dry_run_action(
             stage_name, stage_proto.python_action, current_payload
         )
-        if simulated is not None:
+        if isinstance(simulated, tuple) and len(simulated) == 2:
           sim_payload, sim_msg = simulated
           engine.merge_stage_payload(current_payload, stage_name, sim_payload)
           print(f"    Dry-Run Output: {sim_msg}")
+        else:
+          unsimulated_stages.add(stage_name)
       elif (
           stage_proto.HasField("operator_action")
           and stage_proto.operator_action
       ):
         operator_action = stage_proto.operator_action
-        try:
-          instructions = engine.evaluate_cel(
-              operator_action.instructions, current_payload
-          )
+        instr_refs: list[str] = []
+        if isinstance(operator_action.instructions, str):
+          try:
+            instr_ast = engine.parse_expression(operator_action.instructions)
+            instr_refs = engine.extract_payload_output_stage_refs(instr_ast)
+          except Exception:  # pylint: disable=broad-exception-caught
+            instr_refs = []
+        outputs_ns = current_payload.get(engine.STAGE_OUTPUTS_KEY)
+        missing_instr_refs = [
+            ref
+            for ref in instr_refs
+            if ref in unsimulated_stages
+            and (not isinstance(outputs_ns, dict) or ref not in outputs_ns)
+        ]
+        if missing_instr_refs:
           print("  Action: [SUSPEND] waits at operator_action")
-          print(f"    Instructions: {instructions}")
-        except Exception as e:  # pylint: disable=broad-exception-caught
           print(
-              "  Action: [SUSPEND] waits at operator_action (instructions"
-              f" eval failed: {e})"
+              "    Instructions: [DEFERRED TO RUNTIME (awaits outputs of:"
+              f" {', '.join(missing_instr_refs)})]"
           )
+        else:
+          try:
+            instructions = engine.evaluate_cel(
+                operator_action.instructions, current_payload
+            )
+            print("  Action: [SUSPEND] waits at operator_action")
+            print(f"    Instructions: {instructions}")
+          except Exception as e:  # pylint: disable=broad-exception-caught
+            has_unsimulated_ancestor = any(
+                stage_name in runner.get_downstream_dependents(u)
+                for u in unsimulated_stages
+            )
+            if (
+                not instr_refs
+                and has_unsimulated_ancestor
+                and isinstance(e.__cause__, TypeError)
+                and "NoneType" in str(e)
+            ):
+              print("  Action: [SUSPEND] waits at operator_action")
+              print(f"    Instructions: [DEFERRED TO RUNTIME ({e})]")
+            else:
+              print(
+                  "  Action: [SUSPEND] waits at operator_action (instructions"
+                  f" eval failed: {e})"
+              )
         print(
             f"    Output Namespace: payload.outputs.{stage_name}"
             " (and top-level payload)"
@@ -1719,11 +1715,12 @@ class LightflowRunnerCLI:
       except engine.OperatorActionSuspended:
         pm.save_passport(passport)
         raise
-      except engine.StageTimeoutError:
-        # Stage timeout has already been stamped as FAILED (and rolled back if
-        # configured) inside execute_stage. Persist the passport and continue
-        # walking the DAG so independent branches and ALL_DONE cleanup stages
-        # can still execute before failing the overall workflow at the end.
+      except (engine.StageTimeoutError, engine.EngineError):
+        # Stage failure or timeout has already been stamped as FAILED (and
+        # rolled back if configured) inside execute_stage. Persist the passport
+        # and continue walking the DAG so independent branches and ALL_DONE
+        # cleanup stages can still execute before failing the overall workflow
+        # at the end.
         pm.save_passport(passport)
       except Exception as e:
         pm.save_passport(passport)
@@ -1808,7 +1805,7 @@ class LightflowRunnerCLI:
       *,
       workflow: Optional[str] = None,
   ) -> None:
-    """Deletes the saved lightflow execution state for a given log ID."""
+    """Deletes the saved Passport state and lock file for a log ID (external workflow artifacts on disk are untouched)."""
     del lightflow, workflow
     if not log_id:
       raise ValueError("Missing required '--log_id' run identifier.")
@@ -1822,7 +1819,11 @@ class LightflowRunnerCLI:
           os.remove(lock_path)
         except OSError:
           pass
-      print(f"Successfully cleaned up state for log ID: {log_id}")
+      print(
+          f"Successfully cleaned up state for log ID: {log_id} (removed"
+          f" {pm.resolved_path}; external workflow artifacts on disk are"
+          " untouched)"
+      )
     except RuntimeError as e:
       raise RuntimeError(
           f"Cannot clean up state for log ID '{log_id}' because the lightflow"

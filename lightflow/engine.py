@@ -19,7 +19,6 @@ from __future__ import annotations
 # pylint: disable=g-long-ternary
 
 import ast
-from collections.abc import Sequence
 import copy
 import graphlib
 import hashlib
@@ -39,7 +38,7 @@ import sys
 import threading
 import time
 import traceback
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, Sequence
 
 # pylint: disable=g-import-not-at-top,g-bad-import-order
 try:
@@ -56,15 +55,6 @@ class EngineError(Exception):
 
 class StageTimeoutError(EngineError):
   """Raised when a stage execution exceeds its configured timeout."""
-
-  def __init__(
-      self,
-      message: str,
-      *,
-      worker: Optional[threading.Thread] = None,
-  ) -> None:
-    super().__init__(message)
-    self.worker = worker
 
 
 class OperatorActionSuspended(Exception):
@@ -126,7 +116,7 @@ def _is_payload_outputs_node(node: ast.AST) -> bool:
   return False
 
 
-def _extract_payload_output_stage_refs(
+def extract_payload_output_stage_refs(
     tree: Optional[ast.Expression],
 ) -> list[str]:
   """Extracts stage names referenced under `payload.outputs.<stage>` in AST."""
@@ -152,7 +142,21 @@ def _extract_payload_output_stage_refs(
     ):
       if node.slice.value not in refs:
         refs.append(node.slice.value)
+    elif (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "has"
+        and _is_payload_outputs_node(node.func.value)
+        and len(node.args) == 1
+        and isinstance(node.args[0], ast.Constant)
+        and isinstance(node.args[0].value, str)
+    ):
+      if node.args[0].value not in refs:
+        refs.append(node.args[0].value)
   return refs
+
+
+_extract_payload_output_stage_refs = extract_payload_output_stage_refs
 
 
 _MAX_SEQUENCE_REPEAT = 10_000
@@ -737,16 +741,6 @@ def record_stage_outputs(
 
   outputs[stage_name] = merged
   payload_dict[STAGE_OUTPUTS_KEY] = outputs
-
-
-def clear_stage_outputs(
-    payload_dict: dict[str, Any], stage_names: Sequence[str]
-) -> None:
-  """Removes recorded `payload.outputs.<stage>` entries for re-armed stages."""
-  outputs = payload_dict.get(STAGE_OUTPUTS_KEY)
-  if isinstance(outputs, dict):
-    for stage_name in stage_names:
-      outputs.pop(stage_name, None)
 
 
 def merge_stage_payload(
@@ -1435,8 +1429,7 @@ class LightflowEngine:
     worker.join(timeout=timeout)
     if worker.is_alive():
       raise StageTimeoutError(
-          f"Stage '{stage_name}' execution timed out after {timeout}s.",
-          worker=worker,
+          f"Stage '{stage_name}' execution timed out after {timeout}s."
       )
     try:
       success, res = result_queue.get_nowait()
@@ -1455,26 +1448,9 @@ class LightflowEngine:
       passport: schema.Passport,
       payload_dict: dict[str, Any],
       failed_stamp: schema.Stamp,
-      *,
-      timed_out_workers: Optional[Sequence[threading.Thread]] = None,
   ) -> None:
     """Runs rollback_action if defined on the stage configuration."""
     if not stage.HasField("rollback_action") or not stage.rollback_action:
-      return
-
-    if timed_out_workers and any(w.is_alive() for w in timed_out_workers):
-      skip_msg = (
-          "Rollback skipped: the timed-out attempt is still running and could"
-          " re-apply its side effect after a rollback. Re-run the stage or"
-          " roll back manually once it has finished."
-      )
-      failed_stamp.message += f"\n{skip_msg}"
-      print(f"  {skip_msg}")
-      send_notification(
-          f"Rollback Skipped: {stage_name}",
-          f"⚠️ {stage_name}: rollback skipped (timed-out attempt still"
-          " running)",
-      )
       return
 
     action_id = stage.rollback_action.action_id
@@ -1611,19 +1587,6 @@ class LightflowEngine:
     should_run, target_status, reason = self.evaluate_trigger_rule(
         stage, passport
     )
-    payload_dict = passport.payload.to_dict()
-    if should_run or target_status in (
-        schema.StampStatus.SKIPPED,
-        schema.StampStatus.FAILED,
-    ):
-      had_prior_output = (
-          isinstance(payload_dict.get(STAGE_OUTPUTS_KEY), dict)
-          and stage_name in payload_dict[STAGE_OUTPUTS_KEY]
-      )
-      if had_prior_output:
-        clear_stage_outputs(payload_dict, [stage_name])
-        passport.payload.CopyFrom(payload_dict)
-
     if not should_run:
       stamp = passport.stamps.add()
       stamp.stage_name = stage_name
@@ -1644,6 +1607,8 @@ class LightflowEngine:
             f"{icon} {stage_name}: {status_name.lower()}",
         )
       return passport
+
+    payload_dict = passport.payload.to_dict()
 
     # 1. Evaluate skip condition if set
     if stage.run_if:
@@ -1723,7 +1688,6 @@ class LightflowEngine:
 
       start_time = time.monotonic()
       attempts = 0
-      timed_out_workers: list[threading.Thread] = []
 
       while True:
         attempts += 1
@@ -1732,12 +1696,12 @@ class LightflowEngine:
               stage_name, action, payload_dict, timeout=tick_timeout
           )
           merge_stage_payload(payload_dict, stage_name, new_payload)
+          if message:
+            pending_stamp.message = message
           passport.payload.CopyFrom(payload_dict)
           if save_callback:
             save_callback(passport)
         except Exception as e:  # pylint: disable=broad-exception-caught
-          if isinstance(e, StageTimeoutError) and e.worker is not None:
-            timed_out_workers.append(e.worker)
           failed_stamp = passport.stamps.add()
           failed_stamp.stage_name = stage_name
           failed_stamp.status = schema.StampStatus.FAILED
@@ -1750,12 +1714,7 @@ class LightflowEngine:
               f"❌ {stage_name}: failed",
           )
           self.run_rollback_if_defined(
-              stage_name,
-              stage,
-              passport,
-              payload_dict,
-              failed_stamp,
-              timed_out_workers=timed_out_workers,
+              stage_name, stage, passport, payload_dict, failed_stamp
           )
           return passport
 
@@ -1774,12 +1733,7 @@ class LightflowEngine:
               f"❌ {stage_name}: failed",
           )
           self.run_rollback_if_defined(
-              stage_name,
-              stage,
-              passport,
-              payload_dict,
-              failed_stamp,
-              timed_out_workers=timed_out_workers,
+              stage_name, stage, passport, payload_dict, failed_stamp
           )
           return passport
 
@@ -1806,17 +1760,22 @@ class LightflowEngine:
         if (timeout > 0 and elapsed >= timeout) or (
             max_attempts > 0 and attempts >= max_attempts
         ):
+          progress_note = (
+              f" (last progress: {pending_stamp.message})"
+              if pending_stamp.message
+              else ""
+          )
           if timeout > 0 and elapsed >= timeout:
             err_msg = (
                 f"Stage '{stage_name}' polling timed out after {elapsed:.1f}s"
-                " waiting for external condition. Yielding control back to"
-                " operator/agent. State is preserved."
+                f" waiting for external condition{progress_note}. Yielding"
+                " control back to operator/agent. State is preserved."
             )
           else:
             err_msg = (
                 f"Stage '{stage_name}' polling exceeded max attempts"
-                f" ({max_attempts}). Yielding control back to operator/agent."
-                " State is preserved."
+                f" ({max_attempts}){progress_note}. Yielding control back to"
+                " operator/agent. State is preserved."
             )
 
           failed_stamp = passport.stamps.add()
@@ -1830,12 +1789,7 @@ class LightflowEngine:
               f"❌ {stage_name}: failed",
           )
           self.run_rollback_if_defined(
-              stage_name,
-              stage,
-              passport,
-              payload_dict,
-              failed_stamp,
-              timed_out_workers=timed_out_workers,
+              stage_name, stage, passport, payload_dict, failed_stamp
           )
           return passport
 
@@ -1876,7 +1830,6 @@ class LightflowEngine:
       )
       current_backoff = float(initial_backoff)
       attempts = 0
-      timed_out_workers = []
 
       while True:
         attempts += 1
@@ -1908,8 +1861,6 @@ class LightflowEngine:
           )
           return passport
         except EngineError as e:
-          if isinstance(e, StageTimeoutError) and e.worker is not None:
-            timed_out_workers.append(e.worker)
           if attempts < max_attempts and isinstance(e, StageTimeoutError):
             sleep_time = min(current_backoff, 300.0)
             jitter = random.uniform(0.9, 1.1)
@@ -1935,12 +1886,7 @@ class LightflowEngine:
               f"❌ {stage_name}: failed",
           )
           self.run_rollback_if_defined(
-              stage_name,
-              stage,
-              passport,
-              payload_dict,
-              failed_stamp,
-              timed_out_workers=timed_out_workers,
+              stage_name, stage, passport, payload_dict, failed_stamp
           )
           raise
         except Exception as e:  # pylint: disable=broad-exception-caught
@@ -1959,12 +1905,7 @@ class LightflowEngine:
                 f"❌ {stage_name}: failed",
             )
             self.run_rollback_if_defined(
-                stage_name,
-                stage,
-                passport,
-                payload_dict,
-                failed_stamp,
-                timed_out_workers=timed_out_workers,
+                stage_name, stage, passport, payload_dict, failed_stamp
             )
             return passport
 
@@ -2026,10 +1967,9 @@ class LightflowEngine:
         briefing += f"\n\nResume with:\n{resume_command}"
       briefing += (
           "\n\nOperator Action Required:\n"
-          "Follow the Instructions above. If they ask for a person's decision,"
-          " present them to that person and resume only with their answer;"
-          " never decide for them. Then resume with a payload matching the"
-          " Payload Schema."
+          "STOP and present the Instructions and Payload Schema above to the"
+          " human operator/user. Do NOT self-approve or run 'resume' until the"
+          " operator provides their explicit decision."
       )
 
       send_notification(

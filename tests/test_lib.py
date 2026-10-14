@@ -82,24 +82,6 @@ def act_step_3(
   return {"step_3_done": True}, "Step 3 done"
 
 
-_VERIFY_ATTEMPT = 0
-
-
-def act_verify_adjustable(
-    payload: dict[str, Any], **static_kwargs: Any
-) -> tuple[dict[str, Any], str]:
-  del payload, static_kwargs
-  global _VERIFY_ATTEMPT
-  _VERIFY_ATTEMPT += 1
-  _EXEC_TRACE.append(f"verify_{_VERIFY_ATTEMPT}")
-  if _VERIFY_ATTEMPT == 1:
-    return {
-        "verdict": "FAIL",
-        "stale_detail": "missing_entry",
-    }, "Verification attempt 1"
-  return {"verdict": "PASS"}, "Verification attempt 2"
-
-
 class PassportAndLightflowRunnerTest(unittest.TestCase):
   """Tests state management, operator gates, subgraph re-arming, and HTML output."""
 
@@ -107,9 +89,8 @@ class PassportAndLightflowRunnerTest(unittest.TestCase):
     super().setUp()
     os.environ.pop("ANTIGRAVITY_CONVERSATION_ID", None)
     _EXEC_TRACE.clear()
-    global _STAGE_2_SHOULD_FAIL, _VERIFY_ATTEMPT
+    global _STAGE_2_SHOULD_FAIL
     _STAGE_2_SHOULD_FAIL = True
-    _VERIFY_ATTEMPT = 0
     self.temp_dir = tempfile.mkdtemp(prefix="lightflow_oss_test_")
     self.old_env = os.environ.get("LIGHTFLOW_STATE_DIR")
     os.environ["LIGHTFLOW_STATE_DIR"] = self.temp_dir
@@ -243,125 +224,6 @@ stages:
     self.assertEqual(latest["s1"], schema.StampStatus.COMPLETED)
     self.assertEqual(latest["s2"], schema.StampStatus.COMPLETED)
     self.assertEqual(latest["s3"], schema.StampStatus.COMPLETED)
-
-  def test_rerun_completed_stage_cascades_and_replaces_stage_outputs(
-      self,
-  ) -> None:
-    module_name = __name__
-    manifest_path = os.path.join(self.temp_dir, "rerun.yaml")
-    with open(manifest_path, "w", encoding="utf-8") as f:
-      f.write(f"""
-name: rerun_pipeline
-actions:
-  - id: step_1
-    python_import: {module_name}.act_step_1
-  - id: verify
-    python_import: {module_name}.act_verify_adjustable
-  - id: step_3
-    python_import: {module_name}.act_step_3
-stages:
-  - name: s1
-    python_action:
-      action_id: step_1
-  - name: verify_spec
-    run_after: [s1]
-    python_action:
-      action_id: verify
-  - name: review_gate
-    run_after: [verify_spec]
-    operator_action:
-      instructions: "'Verdict: ' + payload.outputs.verify_spec.verdict"
-  - name: s3
-    run_after: [review_gate]
-    python_action:
-      action_id: step_3
-""")
-
-    cli = lib.LightflowRunnerCLI()
-    # 1. Initial start runs s1 + verify_spec (verdict=FAIL,
-    # stale_detail=missing_entry) and pauses at review_gate.
-    with self.assertRaises(engine.OperatorActionSuspended) as ctx:
-      cli.start(lightflow=manifest_path, log_id="rerun_run")
-    self.assertIn("Verdict: FAIL", str(ctx.exception))
-    self.assertEqual(_EXEC_TRACE, ["step_1", "verify_1"])
-
-    pm = lib.PassportManager("rerun_run")
-    passport = pm.load_passport()
-    assert passport is not None
-    self.assertEqual(
-        dict(passport.payload)["outputs"]["verify_spec"],
-        {"verdict": "FAIL", "stale_detail": "missing_entry"},
-    )
-
-    # 2. Re-run `verify_spec` while paused at downstream `review_gate` using
-    # `--rerun=verify_spec`. `s1` stays COMPLETED, `verify_spec` re-runs and
-    # replaces `payload.outputs.verify_spec` (dropping `stale_detail`), and
-    # `review_gate` re-suspends with updated instructions ("Verdict: PASS").
-    with self.assertRaises(engine.OperatorActionSuspended) as ctx2:
-      cli.resume(
-          lightflow=manifest_path,
-          log_id="rerun_run",
-          rerun="verify_spec",
-      )
-    self.assertIn("Verdict: PASS", str(ctx2.exception))
-    self.assertEqual(_EXEC_TRACE, ["step_1", "verify_1", "verify_2"])
-
-    passport = pm.load_passport()
-    assert passport is not None
-    self.assertEqual(
-        dict(passport.payload)["outputs"]["verify_spec"],
-        {"verdict": "PASS"},
-    )
-
-    # 2a. Re-running `verify_spec` with `cascade=False` while paused at
-    # downstream `review_gate` raises LightflowAlreadyPausedError because
-    # `review_gate` is not re-armed when cascade is False.
-    with self.assertRaises(lib.LightflowAlreadyPausedError):
-      cli.resume(
-          lightflow=manifest_path,
-          log_id="rerun_run",
-          rerun="verify_spec",
-          cascade=False,
-      )
-
-    # 2b. Combining `--rerun` with `--resolution=REJECT` raises ValueError.
-    with self.assertRaisesRegex(ValueError, "Cannot combine '--rerun'"):
-      cli.resume(
-          lightflow=manifest_path,
-          log_id="rerun_run",
-          rerun="verify_spec",
-          resolution="REJECT",
-      )
-
-    # 3. Approve `review_gate` -> workflow completes (`s3` runs).
-    cli.resume(
-        lightflow=manifest_path,
-        log_id="rerun_run",
-        stage="review_gate",
-        resolution="APPROVE",
-    )
-    self.assertEqual(_EXEC_TRACE, ["step_1", "verify_1", "verify_2", "step_3"])
-
-    # 4. Re-run `s3` after workflow completion via `--stage=s3 --rerun`
-    # (`rerun=True`).
-    cli.resume(
-        lightflow=manifest_path,
-        log_id="rerun_run",
-        stage="s3",
-        rerun=True,
-    )
-    self.assertEqual(
-        _EXEC_TRACE, ["step_1", "verify_1", "verify_2", "step_3", "step_3"]
-    )
-
-    # 5. Conflicting `--stage` and `--rerun` raises ValueError.
-    with self.assertRaises(ValueError):
-      cli.resume(
-          lightflow=manifest_path,
-          log_id="rerun_run",
-          stage="s1",
-          rerun="s3",
-      )
 
   def test_passport_manager_blocks_path_traversal_and_non_state_dirs(
       self,
@@ -542,16 +404,14 @@ stages:
     except ImportError:
       from lightflow import runner  # type: ignore[no-redef]  # pylint: disable=g-import-not-at-top
 
-    self.assertEqual(runner._VERSION, "0.2.0")  # pylint: disable=protected-access
     examples_dir = os.path.join(_OSS_ROOT, "examples")
     cli = lib.LightflowRunnerCLI()
 
-    # 1. Verify all 8 example manifests compile and dry-run cleanly end-to-end
+    # 1. Verify all 5 example manifests compile and dry-run cleanly end-to-end
     dry_run_buf = io.StringIO()
     with contextlib.redirect_stdout(dry_run_buf):
       for name in (
           "async_job_watcher",
-          "blue_green_release",
           "create_lightflow",
           "hn_digest",
           "pypi_upgrade_guard",
@@ -586,22 +446,6 @@ stages:
     self.assertIn("/tmp/usgs_bulletin.md", dry_run_out)
     self.assertIn("--log_id=custom_preview_id", dry_run_out)
     self.assertIsNone(lib.PassportManager("custom_preview_id").load_passport())
-
-    branch_dry_run_buf = io.StringIO()
-    with contextlib.redirect_stdout(branch_dry_run_buf):
-      for name in ("incident_db_failover", "tenant_gitops_onboarding"):
-        wf_dir = os.path.join(examples_dir, name)
-        wf_path = os.path.join(wf_dir, "lightflow.yaml")
-        self.assertTrue(os.path.isfile(wf_path), f"Missing {wf_path}")
-        self.assertEqual(schema.resolve_lightflow_path(wf_dir), wf_path)
-        runner._dispatch_argv(  # pylint: disable=protected-access
-            runner.CliWrapper(cli),
-            ["dry_run", f"--lightflow={wf_path}"],
-        )
-    branch_dry_run_out = branch_dry_run_buf.getvalue()
-    self.assertIn("Stage: publish_failover_ledger", branch_dry_run_out)
-    self.assertIn("Stage: wait_argocd_mesh_sync", branch_dry_run_out)
-    self.assertIn("Status: [SKIPPED]", branch_dry_run_out)
 
     viz_out = os.path.join(self.temp_dir, "usgs_viz.html")
     with contextlib.redirect_stdout(io.StringIO()):
@@ -1434,6 +1278,150 @@ stages:
       lib.PassportManager("run_a")
       lib.PassportManager(os.path.join(self.temp_dir, "lightflow_state_Mixed"))
     self.assertEqual(buf.getvalue(), "")
+
+  def test_dry_run_defers_unpopulated_upstream_output_conditions_and_shows_timeout(
+      self,
+  ) -> None:
+    module_name = __name__
+    self._write_manifest(f"""
+name: deferred_dry_run_wf
+actions:
+  - id: compute
+    python_import: {module_name}.act_step_1
+stages:
+  - name: scan
+    timeout_seconds: 300
+    python_action:
+      action_id: compute
+  - name: triage
+    run_after: [scan]
+    run_if: "payload.outputs.scan.n_high + payload.outputs.scan.n_med > 0"
+    python_action:
+      action_id: compute
+  - name: approve
+    run_after: [triage]
+    operator_action:
+      instructions: "'Review ' + string(payload.outputs.triage.n_high)"
+      json_schema: '{{"type": "object", "required": ["approved"]}}'
+  - name: top_level_unsimulated
+    run_after: [scan]
+    run_if: "payload.n_high + 1 > 0"
+    python_action:
+      action_id: compute
+  - name: has_method_syntax
+    run_after: [scan]
+    run_if: "payload.outputs.has('scan')"
+    python_action:
+      action_id: compute
+  - name: skipped_branch
+    run_if: "false"
+    python_action:
+      action_id: compute
+  - name: all_done_after_skipped
+    run_after: [skipped_branch]
+    trigger_rule: ALL_DONE
+    run_if: "has(payload.outputs.skipped_branch.n_high)"
+    python_action:
+      action_id: compute
+""")
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+      lib.LightflowRunnerCLI().dry_run(lightflow=self.manifest)
+    rendered = buf.getvalue()
+    self.assertIn("Timeout: 300s", rendered)
+    self.assertIn(
+        "[DEFERRED TO RUNTIME (awaits outputs of: scan)]",
+        rendered,
+    )
+    self.assertIn(
+        "Condition 'payload.n_high + 1 > 0' -> [DEFERRED TO RUNTIME",
+        rendered,
+    )
+    self.assertIn(
+        "Condition 'payload.outputs.has('scan')' -> [DEFERRED TO RUNTIME"
+        " (awaits outputs of: scan)]",
+        rendered,
+    )
+    self.assertIn("Stage: approve", rendered)
+    self.assertIn(
+        "Instructions: [DEFERRED TO RUNTIME (awaits outputs of: triage)]",
+        rendered,
+    )
+    self.assertIn(
+        "Condition 'has(payload.outputs.skipped_branch.n_high)' -> False",
+        rendered,
+    )
+
+  def test_polling_persists_tick_message_and_status_displays_stage_messages(
+      self,
+  ) -> None:
+    module_name = __name__
+    self._write_manifest(f"""
+name: poll_status_wf
+actions:
+  - id: compute
+    python_import: {module_name}.act_step_1
+stages:
+  - name: triage_findings
+    polling_policy:
+      poll_tick_action:
+        action_id: compute
+      condition: "payload.step_1_done == true"
+      interval_seconds: 0
+      max_attempts: 2
+""")
+    pm = lib.PassportManager("status_run")
+    mid_poll_status_output: list[str] = []
+    orig_save = pm.save_passport
+
+    def intercept_save(passport: schema.Passport) -> None:
+      orig_save(passport)
+      if passport.stamps and passport.stamps[-1].message:
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+          with self.assertRaises(lib.LightflowRunFailedError):
+            lib.LightflowRunnerCLI().status(
+                lightflow=self.manifest, log_id="status_run"
+            )
+        mid_poll_status_output.append(buf.getvalue())
+
+    wf = schema.load_lightflow(self.manifest)
+    runner_eng = engine.LightflowEngine(wf, lightflow_path=self.manifest)
+    passport = schema.Passport()
+    with (
+        contextlib.redirect_stdout(io.StringIO()),
+        mock.patch.object(engine, "send_notification"),
+    ):
+      runner_eng.execute_stage(
+          "triage_findings", passport, save_callback=intercept_save
+      )
+    pm.save_passport(passport)
+
+    self.assertTrue(mid_poll_status_output)
+    self.assertIn(f"Passport: {pm.passport_file}", mid_poll_status_output[0])
+    self.assertIn(
+        "⏳ triage_findings: pending (Step 1 done)",
+        mid_poll_status_output[0],
+    )
+
+    done_buf = io.StringIO()
+    with contextlib.redirect_stdout(done_buf):
+      lib.LightflowRunnerCLI().status(
+          lightflow=self.manifest, log_id="status_run"
+      )
+    self.assertIn(
+        "✅ triage_findings: completed (Polling condition met after 1 attempts:"
+        " Step 1 done)",
+        done_buf.getvalue(),
+    )
+
+    clean_buf = io.StringIO()
+    with contextlib.redirect_stdout(clean_buf):
+      lib.LightflowRunnerCLI().cleanup(log_id="status_run")
+    self.assertIn(
+        "external workflow artifacts on disk are untouched",
+        clean_buf.getvalue(),
+    )
 
 
 class RunnerExitCodeTest(unittest.TestCase):

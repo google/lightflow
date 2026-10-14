@@ -21,6 +21,7 @@ import dataclasses
 import functools
 import inspect
 import json
+import os
 import sys
 from typing import Any
 
@@ -29,11 +30,14 @@ try:
   from . import engine
   from . import lib
 except ImportError:
+  _OSS_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+  if _OSS_ROOT not in sys.path:
+    sys.path.insert(0, _OSS_ROOT)
   from lightflow import engine  # pyrefly: ignore[missing-import]
   from lightflow import lib  # pyrefly: ignore[missing-import]
 # pylint: enable=g-import-not-at-top,g-bad-import-order
 
-_VERSION = "0.2.0"
+_VERSION = "0.1.0"
 
 
 def _parse_arg(val: Any) -> Any:
@@ -266,7 +270,10 @@ def _dispatch_argv(wrapper: CliWrapper, argv: list[str]) -> None:
       raise ValueError("--payload_file requires a file path.")
     if "payload" in kw_args:
       raise ValueError("Cannot specify both --payload and --payload_file.")
-    kw_args["payload"] = f"@{pf}"
+    cleaned_pf = pf.strip()
+    kw_args["payload"] = (
+        cleaned_pf if cleaned_pf.startswith("@") else f"@{cleaned_pf}"
+    )
 
   if pos_args and ("lightflow" in kw_args or "workflow" in kw_args):
     raise ValueError(

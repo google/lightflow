@@ -15,7 +15,7 @@ zero credentials or network calls.
 
 ## Why This Example Exists
 
-While `examples/hn_digest` (3 stages) and `examples/pypi_upgrade_guard` (3
+While `examples/hn_digest` (3 stages) and `examples/pypi_upgrade_guard` (4
 stages) introduce single-gate approvals and compensating rollbacks on small
 linear pipelines, real-world platform orchestration graphs combine **multiple
 branching topologies, conditional human-in-the-loop escalations, parallel
@@ -141,7 +141,7 @@ flowchart TD
 ### 1. Preview the 22-Stage Execution Plan (`dry_run`)
 
 ```bash
-lightflow dry_run --lightflow=examples/tenant_gitops_onboarding
+lightflow dry_run --lightflow=examples/tenant_gitops_onboarding/lightflow.yaml
 ```
 
 ### 2. Full 2-Gate PCI Compliance Path (`require_manual_quota_override: true`)
@@ -149,14 +149,14 @@ lightflow dry_run --lightflow=examples/tenant_gitops_onboarding
 ```bash
 # Step 1: Start - runs init_spec & check_admin, then pauses at Gate #1 (verify_spec)
 lightflow start \
-  --lightflow=examples/tenant_gitops_onboarding \
+  --lightflow=examples/tenant_gitops_onboarding/lightflow.yaml \
   --log_id=tenant_pci_demo \
   --payload='{"alias": "payments-eu", "compliance_tier": "pci", "require_manual_quota_override": true}' \
   --force
 
 # Step 2: Approve Gate #1 - runs Phase 1 & Phase 2, then pauses at Gate #2 (prompt_iam_quota_override)
 lightflow resume \
-  --lightflow=examples/tenant_gitops_onboarding \
+  --lightflow=examples/tenant_gitops_onboarding/lightflow.yaml \
   --log_id=tenant_pci_demo \
   --stage=verify_spec \
   --resolution=APPROVE \
@@ -165,7 +165,7 @@ lightflow resume \
 # Step 3: Approve Gate #2 - provisions dedicated PCI KMS key in parallel with S3/Vault,
 #         checkpoints the catalog, merges GitOps PRs #101 & #102, and syncs ArgoCD
 lightflow resume \
-  --lightflow=examples/tenant_gitops_onboarding \
+  --lightflow=examples/tenant_gitops_onboarding/lightflow.yaml \
   --log_id=tenant_pci_demo \
   --stage=prompt_iam_quota_override \
   --resolution=APPROVE \
@@ -180,13 +180,13 @@ lightflow resume \
 # executes apply_shared_kms_policy in parallel with provision_external_resources,
 # and joins at checkpoint_catalog.
 lightflow start \
-  --lightflow=examples/tenant_gitops_onboarding \
+  --lightflow=examples/tenant_gitops_onboarding/lightflow.yaml \
   --log_id=tenant_std_demo \
   --payload='{"alias": "analytics-us", "compliance_tier": "standard"}' \
   --force
 
 lightflow resume \
-  --lightflow=examples/tenant_gitops_onboarding \
+  --lightflow=examples/tenant_gitops_onboarding/lightflow.yaml \
   --log_id=tenant_std_demo \
   --stage=verify_spec \
   --resolution=APPROVE \
@@ -198,7 +198,7 @@ lightflow resume \
 ```bash
 # Inject a transient Vault/storage failure in Phase 3 (provision_external_resources)
 lightflow start \
-  --lightflow=examples/tenant_gitops_onboarding \
+  --lightflow=examples/tenant_gitops_onboarding/lightflow.yaml \
   --log_id=tenant_rollback_demo \
   --payload='{"alias": "payments-eu", "simulate_artifact_failure": true}' \
   --force
@@ -206,7 +206,7 @@ lightflow start \
 # Approving Gate #1 runs through Phase 2, retries provision_external_resources twice,
 # runs rollback_external_resources to clean up partial artifacts, and stops before Phase 4
 lightflow resume \
-  --lightflow=examples/tenant_gitops_onboarding \
+  --lightflow=examples/tenant_gitops_onboarding/lightflow.yaml \
   --log_id=tenant_rollback_demo \
   --stage=verify_spec \
   --resolution=APPROVE \
@@ -215,7 +215,7 @@ lightflow resume \
 # Surgically resume ONLY from provision_external_resources - Phases 1-2 and the parallel
 # KMS key stage remain COMPLETED and are not re-executed!
 lightflow resume \
-  --lightflow=examples/tenant_gitops_onboarding \
+  --lightflow=examples/tenant_gitops_onboarding/lightflow.yaml \
   --log_id=tenant_rollback_demo \
   --stage=provision_external_resources \
   --payload='{"simulate_artifact_failure": false}'
@@ -226,13 +226,13 @@ lightflow resume \
 ```bash
 # Non-admin requester opens the Change Advisory ticket and exits cleanly via stop_non_admin_stage
 lightflow start \
-  --lightflow=examples/tenant_gitops_onboarding \
+  --lightflow=examples/tenant_gitops_onboarding/lightflow.yaml \
   --log_id=tenant_non_admin_demo \
   --payload='{"alias": "payments-eu", "simulate_non_admin": true}' \
   --force
 
 lightflow resume \
-  --lightflow=examples/tenant_gitops_onboarding \
+  --lightflow=examples/tenant_gitops_onboarding/lightflow.yaml \
   --log_id=tenant_non_admin_demo \
   --stage=verify_spec \
   --resolution=APPROVE \
