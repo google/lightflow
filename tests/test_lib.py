@@ -3245,6 +3245,54 @@ stages:
     with self.assertRaisesRegex(ValueError, r"No such manifest: 'nope\.yaml'"):
       lib.LightflowRunnerCLI().dry_run(lightflow="nope.yaml")
 
+  def test_visualize_infers_manifest_from_log_id(self):
+    manifest = self._write(
+        "work/viz.yaml",
+        f"""
+name: viz_wf
+actions:
+  - id: compute
+    python_import: {__name__}.act_emit_count_42
+stages:
+  - name: scan
+    python_action: {{action_id: compute}}
+""",
+    )
+    cli = lib.LightflowRunnerCLI()
+    cli.start(lightflow=manifest, log_id="viz_run")
+    html = cli.visualize(log_id="viz_run")
+    self.assertIn("viz_wf", html)
+    with self.assertRaises(lib.LightflowStateNotFoundError):
+      cli.visualize(log_id="no_such_run")
+
+  def test_list_accepts_explicit_state_dir_outside_env_sandbox(self):
+    manifest = self._write(
+        "work/list_ext.yaml",
+        f"""
+name: list_ext_wf
+actions:
+  - id: compute
+    python_import: {__name__}.act_emit_count_42
+stages:
+  - name: scan
+    python_action: {{action_id: compute}}
+""",
+    )
+    parent = os.environ.get("TEST_TMPDIR") or os.path.expanduser("~")
+    with tempfile.TemporaryDirectory(
+        dir=parent, prefix=".lf_test_state_"
+    ) as custom_dir:
+      with mock.patch.dict(
+          os.environ, {"LIGHTFLOW_STATE_DIR": custom_dir}, clear=False
+      ):
+        lib.LightflowRunnerCLI().start(lightflow=manifest, log_id="ext_run")
+      with mock.patch.dict(os.environ, {}, clear=False):
+        os.environ.pop("LIGHTFLOW_STATE_DIR", None)
+        runs, _, _ = lib.collect_runs(state_dir=custom_dir)
+    self.assertEqual(len(runs), 1)
+    self.assertEqual(runs[0].log_id, "ext_run")
+    self.assertEqual(runs[0].state, "COMPLETED")
+
 
 if __name__ == "__main__":
   unittest.main()

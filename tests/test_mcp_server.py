@@ -252,7 +252,8 @@ stages:
     self.assertEqual(resume_data["status"], "COMPLETED")
     self.assertEqual(resume_data["exit_code"], 0)
 
-    # 5. Visualize without output file -> returns inline HTML
+    # 5. Visualize without output file -> returns inline HTML (and infers
+    # `lightflow` from `log_id` when omitted).
     viz_resp = mcp_server.handle_jsonrpc_message({
         "jsonrpc": "2.0",
         "id": 14,
@@ -260,12 +261,12 @@ stages:
         "params": {
             "name": "visualize_lightflow",
             "arguments": {
-                "lightflow": manifest_path,
                 "log_id": "mcp_run_01",
             },
         },
     })
     assert viz_resp is not None
+    self.assertFalse(viz_resp["result"]["isError"])
     viz_data = json.loads(viz_resp["result"]["content"][0]["text"])
     self.assertIsNotNone(viz_data["html"])
     self.assertIn("mcp_test_pipeline", viz_data["html"])

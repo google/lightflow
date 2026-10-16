@@ -292,19 +292,26 @@ MCP_TOOLS: list[dict[str, Any]] = [
         "description": (
             "Generates a standalone, zero-dependency HTML5 Generative UI"
             " visualizer containing the interactive DAG canvas, stage"
-            " inspector, and passport timeline playback."
+            " inspector, and passport timeline playback. Pass `lightflow`"
+            " and/or the `log_id` of an existing run."
         ),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "lightflow": {
                     "type": "string",
-                    "description": "Path to the lightflow manifest.",
+                    "description": (
+                        "Path to the lightflow manifest. Optional when"
+                        " `log_id` is provided: the path recorded in the"
+                        " run's Passport is used."
+                    ),
                 },
                 "log_id": {
                     "type": "string",
                     "description": (
-                        "Optional run log_id to bundle execution history."
+                        "Optional run log_id to bundle execution history"
+                        " (also supplies the manifest path when `lightflow`"
+                        " is omitted)."
                     ),
                 },
                 "output": {
@@ -318,7 +325,7 @@ MCP_TOOLS: list[dict[str, Any]] = [
                     "description": "Optional custom display title.",
                 },
             },
-            "required": ["lightflow"],
+            "required": [],
         },
     },
 ]
@@ -876,8 +883,12 @@ def call_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
     return _tool_result(result, (not compiled) or bool(result["would_fail"]))
 
   elif name == "visualize_lightflow":
-    lightflow = arguments["lightflow"]
     log_id = arguments.get("log_id")
+    lightflow = (
+        _resolve_lightflow_arg(arguments, log_id)
+        if log_id
+        else (arguments.get("lightflow") or "")
+    )
     output = arguments.get("output")
     title = arguments.get("title")
     is_err = False

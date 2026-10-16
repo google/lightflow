@@ -231,8 +231,9 @@ _SAFE_WORKFLOW_ID_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$")
 class PassportManager:
   """Manages reading, writing, and locking workflow Passport state on disk."""
 
-  def __init__(self, workflow_id: str):
+  def __init__(self, workflow_id: str, state_root: Optional[str] = None):
     self.workflow_id = str(workflow_id).strip()
+    self.state_root = state_root
     resolved_path = self._resolve_workflow_id(self.workflow_id)
     self._validate_path_safety(resolved_path)
     self.resolved_path = os.path.realpath(os.path.expanduser(resolved_path))
@@ -340,6 +341,10 @@ class PassportManager:
     if env_state_dir:
       env_root = os.path.realpath(os.path.expanduser(env_state_dir))
       allowed_roots.append(env_root)
+    if self.state_root:
+      allowed_roots.append(
+          os.path.realpath(os.path.expanduser(self.state_root))
+      )
 
     norm_target = os.path.normcase(normalized)
     if any(
@@ -1103,7 +1108,7 @@ def collect_runs(
       continue
     log_id = entry[len(prefix) :]
     try:
-      pm = PassportManager(full)
+      pm = PassportManager(full, state_root=root)
       passport = pm.load_passport()
     except Exception as e:  # pylint: disable=broad-exception-caught
       runs.append(RunSummary(log_id, "", "UNREADABLE", 0.0, "", str(e)[:120]))
@@ -2905,15 +2910,35 @@ class LightflowRunnerCLI:
   ) -> str:
     """Generates an interactive Generative UI HTML visualizer for the lightflow."""
     resolved_lightflow = lightflow or workflow
-    if not resolved_lightflow:
-      raise ValueError("Missing required '--lightflow' manifest path.")
-    workflow_path = engine.resolve_lightflow_path(resolved_lightflow)
-    workflow_proto = engine.load_lightflow(workflow_path)
-
     passport_proto = None
     if log_id:
       pm = PassportManager(log_id)
       passport_proto = pm.load_passport()
+      if passport_proto is not None:
+        workflow_path = _manifest_for_run(
+            resolved_lightflow,
+            passport_proto,
+            log_id,
+            engine.resolve_lightflow_path,
+        )
+      elif not resolved_lightflow:
+        raise LightflowStateNotFoundError(
+            f"No workflow state found for log ID '{log_id}' in"
+            f" {os.path.dirname(pm.resolved_path)} (cannot infer --lightflow)."
+        )
+      else:
+        workflow_path = _require_manifest(
+            resolved_lightflow, engine.resolve_lightflow_path
+        )
+    else:
+      if not resolved_lightflow:
+        raise ValueError("Missing required '--lightflow' manifest path.")
+      workflow_path = _require_manifest(
+          resolved_lightflow, engine.resolve_lightflow_path
+      )
+    workflow_proto = engine.load_lightflow(workflow_path)
+    if passport_proto is not None:
+      _check_same_lightflow(passport_proto, workflow_proto.name, log_id or "")
 
     html_content = visualizer.generate_visualizer_html(
         lightflow=workflow_proto,

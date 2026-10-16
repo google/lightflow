@@ -1,4 +1,5 @@
 name: create_lightflow
+strict_expressions: true
 description: >-
   Meta-workflow ("A Lightflow to Create Lightflows") that staggers an AI agent
   skill into three human/agent checkpoints backed by deterministic AST,
@@ -89,11 +90,11 @@ stages:
       gates to the user.
     run_after:
       - verify_actions
-    trigger_rule: ALL_DONE
+    trigger_rule: NONE_FAILED
     run_if: "payload.outputs.align_on_design.has_python_actions == false || has(payload.outputs.verify_actions.verified_actions)"
     operator_action:
       instructions: >-
-        'Step 3 (Draft & Explain Manifest): Create lightflow.yaml in ' + payload.outputs.align_on_design.target_dir + ' for ' + payload.outputs.align_on_design.workflow_name + '. Ensure every payload.outputs.<stage>.<key> expression references an upstream stage in run_after. Explain the DAG to the user and resolve this gate to run automated dry_run validation and generate visualizer.html.'
+        'Step 3 (Draft & Explain Manifest): Create lightflow.yaml (with strict_expressions: true) in ' + payload.outputs.align_on_design.target_dir + ' for ' + payload.outputs.align_on_design.workflow_name + '. Ensure every payload.outputs.<stage>.<key> expression references an upstream stage in run_after. Explain the DAG to the user and resolve this gate to run automated dry_run validation and generate visualizer.html.'
       json_schema:
         type: object
         required:
