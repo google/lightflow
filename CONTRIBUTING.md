@@ -43,8 +43,7 @@ for this purpose.
     python -m unittest discover -s tests -v
     ```
 
-4.  Open a pull request. CI runs the same test command on every supported Python
-    version, plus one leg with no third-party dependencies installed.
+4.  Open a pull request.
 
 ### Reporting issues
 
