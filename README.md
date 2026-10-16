@@ -358,6 +358,19 @@ stage plus any paused gate's Instructions, Payload Schema, and resume command;
 
 ## Agent Ecosystem Setup
 
+### For Antigravity (`agy`) & Skill-Based Agents
+
+This repository ships with [`plugin.json`](./plugin.json), [`mcp_config.json`](./mcp_config.json), and two progressive-disclosure skills ([`skills/run_lightflows/SKILL.md`](./skills/run_lightflows/SKILL.md) and [`skills/create_lightflows/SKILL.md`](./skills/create_lightflows/SKILL.md)):
+
+```bash
+# Option A: Mount the entire repository as a single plugin (skills + MCP server)
+ln -s "$(pwd)" ~/.gemini/config/plugins/lightflow
+
+# Option B: Mount only the on-demand skills
+ln -s "$(pwd)/skills/run_lightflows" ~/.gemini/config/skills/run_lightflows
+ln -s "$(pwd)/skills/create_lightflows" ~/.gemini/config/skills/create_lightflows
+```
+
 ### For Claude Code, Claude Desktop, Gemini CLI & Cursor (MCP)
 
 Add `lightflow-mcp` to your `claude_desktop_config.json` or `.mcp.json`:
