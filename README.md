@@ -46,29 +46,28 @@ flowchart LR
     (`string()`, `int()`, `size()`, `has()`), evaluated by a pure-Python AST
     walker without native C/Go dependencies or unsafe `eval()`.
 -   **YAML & JSON Manifests**: Author workflows declaratively in **YAML
-    (`.yaml`)** or **JSON (`.json`)** (with built-in `.textproto`
-    compatibility).
+    (`.yaml`)** or **JSON (`.json`)**.
 -   **Zero-Dependency Interactive Visualizer (`visualizer.html`)**: Generates a
     standalone, single-file HTML5 DAG canvas, execution trace log, and
     payload/manifest inspector with zero external CDN requests.
 -   **First-Class Agent Integrations**:
     -   **Model Context Protocol (MCP)**: Built-in stdio MCP server
         (`lightflow-mcp`) for Claude Code, Claude Desktop, Gemini CLI, and
-        Cursor, plus [`CLAUDE.md`](./CLAUDE.md).
+        Cursor, plus [`AGENTS.md`](./AGENTS.md) and [`CLAUDE.md`](./CLAUDE.md).
     -   **Agent Skills & Streaming Notifications**: Includes
         [`skills/run_lightflows/SKILL.md`](./skills/run_lightflows/SKILL.md)
         (executing and resuming workflows),
         [`skills/create_lightflows/SKILL.md`](./skills/create_lightflows/SKILL.md)
         (authoring new workflows), and
-        [`benchmarks/SKILL.md`](./benchmarks/SKILL.md), plus live Mermaid
-        progress notifications when running inside `agentapi`-compatible hosts.
--   **Negative-Cost Structural Rigor ([Benchmarks](./benchmarks/README.md))**:
-    Because the workflow blueprint lives in `lightflow.yaml` + `actions.py` and
-    intermediate data flows between stages on disk via `passport.json` (instead
-    of using the LLM as a state bus), Lightflow enforces hard `EXIT_CODE=2`
-    gates, JSON Schema validation, and automatic rollbacks at **lower token and
-    latency cost** than unstructured skills ($2.9\times$ fewer LLM tool-input
-    tokens in live A/B trials).
+        [`benchmarks/SKILL.md`](./benchmarks/SKILL.md), plus optional milestone
+        notifications when running inside `agentapi`-compatible hosts.
+-   **Compact Context Footprint ([Benchmarks](./benchmarks/README.md))**:
+    Intermediate stage outputs (`payload.outputs.<stage>`) flow between Python
+    actions on disk via `passport.json` rather than through tool `stdout`, so
+    the agent only sees 1-line stage status summaries and active gate prompts
+    (`~250–1,700 tokens` end-to-end across the 6 included workflows, and
+    $2.9\times$ fewer agent-generated tool-input tokens than an unstructured run
+    where the LLM re-serializes intermediate state across turns).
 
 --------------------------------------------------------------------------------
 
@@ -374,7 +373,8 @@ Add `lightflow-mcp` to your `claude_desktop_config.json` or `.mcp.json`:
 }
 ```
 
-Copy [`CLAUDE.md`](./CLAUDE.md) into your repository root (or install
+Copy [`AGENTS.md`](./AGENTS.md) or [`CLAUDE.md`](./CLAUDE.md) into your
+repository root (or install
 [`skills/run_lightflows/SKILL.md`](./skills/run_lightflows/SKILL.md) and
 [`skills/create_lightflows/SKILL.md`](./skills/create_lightflows/SKILL.md)) to
 instruct your agent on executing, resuming, and authoring Lightflow workflows.

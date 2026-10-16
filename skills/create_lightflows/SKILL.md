@@ -1,6 +1,6 @@
 ---
 name: create_lightflows
-description: Guides the design, authoring, compilation, and verification of new Python DAG workflows using Lightflow (YAML, JSON, or Textproto). Use when building a new multi-stage pipeline, authoring `actions.py` and `lightflow.yaml`, or scaffolding a workflow with the `create_lightflow` meta-workflow. For merely running or resuming an existing workflow, use `run_lightflows` instead.
+description: Guides the design, authoring, compilation, and verification of new Python DAG workflows using Lightflow (YAML or JSON). Use when building a new multi-stage pipeline, authoring `actions.py` and `lightflow.yaml`, or scaffolding a workflow with the `create_lightflow` meta-workflow. For merely running or resuming an existing workflow, use `run_lightflows` instead.
 ---
 
 # Creating Lightflow Workflows (`create_lightflows`)
@@ -47,10 +47,9 @@ is not on `PATH`.)
 
 ## 2. Workflow Manifest Reference (`lightflow.yaml`)
 
-Define actions and stages in `lightflow.yaml` (or `.json` / `.textproto`).
-`python_import` resolves relative to the workflow's directory (e.g.
-`actions.fetch_metrics` for `actions.py` in the same folder) as well as package
-paths:
+Define actions and stages in `lightflow.yaml` (or `.json`). `python_import`
+resolves relative to the workflow's directory (e.g. `actions.fetch_metrics` for
+`actions.py` in the same folder) as well as package paths:
 
 ```yaml
 name: release_verification_pipeline

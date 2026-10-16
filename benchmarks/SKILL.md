@@ -1,28 +1,24 @@
 ---
 name: benchmark_lightflow
-description: Runs the Lightflow benchmark suite (`python3 benchmarks/run_benchmark.py`) and live A/B subagent trials to verify that Lightflow's deterministic structural backbone (human gates, JSON Schema validation, automatic rollback, surgical resume) operates at lower token and latency cost than unstructured skills.
+description: Runs the Lightflow benchmark suite (`python3 benchmarks/run_benchmark.py`) and live A/B subagent trials to measure the runtime token footprint (`cmd + stdout`), cold-start skill overhead, and off-context state (`passport.json`) across multi-stage workflows.
 ---
 
-# Benchmarking Lightflow: Structural Rigor at Negative Cost (`benchmark_lightflow`)
+# Benchmarking Lightflow Token & Context Footprint (`benchmark_lightflow`)
 
-Lightflow gives AI agents a deterministic structural backbone—hard `EXIT_CODE=2`
-human gates, JSON Schema validation, automatic `rollback_action` hooks, and
-surgical `resume` without re-running upstream side effects—**at *lower* token
-and latency cost than an unstructured skill, not higher.**
+Lightflow separates **control-plane messages** (which go to `stdout` for the
+agent) from **data-plane state** (which stays on disk in `passport.json`):
 
-Why structural rigor is negative-cost in Lightflow:
-
-1.  **Zero-cost guardrails**: The skill blueprint lives in `lightflow.yaml` +
-    `actions.py`, so the agent runs `lightflow start` directly (**Zero-Context
-    Entry**) without loading workflow source code or long guardrail prompts into
-    context.
-2.  **$O(1)$ agent context vs. $O(N)$ payload size (No "LLM as State Bus")**:
-    Intermediate data (`payload.outputs.<stage>`) flows between stages on disk
-    via `passport.json` rather than being printed to `stdout` and re-emitted
+1.  **On-disk state bus (`passport.json`)**: Intermediate data
+    (`payload.outputs.<stage>`) flows between Python stages on disk via
+    `passport.json` rather than being printed to `stdout` and re-emitted
     token-by-token by the LLM in subsequent tool calls.
-3.  **No bespoke state-file plumbing per skill**: One reusable ~1,123-token
-    runner skill (`skills/run_lightflows/SKILL.md`) replaces writing custom
-    `/tmp/state.json`, `--step`, and rollback CLI glue inside every skill.
+2.  **Direct entry (`lightflow start`)**: Because stage ordering, `run_if`
+    branching, JSON schemas, and `rollback_action` hooks live in
+    `lightflow.yaml` + `actions.py`, an agent executing an existing workflow
+    runs `lightflow start` directly and responds to each gate as it arrives.
+3.  **Single reusable runner skill**: One generic ~1,123-token runner skill
+    (`skills/run_lightflows/SKILL.md`) drives any workflow without custom
+    per-workflow `/tmp/state.json` or `--step` CLI plumbing.
 
 ## 1. Run the Reproducible Benchmark Suite
 
@@ -51,30 +47,22 @@ bit-for-bit reproducibility) and measures:
 2.  **Cold-Start Context (`N=1` and `N=6`)**: Explicitly adds
     `skills/run_lightflows/SKILL.md` (4,492 chars / ~1,123 tokens) for execution
     workflows (`1–4 and 6`) and both `run_lightflows/SKILL.md` +
-    `create_lightflows/SKILL.md` (+8,204 chars / ~2,051 tokens) for the
+    `create_lightflows/SKILL.md` (+8,177 chars / ~2,044 tokens) for the
     `create_lightflow` authoring meta-workflow.
 3.  **Multi-Turn Cumulative Tokens**: Accounts for stateful LLM conversation
     billing where Turn $k$ re-sends the accumulated tool calls and outputs from
     Turns $1 \dots k-1$.
-4.  **Out-of-Context State (`passport.json`)**: Structured stage outputs
+4.  **Persisted in `passport.json` (Off-Context)**: Structured stage outputs
     (`payload.outputs.<stage>`) and audit stamps persisted on disk between
     stages without entering the LLM conversation history.
-5.  **Source Files Avoided (`lightflow.yaml` + `actions.py`) & Zero-Context
-    Savings**: Measures $\frac{\text{Source Avoided}}{\text{Runtime Context} +
-    \text{Source Avoided}}$, comparing Zero-Context Entry (`lightflow start`
-    directly) against a white-box agent that reads `lightflow.yaml` +
-    `actions.py` before running.
+5.  **On-Disk Blueprint (`lightflow.yaml` + `actions.py`)**: Total byte/token
+    size of the workflow manifest and Python actions on disk.
 
-## 2. Fairness Protocol (Mandatory When Reporting or Comparing)
+## 2. Reporting & Comparison Guidelines
 
 Whenever you report benchmark numbers or run a custom A/B comparison, follow
 these rules:
 
--   **Frame around Structural Rigor + Output Token Latency (not just raw input
-    tokens)**: Emphasize how `passport.json` eliminates the "LLM as State Bus"
-    anti-pattern (preventing the LLM from having to re-generate upstream JSON
-    payloads in tool-call inputs, which is $5\times$–$10\times$ slower and
-    error-prone).
 -   **Always count both directions of tool traffic**: Include the agent's CLI
     command string (and any file-write payloads) alongside the tool's `stdout`
     response—never `stdout` alone.
@@ -84,15 +72,10 @@ these rules:
         `skills/run_lightflows/SKILL.md` (or MCP tool schemas) is in context.
     -   *Single-Workflow Cold Start (`N=1`)*: Add
         `skills/run_lightflows/SKILL.md` (~1,123 tokens) to a single execution
-        run, and also add `skills/create_lightflows/SKILL.md` (~2,051 tokens)
+        run, and also add `skills/create_lightflows/SKILL.md` (~2,044 tokens)
         when benchmarking `create_lightflow`.
     -   *Multi-Workflow Session (`N=6`)*: Count each required `SKILL.md` once
         across the session.
--   **Never conflate `Source Avoided (yaml + actions.py)` with a prompt-only
-    `SKILL.md`**:
-    -   `yaml + actions.py` represents the **white-box source inspection
-        baseline** (what a coding agent reads if it inspects the workflow
-        directory without the Zero-Context Entry Rule).
 
 ## 3. Running a Live Subagent A/B Benchmark (Optional)
 

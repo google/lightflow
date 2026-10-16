@@ -43,7 +43,9 @@ for this purpose.
     python -m unittest discover -s tests -v
     ```
 
-4.  Open a pull request.
+4.  Open a pull request. GitHub Actions CI will run the test matrix across
+    Linux, macOS, and Windows (including the zero-dependency standard-library
+    fallback job).
 
 ### Reporting issues
 

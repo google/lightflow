@@ -641,19 +641,17 @@ def format_markdown_report(
   runner_skill_tokens = estimate_tokens(runner_skill_chars)
   author_skill_tokens = estimate_tokens(author_skill_chars)
   lines: list[str] = []
-  lines.append("# Lightflow Token-Efficiency Benchmark Results")
+  lines.append("# Lightflow Token & Context Footprint Benchmark Results")
   lines.append("")
   lines.append("## 1. Per-Workflow Context Footprint (Measured End-to-End)")
   lines.append("")
   lines.append(
       "| Workflow | CLI Calls | Warm Runtime (`cmd + stdout`) | Cold Start"
-      " (`N=1` incl. `SKILL.md`) | Multi-Turn Cumulative | Out-of-Context State"
-      " (`passport.json`) | Source Avoided (`yaml + actions.py`) |"
-      " Zero-Context Savings (Warm) |"
+      " (`N=1` incl. `SKILL.md`) | Multi-Turn Cumulative | Persisted in"
+      " `passport.json` (Off-Context) | On-Disk Blueprint (`yaml + actions.py`)"
+      " |"
   )
-  lines.append(
-      "| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |"
-  )
+  lines.append("| :--- | :---: | :---: | :---: | :---: | :---: | :---: |")
 
   tot_runtime_ch = 0
   tot_cum_tok = 0
@@ -676,7 +674,6 @@ def format_markdown_report(
     pp_tok = r.passport_tokens
     bp_ch = r.blueprint_chars
     bp_tok = r.blueprint_tokens
-    savings = r.zero_context_savings_ratio
 
     tot_runtime_ch += rt_ch
     tot_cum_tok += cum_tok
@@ -687,13 +684,11 @@ def format_markdown_report(
         f"| `{r.name}` | {n_calls} | {rt_ch:,} ch (~**{rt_tok:,} tok**) |"
         f" {n1_cold_ch:,} ch (~{n1_cold_tok:,} tok) | ~{cum_tok:,} tok |"
         f" {pp_ch:,} ch (~{pp_tok:,} tok) | {bp_ch:,} ch (~{bp_tok:,} tok) |"
-        f" **{savings * 100:.0f}%** |"
     )
 
   tot_runtime_tok = estimate_tokens(tot_runtime_ch)
   tot_pp_tok = estimate_tokens(tot_passport_ch)
   tot_bp_tok = estimate_tokens(tot_blueprint_ch)
-  warm_savings = tot_blueprint_ch / (tot_runtime_ch + tot_blueprint_ch)
   n_wf = len(results)
 
   lines.append(
@@ -702,18 +697,15 @@ def format_markdown_report(
       f" (~{tot_runtime_tok:,} tok)** | — | **~{tot_cum_tok:,} tok** |"
       f" **{tot_passport_ch:,} ch (~{tot_pp_tok:,} tok)** |"
       f" **{tot_blueprint_ch:,} ch (~{tot_bp_tok:,} tok)** |"
-      f" **{warm_savings * 100:.0f}%** |"
   )
   session_cold_ch = tot_runtime_ch + runner_skill_chars + author_skill_chars
   session_cold_tok = estimate_tokens(session_cold_ch)
-  cold_savings = tot_blueprint_ch / (session_cold_ch + tot_blueprint_ch)
   lines.append(
       f"| **Session Total (`N={n_wf}`, cold start incl. both `SKILL.md`s)** |"
       f" **{sum(len(r.steps) for r in results)} + 2 reads** | — |"
       f" **{session_cold_ch:,} ch (~{session_cold_tok:,} tok)** | — |"
       f" **{tot_passport_ch:,} ch (~{tot_pp_tok:,} tok)** |"
       f" **{tot_blueprint_ch:,} ch (~{tot_bp_tok:,} tok)** |"
-      f" **{cold_savings * 100:.0f}%** |"
   )
   lines.append("")
   lines.append("## 2. Step-by-Step Breakdown")
