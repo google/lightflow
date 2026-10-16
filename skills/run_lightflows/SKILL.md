@@ -22,8 +22,8 @@ description: Executes, inspects, and resumes existing Lightflow DAG workflows vi
 ## 1. Commands
 
 `python3 -m lightflow` is equivalent to `lightflow` when the console script is
-not on `PATH`. Runs remember their manifest, so `status`, `resume`, and
-`cleanup` need only `--log_id`; if the manifest file moved, pass
+not on `PATH`. Runs remember their manifest, so `status`, `resume`, `visualize`,
+and `cleanup` need only `--log_id`; if the manifest file moved, pass
 `--lightflow=<new path>` once and it is re-recorded.
 
 ```bash
@@ -39,7 +39,7 @@ lightflow resume --log_id=<id> [--payload='{...}']
 
 lightflow status --log_id=<id>     # one line per stage + any paused gate's Instructions, Schema, resume command; --verbose adds payload + stamp log
 lightflow list                     # every saved run: log ID, lightflow, state, last activity, manifest
-lightflow visualize --lightflow=<path> --log_id=<id> --out=/tmp/viz.html
+lightflow visualize --log_id=<id> --output=/tmp/viz.html
 lightflow cleanup --log_id=<id>    # deletes the run's state only; workflow artifacts on disk are untouched
 ```
 

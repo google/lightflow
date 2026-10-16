@@ -266,7 +266,6 @@ class BenchmarkRunner:
             "resume APPROVE (publish_digest)",
             [
                 "resume",
-                "--lightflow=examples/hn_digest",
                 f"--log_id={log_id}",
                 "--stage=editorial_gate",
                 "--resolution=APPROVE",
@@ -315,7 +314,6 @@ class BenchmarkRunner:
             "resume APPROVE (emit_bulletin)",
             [
                 "resume",
-                "--lightflow=examples/usgs_seismic_alert",
                 f"--log_id={log_id}",
                 "--stage=incident_commander_gate",
                 "--resolution=APPROVE",
@@ -365,7 +363,6 @@ class BenchmarkRunner:
             "resume APPROVE (smoke failure + automatic rollback)",
             [
                 "resume",
-                "--lightflow=examples/pypi_upgrade_guard",
                 f"--log_id={log_id}",
                 "--stage=approve_upgrades",
                 "--resolution=APPROVE",
@@ -377,7 +374,6 @@ class BenchmarkRunner:
             "resume surgical recovery (preserves upstream stages)",
             [
                 "resume",
-                "--lightflow=examples/pypi_upgrade_guard",
                 f"--log_id={log_id}",
                 '--payload={"simulate_smoke_failure": false}',
             ],
@@ -458,7 +454,6 @@ class BenchmarkRunner:
         "resume align_on_design (pause at implement_and_test_actions)",
         [
             "resume",
-            "--lightflow=examples/create_lightflow",
             f"--log_id={log_id}",
             "--stage=align_on_design",
             "--resolution=APPROVE",
@@ -474,7 +469,7 @@ class BenchmarkRunner:
         expected_exit=2,
     )
     actions_src = (
-        "def step_one(payload, **kwargs):\n"
+        "def step_one(payload, dry_run=False, **kwargs):\n"
         "    return {'done': True}, 'Step one complete'\n"
     )
     tests_src = (
@@ -496,7 +491,6 @@ class BenchmarkRunner:
         " implement_and_test_actions",
         [
             "resume",
-            "--lightflow=examples/create_lightflow",
             f"--log_id={log_id}",
             "--stage=implement_and_test_actions",
             "--resolution=APPROVE",
@@ -510,6 +504,7 @@ class BenchmarkRunner:
     )
     manifest_src = (
         'name: "demo_flow"\n'
+        "strict_expressions: true\n"
         "actions:\n"
         '  - id: "step_one"\n'
         '    python_import: "actions.step_one"\n'
@@ -526,7 +521,6 @@ class BenchmarkRunner:
         "write lightflow.yaml & resume draft_and_explain_manifest",
         [
             "resume",
-            "--lightflow=examples/create_lightflow",
             f"--log_id={log_id}",
             "--stage=draft_and_explain_manifest",
             "--resolution=APPROVE",
@@ -579,11 +573,9 @@ class BenchmarkRunner:
             " prompt_iam_quota_override)",
             [
                 "resume",
-                "--lightflow=examples/tenant_gitops_onboarding",
                 f"--log_id={log_id}",
                 "--stage=verify_spec",
                 "--resolution=APPROVE",
-                '--payload={"approved": true}',
             ],
             expected_exit=2,
         ),
@@ -592,11 +584,10 @@ class BenchmarkRunner:
             " complete)",
             [
                 "resume",
-                "--lightflow=examples/tenant_gitops_onboarding",
                 f"--log_id={log_id}",
                 "--stage=prompt_iam_quota_override",
                 "--resolution=APPROVE",
-                '--payload={"approved": true, "quota_override_approved": true}',
+                '--payload={"quota_override_approved": true}',
             ],
             expected_exit=0,
         ),

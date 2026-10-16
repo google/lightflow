@@ -66,7 +66,7 @@ flowchart LR
     actions on disk via `passport.json` rather than through tool `stdout`, so
     the agent only sees 1-line stage status summaries and active gate prompts
     (`~250–1,700 tokens` end-to-end across the 6 included workflows, and
-    $2.9\times$ fewer agent-generated tool-input tokens than an unstructured run
+    $3.1\times$ fewer agent-generated tool-input tokens than an unstructured run
     where the LLM re-serializes intermediate state across turns).
 
 --------------------------------------------------------------------------------
