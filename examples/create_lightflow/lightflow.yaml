@@ -55,7 +55,7 @@ stages:
     run_if: "payload.outputs.align_on_design.has_python_actions == true"
     operator_action:
       instructions: >-
-        'Step 2 (Implement & Test Actions): In ' + payload.outputs.align_on_design.target_dir + ', write Python actions for ' + payload.outputs.align_on_design.workflow_name + '. Keep each stage focused on a single responsibility, ensure every return path (including any offline test mode) returns the exact same output dictionary keys, and write unit tests. Resolve this gate to run automated AST, return-contract, and unit test verification.'
+        'Step 2 (Implement & Test Actions): In ' + payload.outputs.align_on_design.target_dir + ', write Python actions for ' + payload.outputs.align_on_design.workflow_name + '. Keep each stage focused on a single responsibility, accept `dry_run: bool = False` so `dry_run` can simulate without side effects, ensure every return path (including `dry_run` and any offline test mode) returns the exact same output dictionary keys, and write unit tests. Resolve this gate to run automated AST, return-contract, and unit test verification.'
       json_schema:
         type: object
         required:

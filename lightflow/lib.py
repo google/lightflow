@@ -239,7 +239,9 @@ class PassportManager:
     self.resolved_path = os.path.realpath(os.path.expanduser(resolved_path))
 
   @contextlib.contextmanager
-  def lock(self, exclusive: bool = True):
+  def lock(
+      self, exclusive: bool = True, *, remove_if_uninitialized: bool = False
+  ):
     """Context manager to acquire an advisory file lock on the state directory."""
     parent_dir = os.path.dirname(self.resolved_path)
     os.makedirs(parent_dir, mode=0o700, exist_ok=True)
@@ -273,6 +275,15 @@ class PassportManager:
     finally:
       _unlock(fd)
       fd.close()
+      if (
+          remove_if_uninitialized
+          and not os.path.exists(self.resolved_path)
+          and not os.path.islink(lock_path)
+      ):
+        try:
+          os.remove(lock_path)
+        except OSError:
+          pass
 
   def is_locked(self) -> bool:
     """Returns whether another process holds this run's lock.
@@ -1556,7 +1567,7 @@ class LightflowRunnerCLI:
         effective_payload, context_label="--payload", allow_outputs=False
     )
 
-    with pm.lock(exclusive=True):
+    with pm.lock(exclusive=True, remove_if_uninitialized=True):
       if force:
         previous = pm.load_passport()
         if previous is not None:
@@ -1692,7 +1703,7 @@ class LightflowRunnerCLI:
       )
     is_reject = norm_resolution in ("REJECT", "2")
 
-    with pm.lock(exclusive=True):
+    with pm.lock(exclusive=True, remove_if_uninitialized=True):
       passport = pm.load_passport()
       if not passport:
         raise LightflowStateNotFoundError(

@@ -774,19 +774,21 @@ _MILESTONE_TITLE_PREFIXES = (
 
 
 def _notification_mode() -> str:
-  """Returns `milestones` (default), `all`, or `off` from LIGHTFLOW_NOTIFY."""
-  mode = os.environ.get("LIGHTFLOW_NOTIFY", "milestones").strip().lower()
-  return mode if mode in ("milestones", "all", "off") else "milestones"
+  """Returns `off` (default), `milestones`, or `all` from LIGHTFLOW_NOTIFY."""
+  mode = os.environ.get("LIGHTFLOW_NOTIFY", "off").strip().lower()
+  return mode if mode in ("milestones", "all", "off") else "off"
 
 
 def send_notification(title: str, content: str) -> None:
   """Sends an asynchronous push notification to Antigravity or custom hooks.
 
   Custom handlers registered via `register_notification_handler` receive
-  every event. The `agentapi` push to the hosting agent is filtered by
-  `LIGHTFLOW_NOTIFY`: `milestones` (default) forwards only gate suspensions,
-  failures, rejections, rollbacks, and the final run outcome; `all` forwards
-  every stage transition; `off` disables the push.
+  every event. The `agentapi` push to the hosting agent is controlled by
+  `LIGHTFLOW_NOTIFY`: `off` (default, so synchronous CLI/MCP runs do not
+  double-notify a caller that already reads stdout/JSON) disables the push;
+  `milestones` forwards only gate suspensions, waiting yields, failures,
+  rejections, rollbacks, and the final run outcome; `all` forwards every
+  stage transition.
 
   Args:
     title: Short event title, e.g. "Stage Failed: publish".

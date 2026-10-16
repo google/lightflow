@@ -2123,6 +2123,8 @@ stages:
         os.path.join(self.temp_dir, "lightflow_state_ghost.lock"), "w"
     ) as f:
       f.write("")
+    with self.assertRaises(lib.LightflowStateNotFoundError):
+      cli.resume(log_id="missing_run")
 
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
@@ -2140,6 +2142,7 @@ stages:
         " 'cleanup --log_id=ghost'",
         out,
     )
+    self.assertNotIn("missing_run", out)
     # Newest first: done_run was written after paused_run.
     self.assertLess(out.index("done_run"), out.index("paused_run"))
 
@@ -2360,6 +2363,11 @@ stages:
         mock.patch.object(engine.subprocess, "run", side_effect=fake_run),
     ):
       os.environ.pop("LIGHTFLOW_NOTIFY", None)
+      engine.send_notification("Stage Failed: b", "❌ b: failed")
+      engine.wait_for_notifications(timeout=5)
+      default_sent = list(sent)
+      sent.clear()
+      os.environ["LIGHTFLOW_NOTIFY"] = "milestones"
       engine.send_notification("Stage Entered: a", "🎬 a: entered")
       engine.send_notification("Stage Completed: a", "✅ a: completed")
       engine.send_notification("Stage Failed: b", "❌ b: failed")
@@ -2377,6 +2385,7 @@ stages:
       engine.send_notification("Stage Failed: b", "❌ b: failed")
       engine.wait_for_notifications(timeout=5)
       nothing = list(sent)
+    self.assertEqual(default_sent, [])
     self.assertEqual(
         milestones,
         [

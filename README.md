@@ -282,10 +282,12 @@ stages:
     `ALL_DONE` stage that ran because an upstream failed or a gate was rejected
     is automatically re-armed (`↻ cleanup re-armed …`) when that cause is
     re-armed or the gate re-opened, so it runs again at the real end of the run.
--   **Milestone Push Notifications (`agentapi`)**: Agent push notifications are
-    sent only for gate suspensions, failures, rejections, rollbacks, and the
-    final outcome by default (`LIGHTFLOW_NOTIFY=milestones`); set
-    `LIGHTFLOW_NOTIFY=all` for every stage transition or `off` to disable.
+-   **Milestone Push Notifications (`agentapi`)**: Agent push notifications via
+    `agentapi` are disabled by default (`LIGHTFLOW_NOTIFY=off`) so synchronous
+    CLI/MCP runs do not double-notify a caller that already reads stdout/JSON;
+    set `LIGHTFLOW_NOTIFY=milestones` (for detached/background runs) to push
+    only gate suspensions, failures, rejections, rollbacks, and the final
+    outcome, or `LIGHTFLOW_NOTIFY=all` for every stage transition.
 
 **Expression Evaluator (`run_if`, `polling_policy.condition`,
 `operator_action.instructions`)**:
