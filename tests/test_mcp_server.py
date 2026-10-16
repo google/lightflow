@@ -627,7 +627,7 @@ stages:
     err, data = self._call("get_lightflow_status", log_id="ghost")
     self.assertFalse(err)
     self.assertEqual((data["state"], data["exit_code"]), ("NOT_FOUND", 3))
-    self.assertIn(self.temp_dir, data["message"])
+    self.assertIn(os.path.realpath(self.temp_dir), data["message"])
     self.assertIsNone(data["next_action"])
     self._call("run_lightflow", lightflow=self.manifest, log_id="c3")
     _, listing = self._call("list_lightflow_runs")
