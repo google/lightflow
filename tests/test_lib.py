@@ -2166,22 +2166,22 @@ actions:
     python_import: {__name__}.act_emit_count_42
 stages:
   - name: scan
-    python_action: {{action_id: compute}}
+    python_action: {{"action_id": "compute"}}
   - name: big
     run_after: [scan]
     run_if: "payload.outputs.scan.count > 10"
-    python_action: {{action_id: compute}}
+    python_action: {{"action_id": "compute"}}
   - name: small
     run_after: [scan]
     run_if: "payload.outputs.scan.count <= 10"
-    python_action: {{action_id: compute}}
+    python_action: {{"action_id": "compute"}}
   - name: join_default
     run_after: [big, small]
-    python_action: {{action_id: compute}}
+    python_action: {{"action_id": "compute"}}
   - name: join_none_failed
     run_after: [big, small]
     trigger_rule: NONE_FAILED
-    python_action: {{action_id: compute}}
+    python_action: {{"action_id": "compute"}}
 """,
     )
     dry = io.StringIO()
@@ -2249,14 +2249,14 @@ actions:
     python_import: {__name__}.act_emit_count_5
 stages:
   - name: scan
-    python_action: {{action_id: compute}}
+    python_action: {{"action_id": "compute"}}
   - name: gated
     run_after: [scan]
     run_if: "payload.outputs.scan.cuont > 1"
-    python_action: {{action_id: compute}}
+    python_action: {{"action_id": "compute"}}
   - name: after
     run_after: [gated]
-    python_action: {{action_id: compute}}
+    python_action: {{"action_id": "compute"}}
 """,
     )
     buf = io.StringIO()
@@ -2285,7 +2285,7 @@ actions:
     python_import: {__name__}.act_step_1
 stages:
   - name: scan
-    python_action: {{action_id: nosim}}
+    python_action: {{"action_id": "nosim"}}
   - name: gate
     run_after: [scan]
     operator_action:
@@ -2314,7 +2314,7 @@ actions:
     python_import: {__name__}.act_emit_count_42
 stages:
   - name: scan
-    python_action: {{action_id: compute}}
+    python_action: {{"action_id": "compute"}}
   - name: gate
     run_after: [scan]
     operator_action:
@@ -2407,7 +2407,7 @@ actions:
     python_import: {__name__}.act_emit_count_42
 stages:
   - name: scan
-    python_action: {{action_id: compute}}
+    python_action: {{"action_id": "compute"}}
 """,
     )
     with (
@@ -2464,14 +2464,14 @@ actions:
     python_import: {__name__}.act_emit_count_42
 stages:
   - name: wait_for_it
-    python_action: {{action_id: never}}
+    python_action: {{"action_id": "never"}}
     polling_policy:
       condition: "payload.outputs.wait_for_it.ready == true"
       interval_seconds: 1
       max_attempts: 2
   - name: after
     run_after: [wait_for_it]
-    python_action: {{action_id: compute}}
+    python_action: {{"action_id": "compute"}}
 """,
     )
     buf = io.StringIO()
@@ -2516,7 +2516,7 @@ stages:
       json_schema: '{{"type": "object", "required": ["approved"]}}'
   - name: ship
     run_after: [gate]
-    python_action: {{action_id: compute}}
+    python_action: {{"action_id": "compute"}}
 """,
     )
     cli = lib.LightflowRunnerCLI()
@@ -2593,7 +2593,7 @@ actions:
     python_import: {__name__}.act_emit_count_42
 stages:
   - name: a
-    python_action: {{action_id: compute}}
+    python_action: {{"action_id": "compute"}}
 """,
     )
     pm = lib.PassportManager("lock_run")
@@ -2634,12 +2634,12 @@ actions:
     python_import: {__name__}.act_never_ready
 stages:
   - name: flaky
-    python_action: {{action_id: compute}}
-    retry_policy: {{max_attempts: 4, initial_backoff_seconds: 2}}
-    rollback_action: {{action_id: compute}}
+    python_action: {{"action_id": "compute"}}
+    retry_policy: {{"max_attempts": 4, "initial_backoff_seconds": 2}}
+    rollback_action: {{"action_id": "compute"}}
   - name: wait
     run_after: [flaky]
-    python_action: {{action_id: never}}
+    python_action: {{"action_id": "never"}}
     polling_policy:
       condition: "payload.outputs.wait.ready == true"
       interval_seconds: 7
@@ -2647,7 +2647,7 @@ stages:
   - name: done
     run_after: [flaky, wait]
     trigger_rule: ALL_DONE
-    python_action: {{action_id: compute}}
+    python_action: {{"action_id": "compute"}}
 """,
     )
     buf = io.StringIO()
@@ -2746,7 +2746,7 @@ actions:
     python_import: {__name__}.act_cleanup_marker
 stages:
   - name: prep
-    python_action: {{action_id: compute}}
+    python_action: {{"action_id": "compute"}}
   - name: gate
     run_after: [prep]
     operator_action:
@@ -2755,11 +2755,11 @@ stages:
   - name: promote
     run_after: [gate]
     run_if: "payload.outputs.gate.approved == true"
-    python_action: {{action_id: compute}}
+    python_action: {{"action_id": "compute"}}
   - name: cleanup
     run_after: [promote]
     trigger_rule: ALL_DONE
-    python_action: {{action_id: cleanup}}
+    python_action: {{"action_id": "cleanup"}}
 """,
     )
 
@@ -2833,8 +2833,8 @@ stages:
         "other/lf.yaml",
         "name: other_wf\nactions:\n  - id: c\n    python_import:"
         f" {__name__}.act_emit_count_42\nstages:\n  - name: prep\n   "
-        " python_action: {action_id: c}\n  - name: gate\n    run_after:"
-        " [prep]\n    operator_action: {instructions: \"'x'\"}\n",
+        ' python_action: {"action_id": "c"}\n  - name: gate\n    run_after:'
+        ' [prep]\n    operator_action: {"instructions": "\'x\'"}\n',
     )
     # Neither `status` nor `resume` will drive this run with another
     # lightflow's manifest, and the recorded path is left alone.
@@ -2895,11 +2895,11 @@ actions:
     python_import: {__name__}.act_cleanup_marker
 stages:
   - name: work
-    python_action: {{action_id: flaky}}
+    python_action: {{"action_id": "flaky"}}
   - name: cleanup
     run_after: [work]
     trigger_rule: ALL_DONE
-    python_action: {{action_id: cleanup}}
+    python_action: {{"action_id": "cleanup"}}
 """,
     )
     cli = lib.LightflowRunnerCLI()
@@ -2943,8 +2943,8 @@ actions:
     python_import: {__name__}.act_failing_rollback
 stages:
   - name: promote
-    python_action: {{action_id: boom}}
-    rollback_action: {{action_id: rb}}
+    python_action: {{"action_id": "boom"}}
+    rollback_action: {{"action_id": "rb"}}
 """,
     )
     buf = io.StringIO()
@@ -2995,8 +2995,8 @@ stages:
         "work/dep.yaml",
         "name: w\nactions:\n  - id: c\n    python_import:"
         f" {__name__}.act_emit_count_42\nstages:\n  - name: fast_track\n   "
-        " python_action: {action_id: c}\n  - name: join\n    run_after:"
-        " [fast_trak]\n    python_action: {action_id: c}\n",
+        ' python_action: {"action_id": "c"}\n  - name: join\n    run_after:'
+        ' [fast_trak]\n    python_action: {"action_id": "c"}\n',
     )
     with self.assertRaisesRegex(
         engine.EngineError,
@@ -3007,7 +3007,7 @@ stages:
         "work/act.yaml",
         "name: w\nactions:\n  - id: promote\n    python_import:"
         f" {__name__}.act_emit_count_42\nstages:\n  - name: s\n   "
-        " python_action: {action_id: promot}\n",
+        ' python_action: {"action_id": "promot"}\n',
     )
     with self.assertRaisesRegex(
         engine.EngineError,
@@ -3028,7 +3028,7 @@ stages:
     manifest = self._write(
         "work/imp.yaml",
         "name: w\nactions:\n  - id: c\n    python_import: no_such_mod_xyz.fn\n"
-        "stages:\n  - name: s\n    python_action: {action_id: c}\n",
+        'stages:\n  - name: s\n    python_action: {"action_id": "c"}\n',
     )
     with contextlib.redirect_stdout(io.StringIO()):
       with self.assertRaises(lib.LightflowRunFailedError):
@@ -3081,24 +3081,24 @@ actions:
     python_import: {__name__}.act_emit_count_42
 stages:
   - name: wait_for_it
-    python_action: {{action_id: never}}
-    rollback_action: {{action_id: compute}}
+    python_action: {{"action_id": "never"}}
+    rollback_action: {{"action_id": "compute"}}
     polling_policy:
       condition: "payload.outputs.wait_for_it.ready == true"
       interval_seconds: 1
       max_attempts: 1
   - name: after_wait
     run_after: [wait_for_it]
-    python_action: {{action_id: compute}}
+    python_action: {{"action_id": "compute"}}
   - name: side_branch
-    python_action: {{action_id: compute}}
+    python_action: {{"action_id": "compute"}}
   - name: gate
     run_after: [side_branch]
     operator_action:
       instructions: "'Go?'"
   - name: after_gate
     run_after: [gate]
-    python_action: {{action_id: compute}}
+    python_action: {{"action_id": "compute"}}
 """,
     )
 
@@ -3149,7 +3149,7 @@ stages:
     gate_only = self._write(
         "work/g.yaml",
         "name: g_wf\nstages:\n  - name: gate\n    operator_action:"
-        " {instructions: \"'Go?'\"}\n",
+        ' {"instructions": "\'Go?\'"}\n',
     )
     with contextlib.redirect_stdout(io.StringIO()):
       with self.assertRaises(engine.OperatorActionSuspended):
@@ -3179,7 +3179,7 @@ stages:
       instructions: "'Ticket?'"
   - name: ship
     run_after: [gate]
-    python_action: {{action_id: compute}}
+    python_action: {{"action_id": "compute"}}
 """,
     )
     cli = lib.LightflowRunnerCLI()
@@ -3226,8 +3226,8 @@ actions:
     python_import: {__name__}.act_emit_count_42
 stages:
   - name: flaky
-    python_action: {{action_id: compute}}
-    retry_policy: {{initial_backoff_seconds: 2}}
+    python_action: {{"action_id": "compute"}}
+    retry_policy: {{"initial_backoff_seconds": 2}}
 """,
     )
     buf = io.StringIO()
@@ -3264,7 +3264,7 @@ actions:
     python_import: {__name__}.act_emit_count_42
 stages:
   - name: scan
-    python_action: {{action_id: compute}}
+    python_action: {{"action_id": "compute"}}
 """,
     )
     cli = lib.LightflowRunnerCLI()
@@ -3284,7 +3284,7 @@ actions:
     python_import: {__name__}.act_emit_count_42
 stages:
   - name: scan
-    python_action: {{action_id: compute}}
+    python_action: {{"action_id": "compute"}}
 """,
     )
     parent = os.environ.get("TEST_TMPDIR") or os.path.expanduser("~")

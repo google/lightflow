@@ -523,7 +523,7 @@ actions:
     python_import: {__name__}.mcp_test_action
 stages:
   - name: prep
-    python_action: {{action_id: compute}}
+    python_action: {{"action_id": "compute"}}
   - name: gate
     run_after: [prep]
     operator_action:
@@ -532,7 +532,7 @@ stages:
   - name: ship
     run_after: [gate]
     run_if: "payload.outputs.gate.approved == true"
-    python_action: {{action_id: compute}}
+    python_action: {{"action_id": "compute"}}
 """)
 
   def tearDown(self) -> None:
@@ -611,7 +611,7 @@ stages:
     with open(bad, "w", encoding="utf-8") as f:
       f.write(
           "name: bad_wf\nactions:\n  - id: c\n    python_import: nope_mod.fn\n"
-          "stages:\n  - name: s\n    python_action: {action_id: c}\n"
+          'stages:\n  - name: s\n    python_action: {"action_id": "c"}\n'
       )
     err, data = self._call("run_lightflow", lightflow=bad, log_id="c2")
     self.assertTrue(err)
