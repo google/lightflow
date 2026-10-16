@@ -148,13 +148,13 @@ lightflow dry_run --lightflow=examples/hn_digest/lightflow.yaml
 # 2. Start execution (fetches live HN top stories, then suspends at 'editorial_gate' with exit code 2)
 lightflow start --lightflow=examples/hn_digest/lightflow.yaml --log_id=hn_demo
 
-# 3. Approve the human gate and finish the workflow
-lightflow resume --lightflow=examples/hn_digest/lightflow.yaml --log_id=hn_demo \
+# 3. Approve the human gate and finish the workflow (--log_id remembers the manifest)
+lightflow resume --log_id=hn_demo \
   --stage=editorial_gate --resolution=APPROVE \
   --payload='{"editor_note": "Top engineering reads today.", "output_path": "/tmp/hn_digest.md"}'
 
 # 4. Generate a standalone interactive HTML5 DAG & timeline visualizer
-lightflow visualize --lightflow=examples/hn_digest/lightflow.yaml --log_id=hn_demo --output=/tmp/viz.html
+lightflow visualize --log_id=hn_demo --output=/tmp/viz.html
 ```
 
 `python3 -m lightflow ...` is equivalent to `lightflow ...` whenever the console
@@ -252,12 +252,40 @@ stages:
 | Stage Field | Purpose |
 |:----------------|:-------------------------------------------------------|
 | `run_after` | Upstream stage names that must finish before this stage evaluates. |
-| `run_if` | CEL-like expression evaluated against `payload`; stage is stamped `SKIPPED` if `false`. |
-| `trigger_rule` | `ALL_SUCCESS` (default) or `ALL_DONE` (runs even if an upstream dependency failed or skipped, useful for cleanup stages). |
-| `timeout_seconds` | Bounds each attempt (`1`–`86400`s) using a background worker thread (shown in `dry_run`). |
+| `run_if` | CEL-like expression evaluated against `payload`; stage is stamped `SKIPPED` if `false`. With top-level `strict_expressions: true`, selecting an absent key fails the stage instead of yielding `null`, naming the key and the closest match (guard optional keys with `has()`). |
+| `trigger_rule` | `ALL_SUCCESS` (default), `NONE_FAILED` (runs once upstreams finished and none failed — the join after complementary `run_if` branches), or `ALL_DONE` (runs even after an upstream failure; cleanup stages). |
+| `timeout_seconds` | Bounds each attempt (`0`–`86400`s; `0` disables the bound) using a background worker thread (shown in `dry_run`). |
 | `retry_policy` | Opt-in retry (`max_attempts`, `initial_backoff_seconds`, `backoff_multiplier`) with ±10% jitter for exceptions and timeouts. |
-| `polling_policy` | Polls `python_action` (or `poll_tick_action`) until `condition` evaluates to `true` (`interval_seconds`, `timeout_seconds`, `max_attempts`), persisting live tick messages to `passport.json`. |
+| `polling_policy` | Polls `poll_tick_action` (mutually exclusive with `python_action`) until `condition` evaluates to `true` (`interval_seconds`, `timeout_seconds`, `max_attempts`); each tick's dict is merged into `payload.outputs.<stage>` before `condition` runs, and tick messages are persisted to `passport.json`. |
 | `rollback_action` | Compensating `python_action` invoked automatically after a stage exhausts its retries; its output delta is merged into `payload`. |
+
+-   **Stage Output Namespacing & Collision Detection**: Stage outputs land both
+    under `payload.outputs.<stage>` and at the top level of `payload` (last
+    writer wins; `outputs` is a reserved top-level key). The engine warns `⚠️
+    [stage] overwrote top-level payload.<key>` when a later stage changes a key
+    an earlier one set *and* some expression reads `payload.<key>` (two stages
+    sharing a reusable action is otherwise silent); prefer
+    `payload.outputs.<stage>.<key>` in expressions and check `status --verbose`
+    for per-key provenance.
+-   **Actionable `dry_run` Diagnostics**: `dry_run` ends with a `Summary:` line
+    (including `❌ N would fail` for expressions that would error at runtime), a
+    ready-to-paste `💡 --payload` hint when a branch reads unseeded keys, and
+    the `stage→action` pairs that lack `dry_run` support.
+-   **Run Discovery & Remembered Manifests**: `lightflow list` (and the
+    `list_lightflow_runs` MCP tool) enumerates saved runs with the manifest each
+    was started from. Runs record their manifest in `passport.json`, so
+    `status`, `resume`, `visualize`, and `cleanup` need only `--log_id=<id>`; if
+    the manifest moves, pass `--lightflow=<new path>` once and it is
+    re-recorded.
+-   **Safe Re-Arming & Force-Start Summary**: `start --force` prints what it
+    discards (completed stages, paused gate, history) before wiping. An
+    `ALL_DONE` stage that ran because an upstream failed or a gate was rejected
+    is automatically re-armed (`↻ cleanup re-armed …`) when that cause is
+    re-armed or the gate re-opened, so it runs again at the real end of the run.
+-   **Milestone Push Notifications (`agentapi`)**: Agent push notifications are
+    sent only for gate suspensions, failures, rejections, rollbacks, and the
+    final outcome by default (`LIGHTFLOW_NOTIFY=milestones`); set
+    `LIGHTFLOW_NOTIFY=all` for every stage transition or `off` to disable.
 
 **Expression Evaluator (`run_if`, `polling_policy.condition`,
 `operator_action.instructions`)**:
@@ -313,13 +341,14 @@ When a stage fails:
 | Exit Code | Meaning | Typical Next Step |
 |:--------|:-----------------------------|:------------------------------|
 | `0` | Workflow completed (or was already completed). | Done. |
-| `1` | Stage failure, compile/schema error, or state lock contention. | Inspect `lightflow status`, fix the cause, and run `lightflow resume`. |
+| `1` | Stage failure, compile error, or a payload that fails the gate schema. | Inspect `lightflow status`, fix the cause, and run `lightflow resume`. |
 | `2` | Suspended at an `operator_action` gate awaiting human/agent input. | Run `lightflow resume --stage=<name> --resolution=APPROVE --payload='{...}'`. |
-| `3` | `status` only: no saved state for the log ID. | Check the log ID, or `start`. |
-| `4` | `status` only: another process is running the run. | Wait, then check `status` again. |
+| `3` | No saved state for the log ID (`status`, `resume`). | Check the log ID (`lightflow list`), or `start`. |
+| `4` | Another process holds the run's lock (`start`, `resume`, `cleanup`, `status`). | Wait, then check `status` again. |
+| `5` | Waiting: a `polling_policy` stage yielded (timeout / max attempts) before its condition was met. Nothing is broken; downstream stages are not touched. | Once the external condition holds, run `lightflow resume`. |
 
 `lightflow status` exits with the code of the run it inspects (`0` completed,
-`1` failed, rejected, or interrupted, `2` paused), so a script or agent can poll
+`1` failed, rejected, or interrupted, `2` paused, `5` waiting), so a script or agent can poll
 it and branch exactly as it would on `start` or `resume`. It prints one line per
 stage plus any paused gate's Instructions, Payload Schema, and resume command;
 `--verbose` adds the Passport payload, full stamp log, and Mermaid diagram.

@@ -9,66 +9,65 @@ description: Executes, inspects, and resumes existing Lightflow DAG workflows vi
 
 ## Fast-Path Rules
 
-1.  **Read only `SKILL.md`, then run `start` directly**: Do **not** read
-    `lightflow.yaml`, `actions.py`, or `README.md` before `start`. The CLI
-    compiles the manifest and prints any gate `Instructions`, `Payload Schema`,
-    and exact `resume` command. `--lightflow=<path>` accepts a manifest file or
-    its directory.
-2.  **Skip redundant `status` calls & chain cleanup**: When `start` or `resume`
-    exits `0` (`Lightflow completed successfully!`), do **not** run `status`.
-    When asked to clean up on completion (or inspect an output file), chain
-    `start ... && cleanup ...` or `resume ... && cleanup ...` in a single shell
-    command (`&&` naturally stops if `start` suspends at an `EXIT_CODE=2` gate).
+1.  **Read only `SKILL.md`, then run `start` directly**: do **not** read
+    `lightflow.yaml`, `actions.py`, or `README.md` first. The CLI compiles the
+    manifest and prints any gate's `Instructions`, `Payload Schema`, and the
+    exact `Resume with:` command. `--lightflow=<path>` accepts a manifest file
+    or its directory.
+2.  **Skip redundant `status` calls & chain cleanup**: when `start` or `resume`
+    exits `0` (`Lightflow completed successfully!`), do **not** run `status`. If
+    asked to clean up afterwards, chain `start ... && cleanup ...` (`&&` stops
+    naturally at an `EXIT_CODE=2` gate).
 
 ## 1. Commands
 
-(`python3 -m lightflow` is equivalent to `lightflow` whenever the console script
-is not on `PATH`.)
+`python3 -m lightflow` is equivalent to `lightflow` when the console script is
+not on `PATH`. Runs remember their manifest, so `status`, `resume`, and
+`cleanup` need only `--log_id`; if the manifest file moved, pass
+`--lightflow=<new path>` once and it is re-recorded.
 
 ```bash
-# Start a run (add --payload='{...}' or --payload=@payload.json / --payload_file=payload.json for initial args, or --dry_run only if asked to preview)
-lightflow start --lightflow=<dir_or_manifest> --log_id=<run_id>
+lightflow start --lightflow=<dir_or_manifest> --log_id=<run_id> [--payload='{...}' | --payload=@file.json]
+lightflow start ... --dry_run      # only when asked to preview; ends with a Summary: line and a 💡 --payload seed hint
 
-# Approve a paused operator_action gate (only after human confirmation; sets approved=true automatically; supports --payload=@file.json / --payload_file=file.json)
-lightflow resume --lightflow=<path> --log_id=<id> \
-  --stage=<gate_stage> --resolution=APPROVE --payload='{...}'
+# Resolve a paused gate (only after the human decided; APPROVE sets approved=true itself)
+lightflow resume --log_id=<id> --stage=<gate_stage> --resolution=APPROVE --payload='{...}'
+lightflow resume --log_id=<id> --stage=<gate_stage> --resolution=REJECT --comment="..."   # runs rollback_action; dependents are blocked
 
-# Reject a paused gate (runs any rollback_action; blocks ALL_SUCCESS, allows ALL_DONE)
-lightflow resume --lightflow=<path> --log_id=<id> \
-  --stage=<gate_stage> --resolution=REJECT --comment="Rejected by operator"
+# After fixing a failed stage: re-arms only failed stages, keeps completed work
+lightflow resume --log_id=<id> [--payload='{...}']
 
-# Recover from a failed stage (re-arms only failed stages; preserves completed work; optional --payload overrides)
-lightflow resume --lightflow=<path> --log_id=<id> [--payload='{...}']
-
-# Inspect state (one line per stage + any paused gate's Instructions, Payload
-# Schema, and resume command; --verbose adds payload + stamp log), generate
-# HTML visualizer, or delete state directory (external workflow artifacts on disk are untouched)
-lightflow status --lightflow=<path> --log_id=<id>
+lightflow status --log_id=<id>     # one line per stage + any paused gate's Instructions, Schema, resume command; --verbose adds payload + stamp log
+lightflow list                     # every saved run: log ID, lightflow, state, last activity, manifest
 lightflow visualize --lightflow=<path> --log_id=<id> --out=/tmp/viz.html
-lightflow cleanup --log_id=<id>
+lightflow cleanup --log_id=<id>    # deletes the run's state only; workflow artifacts on disk are untouched
 ```
 
-**MCP (`lightflow-mcp`)**: If connected, prefer the structured tools
-`run_lightflow`, `resume_lightflow`, `get_lightflow_status`,
-`dry_run_lightflow`, and `visualize_lightflow` over the CLI; the same rules
-below apply to their `status` / `exit_code` fields.
+**MCP (`lightflow-mcp`)**: if connected, prefer `run_lightflow`,
+`resume_lightflow`, `get_lightflow_status`, `list_lightflow_runs`,
+`dry_run_lightflow`, and `visualize_lightflow`; the rules below apply to their
+`state` / `exit_code` fields. Results are compact (`state`, one entry per stage,
+paused-gate details, a `next_action`); `verbose: true` on `get_lightflow_status`
+adds the stamp log and Mermaid diagram.
 
 ## 2. Exit Codes & Governance
 
--   **Exit `0` (`COMPLETED`)**: Done. Report the stage outputs printed to
-    `stdout`.
--   **Exit `2` (`SUSPENDED` at `operator_action`)**: **STOP IMMEDIATELY.**
-    Present the printed `Instructions` and `Payload Schema` to the human
-    operator/user and wait for their explicit decision. **Never self-approve or
-    run `resume` on your own.**
--   **Exit `1` (`FAILED`)**: Fix the root cause and run `resume` (**never**
-    `start --force`, which wipes completed upstream stages).
--   **Gate payload validation**: `resume --resolution=APPROVE` validates
-    `--payload` against the gate's `json_schema` (required keys, types, `enum`
-    values). On a validation error the gate stays `PAUSED`; fix the payload and
-    re-run `resume`. If the gate's `Payload Schema` is no longer in context
-    (e.g. a new conversation), run `status`, which reprints it.
--   **`status` exits like the run**: `0` completed, `1` failed, rejected, or
-    interrupted, `2` paused at a gate, `3` no saved state for the log ID, `4`
-    still running in another process (wait; don't `resume`). Add `--verbose`
-    only when you need the full payload, stamp log, or Mermaid diagram.
+-   **`0` COMPLETED**: done; report the stage outputs printed to `stdout`.
+-   **`2` SUSPENDED at an `operator_action`**: **STOP IMMEDIATELY.** Present the
+    printed `Instructions` and `Payload Schema` to the human operator and wait
+    for their explicit decision. **Never self-approve or run `resume` on your
+    own.** `--resolution=APPROVE` validates `--payload` against the gate's
+    `json_schema`; on a validation error the gate stays paused, so fix the
+    payload and re-run (`status` reprints the schema in a new conversation).
+-   **`1` FAILED or REJECTED**: the footer names the root cause and the exact
+    `resume` command. Fix the cause, then `resume` — **never `start --force`**,
+    which discards completed stages and is only for rerunning a *completed* run
+    from scratch. A rejected gate (`🛑`) is terminal unless deliberately
+    re-opened: `resume --stage=<gate> --resolution=APPROVE --payload='{...}'`
+    decides again in one call; a bare `resume --stage=<gate>` only re-opens it.
+-   **`status` exits like the run**: `0` completed · `1` failed, rejected, or
+    interrupted · `2` paused · `3` no saved state · `4` running in another
+    process (wait; don't `resume`) · `5` waiting: a `polling_policy` stage
+    yielded before its condition was met, nothing is broken, `resume` once it
+    holds. Use `--verbose` only when you need the payload, stamp log, or Mermaid
+    diagram.

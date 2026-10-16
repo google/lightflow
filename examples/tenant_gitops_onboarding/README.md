@@ -156,20 +156,17 @@ lightflow start \
 
 # Step 2: Approve Gate #1 - runs Phase 1 & Phase 2, then pauses at Gate #2 (prompt_iam_quota_override)
 lightflow resume \
-  --lightflow=examples/tenant_gitops_onboarding/lightflow.yaml \
   --log_id=tenant_pci_demo \
   --stage=verify_spec \
-  --resolution=APPROVE \
-  --payload='{"approved": true}'
+  --resolution=APPROVE
 
 # Step 3: Approve Gate #2 - provisions dedicated PCI KMS key in parallel with S3/Vault,
 #         checkpoints the catalog, merges GitOps PRs #101 & #102, and syncs ArgoCD
 lightflow resume \
-  --lightflow=examples/tenant_gitops_onboarding/lightflow.yaml \
   --log_id=tenant_pci_demo \
   --stage=prompt_iam_quota_override \
   --resolution=APPROVE \
-  --payload='{"approved": true, "quota_override_approved": true}'
+  --payload='{"quota_override_approved": true}'
 ```
 
 ### 3. Standard Compliance Tier + Automated IAM Path (`ALL_DONE` Bypass + Shared KMS Branch)
@@ -186,11 +183,9 @@ lightflow start \
   --force
 
 lightflow resume \
-  --lightflow=examples/tenant_gitops_onboarding/lightflow.yaml \
   --log_id=tenant_std_demo \
   --stage=verify_spec \
-  --resolution=APPROVE \
-  --payload='{"approved": true}'
+  --resolution=APPROVE
 ```
 
 ### 4. Simulated Storage Failure $\rightarrow$ Compensating Rollback $\rightarrow$ Surgical Resume
@@ -206,16 +201,13 @@ lightflow start \
 # Approving Gate #1 runs through Phase 2, retries provision_external_resources twice,
 # runs rollback_external_resources to clean up partial artifacts, and stops before Phase 4
 lightflow resume \
-  --lightflow=examples/tenant_gitops_onboarding/lightflow.yaml \
   --log_id=tenant_rollback_demo \
   --stage=verify_spec \
-  --resolution=APPROVE \
-  --payload='{"approved": true}'
+  --resolution=APPROVE
 
 # Surgically resume ONLY from provision_external_resources - Phases 1-2 and the parallel
 # KMS key stage remain COMPLETED and are not re-executed!
 lightflow resume \
-  --lightflow=examples/tenant_gitops_onboarding/lightflow.yaml \
   --log_id=tenant_rollback_demo \
   --stage=provision_external_resources \
   --payload='{"simulate_artifact_failure": false}'
@@ -232,9 +224,7 @@ lightflow start \
   --force
 
 lightflow resume \
-  --lightflow=examples/tenant_gitops_onboarding/lightflow.yaml \
   --log_id=tenant_non_admin_demo \
   --stage=verify_spec \
-  --resolution=APPROVE \
-  --payload='{"approved": true}'
+  --resolution=APPROVE
 ```

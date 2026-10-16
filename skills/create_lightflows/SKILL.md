@@ -106,7 +106,7 @@ stages:
       action_id: cleanup_temp
 ```
 
-## 3. Three Rules for Crash-Free Python Actions
+## 3. Rules for Crash-Free Python Actions
 
 ```python
 from typing import Any
@@ -130,13 +130,49 @@ def fetch_metrics(
     whose `run_if` or `instructions` reads `payload.outputs.<upstream>.<key>`
     must list `<upstream>` (directly or transitively) in `run_after`.
 4.  **Timeouts, Polling & Resilience**: Set stage-level `timeout_seconds`
-    (`1`–`86400`) on a stage to bound a `python_action` (or individual poll
-    tick); for long-running external jobs, prefer `polling_policy` (`condition`,
-    `interval_seconds`, `timeout_seconds`, `max_attempts`, optional
-    `poll_tick_action`), which persists each tick's progress message to
-    `passport.json` so `lightflow status` shows live progress. Use
-    `retry_policy` for transient errors and `rollback_action` / `trigger_rule:
-    ALL_DONE` for cleanup.
+    (`0`–`86400`; `0` disables the bound) on a stage to bound a `python_action`
+    (or individual poll tick); for long-running external jobs, prefer
+    `polling_policy` (`condition`, `interval_seconds`, `timeout_seconds`,
+    `max_attempts`, optional `poll_tick_action`), which persists each tick's
+    progress message to `passport.json` so `lightflow status` shows live
+    progress. Use `retry_policy` for transient errors and `rollback_action` /
+    `trigger_rule: ALL_DONE` for cleanup; keep cleanup stages idempotent, since
+    an `ALL_DONE` stage that ran on a failure path runs again after `resume`.
+
+    A polling stage in YAML (the tick action goes under `poll_tick_action`; a
+    stage may not also set `python_action`):
+
+    ```yaml
+    - name: await_job
+      run_after: [submit_job]
+      polling_policy:
+        condition: "payload.outputs.await_job.status == 'READY'"
+        interval_seconds: 5
+        timeout_seconds: 600        # or max_attempts: 120
+        poll_tick_action:
+          action_id: check_job      # (dict, message) per tick
+    ```
+
+    Each tick's returned dict is merged into `payload.outputs.await_job` before
+    `condition` is evaluated, so a tick can read its own previous output.
+5.  **Converging After a Conditional Branch**: Two stages with complementary
+    `run_if` conditions leave one of them `SKIPPED`. A stage that `run_after`s
+    both must set `trigger_rule: NONE_FAILED` to run (the default `ALL_SUCCESS`
+    skips it because an upstream was skipped; `ALL_DONE` would also run it after
+    an upstream *failure*, which is only right for cleanup stages). `dry_run`
+    points this out when it sees it.
+6.  **Optional Keys with `has(...)`**: Under `strict_expressions`, read a key
+    that may be absent (e.g. an optional gate field) as
+    `!has(payload.outputs.gate.note) || payload.outputs.gate.note != 'skip'`.
+    `has()` never raises.
+7.  **Strict Expressions \& Explicit Namespaces**: Set top-level
+    `strict_expressions: true` on new lightflows so a misspelled or
+    not-yet-populated key in `run_if` / `condition` / `instructions` fails the
+    stage instead of silently evaluating to `null` (guard optional keys with
+    `has(...)`). Read upstream values as `payload.outputs.<stage>.<key>` rather
+    than the top-level mirror, which is last-writer-wins across stages; the
+    engine warns when a stage overwrites a top-level key that an expression
+    reads. `outputs` is a reserved top-level key (`--payload` may not set it).
 
 ## 4. Validating Your New Workflow
 

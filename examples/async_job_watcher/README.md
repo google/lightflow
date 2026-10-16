@@ -38,5 +38,5 @@ lightflow start --lightflow=examples/async_job_watcher --log_id=poll_timeout \
   --payload='{"timeout_demo": true}'
 
 # 2. Resume ~10s later -> picks up the finished status file and completes
-lightflow resume --lightflow=examples/async_job_watcher --log_id=poll_timeout
+lightflow resume --log_id=poll_timeout
 ```

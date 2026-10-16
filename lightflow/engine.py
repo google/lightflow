@@ -20,12 +20,14 @@ from __future__ import annotations
 
 import ast
 import copy
+import difflib
 import graphlib
 import hashlib
 import importlib
 import importlib.util
 import inspect
 import json
+import keyword
 import operator
 import os
 import queue
@@ -38,7 +40,7 @@ import sys
 import threading
 import time
 import traceback
-from typing import Any, Callable, Optional, Sequence
+from typing import Any, Callable, Collection, Optional, Sequence
 
 # pylint: disable=g-import-not-at-top,g-bad-import-order
 try:
@@ -57,6 +59,17 @@ class StageTimeoutError(EngineError):
   """Raised when a stage execution exceeds its configured timeout."""
 
 
+class MissingFieldError(EngineError):
+  """Raised in strict mode when an expression selects an absent payload key.
+
+  Only raised when the lightflow sets `strict_expressions: true`. In the
+  default lenient mode an absent key evaluates to null, which makes
+  `payload.aproved != true` silently true on a typo; strict mode surfaces
+  that as a stage failure instead. Guard genuinely optional keys with
+  `has(...)`, which never raises.
+  """
+
+
 class OperatorActionSuspended(Exception):
   """Raised when the workflow suspends at an operator action."""
 
@@ -73,7 +86,7 @@ def _quote_cli_arg(value: str) -> str:
 
 
 _CEL_OPERATOR_PATTERN = re.compile(
-    r'("(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\')|(&&|\|\||!(?!=))'
+    r'("(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\')|(&&|\|\||!(?!=)|~)'
 )
 
 
@@ -90,6 +103,8 @@ def parse_expression(expr: str) -> Optional[ast.Expression]:
       return " or "
     if op == "!":
       return "~"
+    if op == "~":
+      raise SyntaxError("Unsupported operator '~' in CEL expression.")
     return match.group(1)
 
   py_expr = _CEL_OPERATOR_PATTERN.sub(replace_ops, expr).strip()
@@ -156,7 +171,63 @@ def extract_payload_output_stage_refs(
   return refs
 
 
-_extract_payload_output_stage_refs = extract_payload_output_stage_refs
+def _suggest_key(missing: str, available: dict[str, Any]) -> str:
+  """Renders a `; did you mean 'x'?` / `; available: a, b` hint for errors."""
+  keys = sorted(str(k) for k in available)
+  if not keys:
+    return ""
+  close = difflib.get_close_matches(missing, keys, n=1, cutoff=0.6)
+  if close:
+    return f"; did you mean '{close[0]}'?"
+  shown = ", ".join(keys[:6]) + (", ..." if len(keys) > 6 else "")
+  return f"; available: {shown}"
+
+
+def extract_top_level_payload_refs(tree: Optional[ast.Expression]) -> list[str]:
+  """Lists top-level payload keys an expression reads (`payload.<key>`).
+
+  Used by dry-run to tell an author which `--payload` keys a branch needs
+  before it can be traced. References inside `has(...)` are excluded, since
+  their whole point is to tolerate absence. `payload.outputs.*` is excluded
+  too; those are covered by `extract_payload_output_stage_refs`.
+
+  Args:
+    tree: A parsed expression, or None.
+
+  Returns:
+    Distinct key names in first-seen order.
+  """
+  refs: list[str] = []
+  if tree is None:
+    return refs
+
+  def _is_payload(node: ast.AST) -> bool:
+    return isinstance(node, ast.Name) and node.id == "payload"
+
+  def _visit(node: ast.AST) -> None:
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "has"
+    ):
+      return
+    key: Optional[str] = None
+    if isinstance(node, ast.Attribute) and _is_payload(node.value):
+      key = node.attr
+    elif (
+        isinstance(node, ast.Subscript)
+        and _is_payload(node.value)
+        and isinstance(node.slice, ast.Constant)
+        and isinstance(node.slice.value, str)
+    ):
+      key = node.slice.value
+    if key is not None and key != STAGE_OUTPUTS_KEY and key not in refs:
+      refs.append(key)
+    for child in ast.iter_child_nodes(node):
+      _visit(child)
+
+  _visit(tree)
+  return refs
 
 
 _MAX_SEQUENCE_REPEAT = 10_000
@@ -173,40 +244,40 @@ def _cap_result(value: Any) -> Any:
   return value
 
 
-def _safe_mul(a: Any, b: Any) -> Any:
+def _safe_mul(left: Any, right: Any) -> Any:
   """Multiplies values while capping sequence repetition to prevent OOM DoS."""
-  if isinstance(a, (str, bytes, list, tuple)) and isinstance(b, int):
-    if len(a) * max(b, 0) > _MAX_SEQUENCE_REPEAT:
+  if isinstance(left, (str, bytes, list, tuple)) and isinstance(right, int):
+    if len(left) * max(right, 0) > _MAX_SEQUENCE_REPEAT:
       raise ValueError(
           "Sequence multiplication exceeds maximum length"
           f" ({_MAX_SEQUENCE_REPEAT})."
       )
-  elif isinstance(b, (str, bytes, list, tuple)) and isinstance(a, int):
-    if len(b) * max(a, 0) > _MAX_SEQUENCE_REPEAT:
+  elif isinstance(right, (str, bytes, list, tuple)) and isinstance(left, int):
+    if len(right) * max(left, 0) > _MAX_SEQUENCE_REPEAT:
       raise ValueError(
           "Sequence multiplication exceeds maximum length"
           f" ({_MAX_SEQUENCE_REPEAT})."
       )
-  return _cap_result(operator.mul(a, b))
+  return _cap_result(operator.mul(left, right))
 
 
-def _safe_add(a: Any, b: Any) -> Any:
-  """Adds two values, coercing numeric/boolean primitives onto a str."""
-  if isinstance(a, str) and isinstance(b, (int, float, bool)):
-    return _cap_result(a + str(b))
-  if isinstance(b, str) and isinstance(a, (int, float, bool)):
-    return _cap_result(str(a) + b)
-  return _cap_result(operator.add(a, b))
+def _safe_add(left: Any, right: Any) -> Any:
+  """Adds two values, coercing numeric/boolean primitives onto left str."""
+  if isinstance(left, str) and isinstance(right, (int, float, bool)):
+    return _cap_result(left + str(right))
+  if isinstance(right, str) and isinstance(left, (int, float, bool)):
+    return _cap_result(str(left) + right)
+  return _cap_result(operator.add(left, right))
 
 
-def _safe_mod(a: Any, b: Any) -> Any:
+def _safe_mod(left: Any, right: Any) -> Any:
   """Numeric modulo only; printf-style `str % x` can allocate huge padding."""
-  if not isinstance(a, (int, float)) or not isinstance(b, (int, float)):
+  if not isinstance(left, (int, float)) or not isinstance(right, (int, float)):
     raise TypeError(
         "Operator '%' is only supported between numbers, got"
-        f" {type(a).__name__} and {type(b).__name__}."
+        f" {type(left).__name__} and {type(right).__name__}."
     )
-  return operator.mod(a, b)
+  return operator.mod(left, right)
 
 
 class SafeCelEvaluator:
@@ -248,8 +319,9 @@ class SafeCelEvaluator:
       ast.UAdd: operator.pos,
   }
 
-  def __init__(self, context: dict[str, Any]):
+  def __init__(self, context: dict[str, Any], *, strict: bool = False):
     self.context = context
+    self.strict = strict
 
   def evaluate(self, expr: str) -> Any:
     """Evaluates a CEL-like string expression against context dictionary."""
@@ -260,6 +332,10 @@ class SafeCelEvaluator:
       if tree is None:
         return ""
       return self._eval(tree.body)
+    except MissingFieldError as e:
+      # Lead with the key so it survives `status`'s 140-char summary; the
+      # expression (often long) follows for context.
+      raise MissingFieldError(f"{e} (in expression '{expr}')") from e
     except Exception as e:
       raise EngineError(f"Failed to evaluate expression '{expr}': {e}") from e
 
@@ -341,11 +417,26 @@ class SafeCelEvaluator:
         raise TypeError(f"Access to private attribute '{attr}' is blocked.")
 
       if isinstance(value, dict):
+        if self.strict and attr not in value:
+          raise MissingFieldError(
+              f"no such key '{attr}'{_suggest_key(attr, value)}"
+              " (strict_expressions is on; guard optional keys with has(...))"
+          )
         return value.get(attr)
 
+      if self.strict and value is None:
+        raise MissingFieldError(
+            f"cannot select '{attr}' from null (strict_expressions is on;"
+            " guard optional keys with has(...))"
+        )
       try:
         resolved = getattr(value, attr)
       except AttributeError:
+        if self.strict:
+          raise MissingFieldError(
+              f"no such field '{attr}' on {type(value).__name__}"
+              " (strict_expressions is on; guard optional keys with has(...))"
+          ) from None
         return None
       if callable(resolved):
         raise TypeError(
@@ -363,7 +454,17 @@ class SafeCelEvaluator:
         )
       try:
         return value[slice_val]
-      except (KeyError, IndexError, TypeError):
+      except (KeyError, IndexError, TypeError) as e:
+        if self.strict:
+          hint = (
+              _suggest_key(str(slice_val), value)
+              if isinstance(value, dict) and isinstance(slice_val, str)
+              else ""
+          )
+          raise MissingFieldError(
+              f"no such key/index {slice_val!r}{hint} (strict_expressions is"
+              " on; guard optional keys with has(...))"
+          ) from e
         return None
 
     elif isinstance(node, ast.BinOp):
@@ -590,15 +691,27 @@ class SafeCelEvaluator:
     raise TypeError(f"Unsupported AST node type: {type(node).__name__}")
 
 
-def evaluate_cel(cel_expr: str, payload_dict: dict[str, Any]) -> Any:
-  """Evaluates a CEL expression against the payload dict safely."""
+def evaluate_cel(
+    cel_expr: str, payload_dict: dict[str, Any], *, strict: bool = False
+) -> Any:
+  """Evaluates a CEL expression against the payload dict safely.
+
+  Args:
+    cel_expr: The expression to evaluate.
+    payload_dict: The payload exposed as `payload`.
+    strict: When true, selecting an absent key raises `MissingFieldError`
+      instead of yielding null (see `Lightflow.strict_expressions`).
+
+  Returns:
+    The evaluated value.
+  """
   context = {
       "payload": payload_dict,
       "true": True,
       "false": False,
       "null": None,
   }
-  evaluator = SafeCelEvaluator(context)
+  evaluator = SafeCelEvaluator(context, strict=strict)
   return evaluator.evaluate(cel_expr)
 
 
@@ -629,26 +742,67 @@ def summarise(text: str) -> str:
 
 
 _NOTIFICATION_THREADS: list[threading.Thread] = []
-_CUSTOM_NOTIFIERS: list[Callable[[str, str], None]] = []
+_NOTIFICATION_HANDLERS: list[Callable[[str, str], None]] = []
 
 
-def register_notification_handler(handler: Callable[[str, str], None]) -> None:
-  """Registers a custom callback `(title, content) -> None` for notifications."""
-  _CUSTOM_NOTIFIERS.append(handler)
+def register_notification_handler(
+    handler: Callable[[str, str], None],
+) -> None:
+  """Registers a callback `(title, content)` invoked on stage notifications."""
+  if handler not in _NOTIFICATION_HANDLERS:
+    _NOTIFICATION_HANDLERS.append(handler)
 
 
 def clear_notification_handlers() -> None:
   """Clears any custom registered notification callbacks."""
-  _CUSTOM_NOTIFIERS.clear()
+  _NOTIFICATION_HANDLERS.clear()
+
+
+# Notification titles that are worth interrupting an agent for. Everything
+# else ("Stage Entered", "Stage Completed", "Stage Skipped") is already on
+# stdout and, pushed one by one through `agentapi` (~0.6s each, serialized),
+# made a two-stage run take 3s instead of 0.15s and delivered five
+# high-priority messages for two stages.
+_MILESTONE_TITLE_PREFIXES = (
+    "Operator Action Suspended",
+    "Stage Waiting",
+    "Stage Failed",
+    "Stage Rejected",
+    "Rollback",
+    "Lightflow ",
+)
+
+
+def _notification_mode() -> str:
+  """Returns `milestones` (default), `all`, or `off` from LIGHTFLOW_NOTIFY."""
+  mode = os.environ.get("LIGHTFLOW_NOTIFY", "milestones").strip().lower()
+  return mode if mode in ("milestones", "all", "off") else "milestones"
 
 
 def send_notification(title: str, content: str) -> None:
-  """Sends an asynchronous push notification to Antigravity or custom hooks."""
-  for handler in list(_CUSTOM_NOTIFIERS):
+  """Sends an asynchronous push notification to Antigravity or custom hooks.
+
+  Custom handlers registered via `register_notification_handler` receive
+  every event. The `agentapi` push to the hosting agent is filtered by
+  `LIGHTFLOW_NOTIFY`: `milestones` (default) forwards only gate suspensions,
+  failures, rejections, rollbacks, and the final run outcome; `all` forwards
+  every stage transition; `off` disables the push.
+
+  Args:
+    title: Short event title, e.g. "Stage Failed: publish".
+    content: One-line human-readable body.
+  """
+  for handler in list(_NOTIFICATION_HANDLERS):
     try:
       handler(title, content)
     except Exception:  # pylint: disable=broad-exception-caught
       pass
+
+  mode = _notification_mode()
+  if mode == "off":
+    return
+  if mode == "milestones" and not title.startswith(_MILESTONE_TITLE_PREFIXES):
+    return
 
   conv_id = os.environ.get("ANTIGRAVITY_CONVERSATION_ID")
   if not conv_id:
@@ -710,6 +864,12 @@ STAGE_OUTPUTS_KEY = "outputs"
 # stage as blocked rather than as a failure needing a fix.
 UPSTREAM_FAILED_MESSAGE = "Failed: Upstream dependency failed."
 
+# Substring of the FAILED stamp a polling stage writes when it gives up
+# waiting (timeout or max_attempts). Nothing is broken in that case: the run
+# is parked until an external condition is met, and `status`/`resume` treat
+# it as WAITING rather than as a failure to fix.
+POLL_YIELD_MARKER = "Yielding control back to operator/agent"
+
 # Terminal statuses a trigger rule can assign without running the stage, and the
 # icon announced for each. Any other status (e.g. STATUS_UNSPECIFIED while
 # parents are still running) is not a lifecycle transition and is not announced.
@@ -747,15 +907,193 @@ def merge_stage_payload(
     payload_dict: dict[str, Any],
     stage_name: str,
     stage_output: dict[str, Any],
-) -> None:
-  """Merges stage output into payload (excluding reserved `outputs`) and records under `payload.outputs.<stage_name>`."""
+) -> list[tuple[str, str]]:
+  """Merges stage output into the payload and records it under `outputs`.
+
+  Every key of `stage_output` (except the reserved `outputs`) is written to
+  the top level of the payload *and* mirrored under
+  `payload.outputs.<stage_name>`. The top level is last-writer-wins, so a
+  later stage returning the same key as an earlier one silently changes what
+  `payload.<key>` means for everything downstream. Such overwrites are
+  detected here and returned so callers can surface them.
+
+  Args:
+    payload_dict: The live payload, mutated in place.
+    stage_name: The stage whose output is being merged.
+    stage_output: The dict returned by the stage's action.
+
+  Returns:
+    A list of `(key, previous_owner)` pairs for every top-level key whose
+    value this merge changed, where `previous_owner` is the stage that last
+    produced the prior value or `"initial payload"` if no stage did.
+  """
+  collisions: list[tuple[str, str]] = []
   for key, value in stage_output.items():
-    if key != STAGE_OUTPUTS_KEY:
-      payload_dict[key] = value
+    if key == STAGE_OUTPUTS_KEY:
+      continue
+    if key in payload_dict and payload_dict[key] != value:
+      previous_owner = _top_level_key_owner(
+          payload_dict, key, prefer=stage_name
+      )
+      # A stage replacing a value it wrote itself (poll ticks, retries,
+      # rollbacks) is progress, not a collision.
+      if previous_owner != stage_name:
+        collisions.append((key, previous_owner))
+    payload_dict[key] = value
   record_stage_outputs(payload_dict, stage_name, stage_output)
+  return collisions
+
+
+def _top_level_key_owner(
+    payload_dict: dict[str, Any], key: str, *, prefer: str = ""
+) -> str:
+  """Names the stage whose recorded output matches the top-level `key` value.
+
+  Args:
+    payload_dict: The payload to inspect.
+    key: The top-level key whose current value should be attributed.
+    prefer: A stage to check first, so that a stage re-writing its own value is
+      attributed to itself even if another stage happened to emit the same value
+      earlier.
+
+  Returns:
+    The owning stage name, or `"initial payload"` if no recorded stage output
+    matches the current value (i.e. it came from `--payload` or a legacy run).
+  """
+  outputs = payload_dict.get(STAGE_OUTPUTS_KEY)
+  current = payload_dict.get(key)
+  if not isinstance(outputs, dict):
+    return "initial payload"
+  candidates = list(outputs.items())
+  if prefer and prefer in outputs:
+    candidates.sort(key=lambda item: item[0] != prefer)
+  for owner, recorded in candidates:
+    if (
+        isinstance(recorded, dict)
+        and key in recorded
+        and recorded[key] == current
+    ):
+      return str(owner)
+  return "initial payload"
+
+
+def top_level_key_provenance(
+    payload_dict: dict[str, Any],
+) -> dict[str, tuple[str, list[str]]]:
+  """Maps each top-level payload key to `(owner, other_stages_that_set_it)`.
+
+  Used by `status --verbose` so a reader can tell which stage a top-level
+  value came from, and which other stages also emitted that key (and were
+  therefore overwritten, or will overwrite it if re-run).
+
+  Args:
+    payload_dict: The payload to inspect.
+
+  Returns:
+    A dict keyed by top-level payload key (excluding `outputs`).
+  """
+  outputs = payload_dict.get(STAGE_OUTPUTS_KEY)
+  provenance: dict[str, tuple[str, list[str]]] = {}
+  for key in payload_dict:
+    if key == STAGE_OUTPUTS_KEY:
+      continue
+    owner = _top_level_key_owner(payload_dict, key)
+    others: list[str] = []
+    if isinstance(outputs, dict):
+      others = [
+          str(stage)
+          for stage, recorded in outputs.items()
+          if stage != owner and isinstance(recorded, dict) and key in recorded
+      ]
+    provenance[key] = (owner, others)
+  return provenance
+
+
+def _print_merge_collisions(
+    stage_name: str,
+    collisions: list[tuple[str, str]],
+    keys_read: Collection[str],
+) -> None:
+  """Warns about overwritten top-level keys that an expression reads.
+
+  Two stages emitting the same key is normal (one reusable action run from
+  two stages); it only matters when a `run_if` / `condition` /
+  `instructions` reads the top-level mirror `payload.<key>` and will now
+  see the later stage's value.
+
+  Args:
+    stage_name: The stage whose output was just merged.
+    collisions: `(key, previous_owner)` pairs from `merge_stage_payload`.
+    keys_read: Top-level keys some expression in the manifest reads.
+  """
+  for key, previous_owner in collisions:
+    if key not in keys_read:
+      continue
+    print(
+        f"  ⚠️ [{stage_name}] overwrote top-level payload.{key} (previously"
+        f" set by {previous_owner}), which an expression reads; use"
+        f" payload.outputs.<stage>.{key} to be explicit.",
+        flush=True,
+    )
 
 
 _LOADED_MODULE_HASHES: dict[str, bytes] = {}
+
+
+def payload_to_dict(payload: schema.StructDict) -> dict[str, Any]:
+  """Returns a Passport payload as a plain dict (whole floats as ints)."""
+  return normalize_struct_numbers(payload.to_dict())
+
+
+def set_payload(
+    payload: schema.StructDict, payload_dict: dict[str, Any]
+) -> None:
+  """Replaces a Passport payload's contents with `payload_dict`."""
+  payload.CopyFrom(payload_dict)
+
+
+def passport_to_json(passport: schema.Passport) -> str:
+  """Serialises a Passport for `passport.json`."""
+  return json.dumps(passport.to_dict(), indent=2)
+
+
+def passport_from_json(text: str) -> schema.Passport:
+  """Parses `passport.json` text, tolerating unknown fields."""
+  return schema.Passport.from_dict(json.loads(text))
+
+
+def static_kwargs_dict(action: schema.PythonAction) -> dict[str, Any]:
+  """Returns an action's `static_kwargs` as a plain dict."""
+  return normalize_struct_numbers(dict(action.static_kwargs))
+
+
+def load_lightflow(path: str) -> schema.Lightflow:
+  """Parses the manifest at `path` (YAML, JSON, or textproto)."""
+  return schema.load_lightflow(path)
+
+
+def resolve_lightflow_path(lightflow_path: str) -> str:
+  """Resolves a manifest file path, or a directory holding a default one."""
+  resolved = schema.resolve_lightflow_path(lightflow_path)
+  if os.path.isdir(resolved):
+    raise FileNotFoundError(
+        "No Lightflow manifest (lightflow.yaml, lightflow.yml, lightflow.json,"
+        f" lightflow.textproto) found in directory: {lightflow_path}"
+    )
+  return resolved
+
+
+def validate_json_schema(instance: Any, schema_dict: dict[str, Any]) -> None:
+  """Validates `instance` against a JSON schema; raises ValueError if not."""
+  try:
+    schema.validate_json_schema(instance=instance, schema_dict=schema_dict)
+  except Exception as e:  # pylint: disable=broad-exception-caught
+    raise ValueError(str(e)) from e
+
+
+def check_json_schema(schema_dict: dict[str, Any]) -> None:
+  """Raises if `schema_dict` is not itself a valid JSON schema."""
+  schema.check_json_schema(schema_dict)
 
 
 def _file_fingerprint(path: str) -> Optional[bytes]:
@@ -767,18 +1105,120 @@ def _file_fingerprint(path: str) -> Optional[bytes]:
     return None
 
 
-def _normalize_static_kwargs(value: Any) -> Any:
+def normalize_struct_numbers(value: Any) -> Any:
   """Normalizes struct numbers: converts whole floats to int."""
   if isinstance(value, float) and value.is_integer():
     return int(value)
   if isinstance(value, dict):
-    return {k: _normalize_static_kwargs(v) for k, v in value.items()}
+    return {k: normalize_struct_numbers(v) for k, v in value.items()}
   if isinstance(value, list):
-    return [_normalize_static_kwargs(item) for item in value]
+    return [normalize_struct_numbers(item) for item in value]
   return value
 
 
 # ------------------- LIGHTFLOW ENGINE -------------------
+
+
+def effective_retry_policy(
+    policy: Optional[schema.RetryPolicy],
+) -> tuple[int, int, float]:
+  """Returns `(max_attempts, initial_backoff_seconds, backoff_multiplier)`.
+
+  Single source of the defaults (1 attempt, 5s, x2.0) so `execute_stage` and
+  the dry-run policy printout cannot disagree.
+
+  Args:
+    policy: The stage's `RetryPolicy`, or None when it has none.
+  """
+  if policy is None:
+    return 1, 5, 2.0
+  attempts = (
+      policy.max_attempts
+      if policy.HasField("max_attempts") and policy.max_attempts is not None
+      else 1
+  )
+  backoff = (
+      policy.initial_backoff_seconds
+      if policy.HasField("initial_backoff_seconds")
+      and policy.initial_backoff_seconds is not None
+      else 5
+  )
+  multiplier = (
+      policy.backoff_multiplier
+      if policy.HasField("backoff_multiplier")
+      and policy.backoff_multiplier is not None
+      else 2.0
+  )
+  return attempts, backoff, multiplier
+
+
+def _did_you_mean(name: str, candidates: Any) -> str:
+  """Returns " Did you mean 'x'?" for the closest candidate, or "".
+
+  Args:
+    name: The unknown identifier.
+    candidates: Known identifiers to compare against.
+  """
+  matches = difflib.get_close_matches(
+      str(name), [str(c) for c in candidates], n=1, cutoff=0.6
+  )
+  return f" Did you mean '{matches[0]}'?" if matches else ""
+
+
+def _payload_placeholder(json_schema: Any) -> str:
+  """Renders a pasteable `--payload` for a gate schema, or "" if none needed.
+
+  `--resolution` already sets `approved`, so a schema that requires nothing
+  else needs no `--payload` at all. Otherwise each remaining required key gets
+  a typed placeholder (`"ticket": "<string>"`), which beats the generic
+  `<JSON matching the stage json_schema>` because it can be edited in place.
+
+  Args:
+    json_schema: The gate's JSON schema (string or parsed dict), or empty.
+
+  Returns:
+    The `--payload='...'` argument to append, or "" when none is needed.
+  """
+  if not json_schema:
+    return ""
+  schema_obj: Any = json_schema
+  if isinstance(json_schema, str):
+    try:
+      schema_obj = json.loads(json_schema)
+    except (TypeError, ValueError):
+      return "--payload='<JSON matching the stage json_schema>'"
+  if not isinstance(schema_obj, dict):
+    return "--payload='<JSON matching the stage json_schema>'"
+  required = [k for k in schema_obj.get("required") or [] if k != "approved"]
+  if not required:
+    return ""
+  props = schema_obj.get("properties") or {}
+  parts = []
+  for key in required:
+    spec = props.get(key) if isinstance(props, dict) else None
+    spec = spec if isinstance(spec, dict) else {}
+    choices = list(spec["enum"]) if spec.get("enum") else []
+    if "const" in spec:
+      choices = [spec["const"]]
+    if len(choices) == 1:
+      # Only one legal value: write it, so the command pastes as-is.
+      value = json.dumps(choices[0])
+    elif choices and all(isinstance(v, str) for v in choices):
+      value = '"<' + "|".join(choices) + '>"'
+    elif choices:
+      value = "<" + "|".join(json.dumps(v) for v in choices) + ">"
+    else:
+      kind = spec.get("type")
+      kind = kind[0] if isinstance(kind, list) and kind else kind
+      value = {
+          "integer": "<integer>",
+          "number": "<number>",
+          "boolean": "<true|false>",
+          "array": "[...]",
+          "object": "{...}",
+      }.get(str(kind), '"<string>"')
+    parts.append(f'"{key}": {value}')
+  return "--payload='{" + ", ".join(parts) + "}'"
 
 
 class LightflowEngine:
@@ -821,6 +1261,16 @@ class LightflowEngine:
     self._stages_by_name: dict[str, schema.Stage] = {
         stage.name: stage for stage in self.lightflow.stages
     }
+    # Top-level payload keys some expression in this lightflow reads as
+    # `payload.<key>`; filled in by `compile()`. Overwrites of any other
+    # key cannot change what an expression sees, so they are not warned
+    # about.
+    self._top_level_keys_read: set[str] = set()
+
+  @property
+  def top_level_keys_read(self) -> frozenset[str]:
+    """Top-level keys read by an expression (`payload.<key>`), per `compile()`."""
+    return frozenset(self._top_level_keys_read)
 
   @property
   def workflow(self) -> schema.Lightflow:
@@ -837,6 +1287,11 @@ class LightflowEngine:
   @workflow_path.setter
   def workflow_path(self, value: Optional[str]) -> None:
     self.lightflow_path = value
+
+  @property
+  def _strict_expressions(self) -> bool:
+    """Whether the manifest opted into strict expression field access."""
+    return bool(self.lightflow.strict_expressions)
 
   def get_stage(self, stage_name: str) -> Optional[schema.Stage]:
     """Returns the stage object by name, or None if not found."""
@@ -865,70 +1320,113 @@ class LightflowEngine:
     """Returns the runner target or CLI command prefix to resume the lightflow."""
     if self.lightflow.runner_target:
       return self.lightflow.runner_target
-    argv0 = (sys.argv[0] if sys.argv else "").replace("\\", "/")
-    if argv0.endswith("lightflow/__main__.py"):
+    argv0 = sys.argv[0] if sys.argv else ""
+    normalized = argv0.replace("\\", "/")
+    # Under ``python -m pkg.mod`` the interpreter rewrites argv[0] to the
+    # module's file path, so argv[0] alone cannot distinguish ``-m`` from a
+    # direct ``python path/to/runner.py``; ``__main__.__spec__`` can (it is
+    # only populated for ``-m`` / package execution).
+    main_spec = getattr(sys.modules.get("__main__"), "__spec__", None)
+    main_name = getattr(main_spec, "name", "") or ""
+    if main_name == "lightflow.__main__" or main_name == "lightflow":
       return "python3 -m lightflow"
-    if argv0.endswith("lightflow/runner.py"):
+    if main_name == "lightflow.runner":
       return "python3 -m lightflow.runner"
+    if normalized.endswith(("lightflow/__main__.py", "lightflow/runner.py")):
+      # Direct script invocation from a source checkout: echo the path the
+      # user typed so the hint is copy-pasteable from their cwd.
+      return f"python3 {_quote_cli_arg(argv0)}"
+    if os.path.basename(normalized) == "lightflow":
+      # Installed console script (``pip install lightflow-dag``).
+      return "lightflow"
     return ""
 
   _resume_target = resume_target
+
+  def resume_prefix(self) -> str:
+    """Returns the CLI prefix that resumes this run.
+
+    `python3 -m lightflow`, the script path, or the `lightflow` console
+    script, depending on how this process was started.
+    """
+    return self._resume_target() or "lightflow"
 
   def build_resume_command(
       self, stage_name: str, operator_action: schema.OperatorAction
   ) -> str:
     """Renders the copy-pasteable command that resolves a paused gate."""
-    if not self.lightflow_path or not self.log_id:
+    if not self.log_id:
       return ""
 
+    # No --lightflow: the run records its manifest on `start`, so the command
+    # works from any cwd and survives a `resume --lightflow=<moved>`.
     args = [
         "resume",
-        f"--lightflow={_quote_cli_arg(self.lightflow_path)}",
         f"--log_id={_quote_cli_arg(self.log_id)}",
         f"--stage={_quote_cli_arg(stage_name)}",
         "--resolution=APPROVE",
     ]
-    if operator_action.json_schema:
-      args.append("--payload='<JSON matching the stage json_schema>'")
+    placeholder = _payload_placeholder(operator_action.json_schema)
+    if placeholder:
+      args.append(placeholder)
 
-    target = self._resume_target()
-    prefix = f"{target} " if target else "lightflow "
-    return prefix + " ".join(args)
+    return f"{self.resume_prefix()} " + " ".join(args)
 
   def compile(self) -> list[str]:
     """Sorts the workflow stages topologically and returns execution order."""
-    seen_actions: set[str] = set()
+    action_ids: set[str] = set()
     for action in self.workflow.actions:
       if not action.id or not action.id.strip():
         raise EngineError("Action definition is missing a non-empty 'id'.")
-      if action.id in seen_actions:
-        raise EngineError(f"Duplicate action ID '{action.id}' in workflow.")
-      seen_actions.add(action.id)
+      if action.id in action_ids:
+        raise EngineError(
+            f"Action ID '{action.id}' is defined more than once under"
+            " workflow.actions."
+        )
+      action_ids.add(action.id)
 
-    seen_stages: set[str] = set()
+    stage_names: set[str] = set()
+    for stage in self.workflow.stages:
+      if not stage.name or not stage.name.strip():
+        raise EngineError("Stage definition is missing a non-empty 'name'.")
+      if stage.name in stage_names:
+        raise EngineError(
+            f"Stage name '{stage.name}' is used by more than one stage. Stage"
+            " names must be unique."
+        )
+      if not stage.name.isidentifier() or keyword.iskeyword(stage.name):
+        reason = (
+            "a Python keyword"
+            if keyword.iskeyword(stage.name)
+            else "not a valid identifier"
+        )
+        raise EngineError(
+            f"Stage name '{stage.name}' is {reason}. Stage names are used for"
+            " dotted access in expressions (payload.outputs.<name>.<key>), so"
+            " use letters, digits, and underscores, starting with a letter or"
+            " underscore."
+        )
+      stage_names.add(stage.name)
+
     ts = graphlib.TopologicalSorter()
     parsed_expressions: dict[
         str, list[tuple[str, Optional[ast.Expression]]]
     ] = {}
     for stage in self.workflow.stages:
-      if not stage.name or not stage.name.strip():
-        raise EngineError("Stage definition is missing a non-empty 'name'.")
-      if stage.name in seen_stages:
-        raise EngineError(f"Duplicate stage name '{stage.name}' in workflow.")
-      seen_stages.add(stage.name)
-
       for dep in stage.run_after:
         if dep not in self._stages_by_name:
           raise EngineError(
               f"Stage '{stage.name}' depends on non-existent stage '{dep}'."
+              + _did_you_mean(dep, self._stages_by_name)
           )
       if stage.HasField("python_action") and stage.python_action:
         action_id = stage.python_action.action_id
         if action_id not in self._action_imports:
           raise EngineError(
               f"Stage '{stage.name}' references unregistered action ID"
-              f" '{action_id}'. Defined actions:"
-              f" {list(self._action_imports.keys())}"
+              f" '{action_id}'."
+              + _did_you_mean(action_id, self._action_imports)
+              + f" Defined actions: {list(self._action_imports.keys())}"
           )
       if (
           stage.HasField("polling_policy")
@@ -1114,7 +1612,7 @@ class LightflowEngine:
       ):
         try:
           schema_dict = json.loads(stage.operator_action.json_schema)
-          schema.check_json_schema(schema_dict)
+          check_json_schema(schema_dict)
         except Exception as e:
           raise EngineError(
               f"Stage '{stage.name}': operator_action has an invalid"
@@ -1138,6 +1636,10 @@ class LightflowEngine:
       raise EngineError(f"Workflow contains cyclical dependencies: {e}") from e
 
     self._validate_payload_output_dependencies(parsed_expressions)
+    self._top_level_keys_read = set()
+    for trees in parsed_expressions.values():
+      for _, tree in trees:
+        self._top_level_keys_read.update(extract_top_level_payload_refs(tree))
     return execution_order
 
   def _validate_payload_output_dependencies(
@@ -1162,7 +1664,7 @@ class LightflowEngine:
     for stage in self.workflow.stages:
       ancestors = ancestors_by_stage.get(stage.name, set())
       for field_label, tree in parsed_expressions.get(stage.name, ()):
-        for ref_stage in _extract_payload_output_stage_refs(tree):
+        for ref_stage in extract_payload_output_stage_refs(tree):
           if ref_stage not in self._stages_by_name:
             raise EngineError(
                 f"Stage '{stage.name}' ({field_label}) references"
@@ -1316,7 +1818,20 @@ class LightflowEngine:
               importlib.invalidate_caches()
           break
 
-    module = importlib.import_module(module_path)
+    try:
+      module = importlib.import_module(module_path)
+    except ModuleNotFoundError as e:
+      looked = (
+          os.path.dirname(os.path.abspath(self.lightflow_path))
+          if self.lightflow_path
+          else "the current directory"
+      )
+      raise EngineError(
+          f"Cannot import '{python_import}' for action '{action_id}':"
+          f" {e}. Lightflow resolves python_import relative to the manifest's"
+          f" directory ({looked}) and sys.path; if the manifest moved, move"
+          " its actions module with it (or set PYTHONPATH)."
+      ) from e
     mod_file = getattr(module, "__file__", None)
     if mod_file and os.path.isfile(mod_file):
       real_mod_file = os.path.realpath(mod_file)
@@ -1338,7 +1853,7 @@ class LightflowEngine:
     del stage_name
     action_id = action.action_id
     func = self._resolve_action_callable(action_id)
-    static_kwargs = _normalize_static_kwargs(dict(action.static_kwargs))
+    static_kwargs = static_kwargs_dict(action)
 
     res = func(copy.deepcopy(payload_dict), **static_kwargs)
     payload_res = res[0] if isinstance(res, tuple) and len(res) == 2 else res
@@ -1377,7 +1892,7 @@ class LightflowEngine:
       return None
 
     try:
-      static_kwargs = _normalize_static_kwargs(dict(action.static_kwargs))
+      static_kwargs = static_kwargs_dict(action)
       static_kwargs["dry_run"] = True
       sim_payload = copy.deepcopy(payload_dict)
       sim_payload["dry_run"] = True
@@ -1429,7 +1944,10 @@ class LightflowEngine:
     worker.join(timeout=timeout)
     if worker.is_alive():
       raise StageTimeoutError(
-          f"Stage '{stage_name}' execution timed out after {timeout}s."
+          f"Stage '{stage_name}' exceeded timeout_seconds={timeout}. ⚠️ Its"
+          " worker thread may keep running until the process exits and its"
+          " side effects are not rolled back automatically; make the action"
+          " idempotent before retrying."
       )
     try:
       success, res = result_queue.get_nowait()
@@ -1469,7 +1987,7 @@ class LightflowEngine:
           timeout=rollback_timeout,
       )
       merge_stage_payload(payload_dict, stage_name, rollback_payload)
-      passport.payload.CopyFrom(payload_dict)
+      set_payload(passport.payload, payload_dict)
       suffix = f": {rollback_msg}" if rollback_msg else "."
       failed_stamp.message += f"\nRollback executed successfully{suffix}"
       print(f"  Rollback executed successfully{suffix}")
@@ -1564,6 +2082,19 @@ class LightflowEngine:
             "Waiting for parent stages to finish.",
         )
 
+    elif rule == schema.TriggerRule.NONE_FAILED:
+      # The join after complementary `run_if` branches: skipped upstreams are
+      # expected, failures still cascade.
+      if failed_count > 0 and unstarted_count == 0:
+        return False, schema.StampStatus.FAILED, UPSTREAM_FAILED_MESSAGE
+      if completed_count + skipped_count == total_deps:
+        return True, schema.StampStatus.PENDING, ""
+      return (
+          False,
+          schema.StampStatus.STATUS_UNSPECIFIED,
+          "Waiting for parent stages to finish.",
+      )
+
     return (
         False,
         schema.StampStatus.FAILED,
@@ -1601,19 +2132,33 @@ class LightflowEngine:
       # STATUS_UNSPECIFIED means the stage is still waiting on its parents.
       icon = _TRIGGER_NOTIFICATION_ICONS.get(target_status)
       if icon:
-        status_name = schema.StampStatus.Name(target_status).title()
-        send_notification(
-            f"Stage {status_name}: {stage_name}",
-            f"{icon} {stage_name}: {status_name.lower()}",
-        )
+        if reason == UPSTREAM_FAILED_MESSAGE:
+          # Collateral of an upstream failure, not a failure of its own: one
+          # ❌ for the root cause is enough, so this title is not a milestone.
+          print(f"  ⛔ [{stage_name}] blocked: upstream failed", flush=True)
+          send_notification(
+              f"Stage Blocked: {stage_name}", f"⛔ {stage_name}: blocked"
+          )
+        else:
+          status_name = schema.StampStatus.Name(target_status).title()
+          # Stamp messages carry a "Skipped: " prefix; the line already
+          # says so.
+          why = reason.removeprefix("Skipped: ")
+          print(f"  ⏭️ [{stage_name}] skipped: {why}", flush=True)
+          send_notification(
+              f"Stage {status_name}: {stage_name}",
+              f"{icon} {stage_name}: {status_name.lower()}",
+          )
       return passport
 
-    payload_dict = passport.payload.to_dict()
+    payload_dict = payload_to_dict(passport.payload)
 
     # 1. Evaluate skip condition if set
     if stage.run_if:
       try:
-        should_run = evaluate_cel(stage.run_if, payload_dict)
+        should_run = evaluate_cel(
+            stage.run_if, payload_dict, strict=self._strict_expressions
+        )
       except Exception as e:  # pylint: disable=broad-exception-caught
         failed_stamp = passport.stamps.add()
         failed_stamp.stage_name = stage_name
@@ -1634,6 +2179,10 @@ class LightflowEngine:
         skipped_stamp.status = schema.StampStatus.SKIPPED
         skipped_stamp.timestamp.CopyFrom(get_timestamp())
         skipped_stamp.message = f"Skipped via condition: {stage.run_if}"
+        print(
+            f"  ⏭️ [{stage_name}] skipped: run_if is false ({stage.run_if})",
+            flush=True,
+        )
         send_notification(
             f"Stage Skipped: {stage_name}",
             f"⏭️ {stage_name}: skipped",
@@ -1681,10 +2230,16 @@ class LightflowEngine:
       elif stage.HasField("python_action") and stage.python_action is not None:
         action = stage.python_action
       else:
-        raise EngineError(
+        err_msg = (
             f"Stage '{stage_name}' has a polling policy but defines no"
             " execution actions."
         )
+        failed_stamp = passport.stamps.add()
+        failed_stamp.stage_name = stage_name
+        failed_stamp.status = schema.StampStatus.FAILED
+        failed_stamp.timestamp.CopyFrom(get_timestamp())
+        failed_stamp.message = err_msg
+        raise EngineError(err_msg)
 
       start_time = time.monotonic()
       attempts = 0
@@ -1695,10 +2250,14 @@ class LightflowEngine:
           new_payload, message = self._execute_action_with_timeout(
               stage_name, action, payload_dict, timeout=tick_timeout
           )
-          merge_stage_payload(payload_dict, stage_name, new_payload)
+          _print_merge_collisions(
+              stage_name,
+              merge_stage_payload(payload_dict, stage_name, new_payload),
+              self._top_level_keys_read,
+          )
           if message:
             pending_stamp.message = message
-          passport.payload.CopyFrom(payload_dict)
+          set_payload(passport.payload, payload_dict)
           if save_callback:
             save_callback(passport)
         except Exception as e:  # pylint: disable=broad-exception-caught
@@ -1719,7 +2278,9 @@ class LightflowEngine:
           return passport
 
         try:
-          condition_passed = evaluate_cel(policy.condition, payload_dict)
+          condition_passed = evaluate_cel(
+              policy.condition, payload_dict, strict=self._strict_expressions
+          )
         except Exception as e:  # pylint: disable=broad-exception-caught
           failed_stamp = passport.stamps.add()
           failed_stamp.stage_name = stage_name
@@ -1738,7 +2299,7 @@ class LightflowEngine:
           return passport
 
         if condition_passed:
-          passport.payload.CopyFrom(payload_dict)
+          set_payload(passport.payload, payload_dict)
           completed_stamp = passport.stamps.add()
           completed_stamp.stage_name = stage_name
           completed_stamp.status = schema.StampStatus.COMPLETED
@@ -1755,6 +2316,11 @@ class LightflowEngine:
               f"✅ {stage_name}: completed",
           )
           return passport
+
+        # Echo tick progress before the threshold check so the final tick's
+        # message is still visible on the console when polling yields.
+        if message:
+          print(f"  ⏳ [{stage_name}] {message}", flush=True)
 
         elapsed = time.monotonic() - start_time
         if (timeout > 0 and elapsed >= timeout) or (
@@ -1784,46 +2350,27 @@ class LightflowEngine:
           failed_stamp.timestamp.CopyFrom(get_timestamp())
           failed_stamp.message = err_msg
 
+          print(f"  ⏳ [{stage_name}] {err_msg}", flush=True)
           send_notification(
-              f"Stage Failed: {stage_name}",
-              f"❌ {stage_name}: failed",
+              f"Stage Waiting: {stage_name}",
+              f"⏳ {stage_name}: waiting for an external condition",
           )
-          self.run_rollback_if_defined(
-              stage_name, stage, passport, payload_dict, failed_stamp
-          )
+          # A yield is a pause, not a failure: the external job is still
+          # running and `resume` polls it again, so no rollback here.
           return passport
 
-        if message:
-          print(f"  ⏳ [{stage_name}] {message}", flush=True)
         time.sleep(interval)
 
     # 4. Handle Standard Python Action Execution
     elif stage.HasField("python_action") and stage.python_action:
       python_action = stage.python_action
-      max_attempts = 1
-      initial_backoff = 5
-      backoff_multiplier = 2.0
-
-      if stage.HasField("retry_policy") and stage.retry_policy:
-        policy = stage.retry_policy
-        max_attempts = (
-            policy.max_attempts
-            if policy.HasField("max_attempts")
-            and policy.max_attempts is not None
-            else 1
-        )
-        initial_backoff = (
-            policy.initial_backoff_seconds
-            if policy.HasField("initial_backoff_seconds")
-            and policy.initial_backoff_seconds is not None
-            else 5
-        )
-        backoff_multiplier = (
-            policy.backoff_multiplier
-            if policy.HasField("backoff_multiplier")
-            and policy.backoff_multiplier is not None
-            else 2.0
-        )
+      max_attempts, initial_backoff, backoff_multiplier = (
+          effective_retry_policy(
+              stage.retry_policy
+              if stage.HasField("retry_policy") and stage.retry_policy
+              else None
+          )
+      )
 
       timeout = (
           stage.timeout_seconds if stage.HasField("timeout_seconds") else None
@@ -1838,8 +2385,12 @@ class LightflowEngine:
               stage_name, python_action, payload_dict, timeout=timeout
           )
 
-          merge_stage_payload(payload_dict, stage_name, new_payload)
-          passport.payload.CopyFrom(payload_dict)
+          _print_merge_collisions(
+              stage_name,
+              merge_stage_payload(payload_dict, stage_name, new_payload),
+              self._top_level_keys_read,
+          )
+          set_payload(passport.payload, payload_dict)
 
           completed_stamp = passport.stamps.add()
           completed_stamp.stage_name = stage_name
@@ -1879,7 +2430,11 @@ class LightflowEngine:
           failed_stamp.stage_name = stage_name
           failed_stamp.status = schema.StampStatus.FAILED
           failed_stamp.timestamp.CopyFrom(get_timestamp())
-          failed_stamp.message = f"Engine error: {e}"
+          failed_stamp.message = (
+              str(e)
+              if isinstance(e, StageTimeoutError)
+              else f"Engine error: {e}"
+          )
 
           send_notification(
               f"Stage Failed: {stage_name}",
@@ -1896,8 +2451,9 @@ class LightflowEngine:
             failed_stamp.status = schema.StampStatus.FAILED
             failed_stamp.timestamp.CopyFrom(get_timestamp())
             failed_stamp.message = (
-                f"Failed after {attempts} attempts. Last error: {e}\n"
-                f"{traceback.format_exc()}"
+                f"Failed after {attempts}"
+                f" attempt{'s' if attempts != 1 else ''}. Last error:"
+                f" {e}\n{traceback.format_exc()}"
             )
 
             send_notification(
@@ -1926,7 +2482,11 @@ class LightflowEngine:
       operator_action = stage.operator_action
       try:
         instructions = str(
-            evaluate_cel(operator_action.instructions, payload_dict)
+            evaluate_cel(
+                operator_action.instructions,
+                payload_dict,
+                strict=self._strict_expressions,
+            )
         )
         if not instructions.strip():
           raise ValueError(

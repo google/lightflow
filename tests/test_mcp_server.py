@@ -83,6 +83,7 @@ class McpServerJsonRpcTest(unittest.TestCase):
             "run_lightflow",
             "resume_lightflow",
             "get_lightflow_status",
+            "list_lightflow_runs",
             "dry_run_lightflow",
             "visualize_lightflow",
         ],
@@ -151,7 +152,12 @@ stages:
         run_data["json_schema"],
         {"type": "object", "required": ["confirmed"]},
     )
-    self.assertIn("```mermaid", run_data["mermaid_diagram"])
+    # Compact: per-stage list + stdout, no diagram (ask status verbose=true).
+    self.assertNotIn("mermaid_diagram", run_data)
+    self.assertEqual(run_data["state"], "SUSPENDED")
+    run_stage_status = {s["name"]: s["status"] for s in run_data["stages"]}
+    self.assertEqual(run_stage_status["confirm_gate"], "PAUSED")
+    self.assertIn("[compute_stage] Computed 99 items", run_data["stdout"])
 
     # 3. Get Lightflow Status
     status_resp = mcp_server.handle_jsonrpc_message({
@@ -172,7 +178,38 @@ stages:
     self.assertTrue(status_data["exists"])
     self.assertEqual(status_data["paused_stage"], "confirm_gate")
     self.assertEqual(status_data["exit_code"], 2)
-    self.assertIn("```mermaid", status_data["mermaid_diagram"])
+    self.assertEqual(status_data["state"], "SUSPENDED")
+    # Compact by default: a per-stage list, no stamp log / diagram.
+    self.assertEqual(
+        [(s["name"], s["status"]) for s in status_data["stages"]],
+        [
+            ("compute_stage", "COMPLETED"),
+            ("confirm_gate", "PAUSED"),
+            ("final_stage", "NOT_STARTED"),
+        ],
+    )
+    self.assertNotIn("mermaid_diagram", status_data)
+    self.assertNotIn("stamps", status_data)
+    self.assertEqual(status_resp["result"]["structuredContent"], status_data)
+
+    # 3a. verbose=true adds the diagram, the stamp log and the CLI text.
+    verbose_resp = mcp_server.handle_jsonrpc_message({
+        "jsonrpc": "2.0",
+        "id": 121,
+        "method": "tools/call",
+        "params": {
+            "name": "get_lightflow_status",
+            "arguments": {
+                "lightflow": manifest_path,
+                "log_id": "mcp_run_01",
+                "verbose": True,
+            },
+        },
+    })
+    assert verbose_resp is not None
+    verbose_data = json.loads(verbose_resp["result"]["content"][0]["text"])
+    self.assertIn("```mermaid", verbose_data["mermaid_diagram"])
+    self.assertIn("stamps", verbose_data["passport"])
 
     # 3b. Status on an unknown log ID is a result, not a tool error.
     missing_resp = mcp_server.handle_jsonrpc_message({
@@ -287,6 +324,95 @@ stages:
     parsed = json.loads(out_line)
     self.assertEqual(parsed["id"], 99)
 
+  def test_mcp_list_runs_and_status_without_manifest(self) -> None:
+    module_name = __name__
+    manifest_path = os.path.join(self.temp_dir, "mcp_list_wf.yaml")
+    with open(manifest_path, "w", encoding="utf-8") as f:
+      f.write(f"""
+name: mcp_list_pipeline
+actions:
+  - id: compute
+    python_import: {module_name}.mcp_test_action
+stages:
+  - name: compute_stage
+    python_action:
+      action_id: compute
+  - name: confirm_gate
+    run_after: [compute_stage]
+    operator_action:
+      instructions: "'Confirm?'"
+""")
+    run_resp = mcp_server.handle_jsonrpc_message({
+        "jsonrpc": "2.0",
+        "id": 301,
+        "method": "tools/call",
+        "params": {
+            "name": "run_lightflow",
+            "arguments": {"lightflow": manifest_path, "log_id": "mcp_list_run"},
+        },
+    })
+    assert run_resp is not None
+    self.assertEqual(
+        json.loads(run_resp["result"]["content"][0]["text"])["status"],
+        "SUSPENDED",
+    )
+
+    list_resp = mcp_server.handle_jsonrpc_message({
+        "jsonrpc": "2.0",
+        "id": 302,
+        "method": "tools/call",
+        "params": {"name": "list_lightflow_runs", "arguments": {}},
+    })
+    assert list_resp is not None
+    listed = json.loads(list_resp["result"]["content"][0]["text"])
+    by_id = {r["log_id"]: r for r in listed["runs"]}
+    self.assertIn("mcp_list_run", by_id)
+    self.assertEqual(
+        by_id["mcp_list_run"]["lightflow_name"], "mcp_list_pipeline"
+    )
+    self.assertEqual(by_id["mcp_list_run"]["state"], "PAUSED")
+    self.assertEqual(
+        by_id["mcp_list_run"]["lightflow_path"], os.path.abspath(manifest_path)
+    )
+
+    # `lightflow` is optional on get_lightflow_status for recorded runs.
+    status_resp = mcp_server.handle_jsonrpc_message({
+        "jsonrpc": "2.0",
+        "id": 303,
+        "method": "tools/call",
+        "params": {
+            "name": "get_lightflow_status",
+            "arguments": {"log_id": "mcp_list_run"},
+        },
+    })
+    assert status_resp is not None
+    status_data = json.loads(status_resp["result"]["content"][0]["text"])
+    self.assertFalse(status_resp["result"]["isError"])
+    self.assertEqual(status_data["exit_code"], 2)
+    self.assertEqual(status_data["paused_stage"], "confirm_gate")
+    self.assertEqual(status_data["state"], "SUSPENDED")
+    self.assertNotIn("mermaid_diagram", status_data)
+
+    # Resume without `lightflow` either: the run remembers its manifest.
+    resume_resp = mcp_server.handle_jsonrpc_message({
+        "jsonrpc": "2.0",
+        "id": 33,
+        "method": "tools/call",
+        "params": {
+            "name": "resume_lightflow",
+            "arguments": {
+                "log_id": "mcp_list_run",
+                "stage": "confirm_gate",
+                "resolution": "APPROVE",
+            },
+        },
+    })
+    assert resume_resp is not None
+    self.assertFalse(resume_resp["result"]["isError"])
+    resume_data = json.loads(resume_resp["result"]["content"][0]["text"])
+    self.assertEqual(resume_data["status"], "COMPLETED")
+    self.assertEqual(resume_data["exit_code"], 0)
+
   def test_mcp_payload_file_support(self) -> None:
     module_name = __name__
     manifest_path = os.path.join(self.temp_dir, "mcp_pf_wf.yaml")
@@ -373,6 +499,139 @@ stages:
     resume_data = json.loads(resume_resp["result"]["content"][0]["text"])
     self.assertEqual(resume_data["status"], "COMPLETED")
     self.assertEqual(resume_data["exit_code"], 0)
+
+
+class McpContractTest(unittest.TestCase):
+  """One `state`, honest `isError`, structured `next_action`."""
+
+  def setUp(self) -> None:
+    super().setUp()
+    self.temp_dir = tempfile.mkdtemp(prefix="lightflow_mcp_contract_")
+    self.addCleanup(shutil.rmtree, self.temp_dir, True)
+    self.old_state_dir = os.environ.get("LIGHTFLOW_STATE_DIR")
+    os.environ["LIGHTFLOW_STATE_DIR"] = self.temp_dir
+    notify = mock.patch.object(mcp_server.engine, "send_notification")
+    notify.start()
+    self.addCleanup(notify.stop)
+    self.manifest = os.path.join(self.temp_dir, "gate.yaml")
+    with open(self.manifest, "w", encoding="utf-8") as f:
+      f.write(f"""
+name: contract_wf
+actions:
+  - id: compute
+    python_import: {__name__}.mcp_test_action
+stages:
+  - name: prep
+    python_action: {{action_id: compute}}
+  - name: gate
+    run_after: [prep]
+    operator_action:
+      instructions: "'Ship?'"
+      json_schema: '{{"type": "object", "required": ["approved", "ticket"], "properties": {{"ticket": {{"type": "string"}}}}}}'
+  - name: ship
+    run_after: [gate]
+    run_if: "payload.outputs.gate.approved == true"
+    python_action: {{action_id: compute}}
+""")
+
+  def tearDown(self) -> None:
+    if self.old_state_dir is None:
+      os.environ.pop("LIGHTFLOW_STATE_DIR", None)
+    else:
+      os.environ["LIGHTFLOW_STATE_DIR"] = self.old_state_dir
+    super().tearDown()
+
+  def _call(self, name: str, **arguments: Any) -> tuple[bool, dict[str, Any]]:
+    resp = mcp_server.handle_jsonrpc_message({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {"name": name, "arguments": arguments},
+    })
+    assert resp is not None
+    result = resp["result"]
+    data = json.loads(result["content"][0]["text"])
+    self.assertEqual(result["structuredContent"], data)
+    return bool(result["isError"]), data
+
+  def test_reject_is_an_outcome_with_next_action_not_an_error(self) -> None:
+    err, run = self._call("run_lightflow", lightflow=self.manifest, log_id="c1")
+    self.assertFalse(err)
+    self.assertEqual((run["state"], run["status"]), ("SUSPENDED", "SUSPENDED"))
+    self.assertEqual(run["next_action"]["tool"], "resume_lightflow")
+    self.assertEqual(run["next_action"]["required_payload_keys"], ["ticket"])
+    self.assertNotIn("Payload Schema:", run["message"])  # trimmed
+    self.assertIn("do not self-approve", run["message"])
+
+    err, rej = self._call(
+        "resume_lightflow", log_id="c1", stage="gate", resolution="REJECT"
+    )
+    self.assertFalse(err, "a deliberate rejection is not a tool error")
+    self.assertEqual((rej["state"], rej["status"]), ("REJECTED", "REJECTED"))
+    self.assertEqual(rej["exit_code"], 1)
+    self.assertEqual(rej["rejected_stage"], "gate")
+    self.assertIsNone(rej["paused_stage"])
+    self.assertEqual(rej["json_schema"]["required"], ["approved", "ticket"])
+    self.assertEqual(
+        rej["next_action"]["arguments"],
+        {"log_id": "c1", "stage": "gate", "resolution": "APPROVE"},
+    )
+    self.assertEqual(rej["next_action"]["required_payload_keys"], ["ticket"])
+
+    # status agrees: REJECTED (not FAILED), and still not an error.
+    err, st = self._call("get_lightflow_status", log_id="c1")
+    self.assertFalse(err)
+    self.assertEqual(st["state"], "REJECTED")
+    self.assertEqual(st["rejected_stage"], "gate")
+    self.assertEqual(st["next_action"]["required_payload_keys"], ["ticket"])
+
+    # Forgetting the ticket IS a call error: the schema is returned with it.
+    err, bad = self._call(
+        "resume_lightflow", log_id="c1", stage="gate", resolution="APPROVE"
+    )
+    self.assertTrue(err)
+    self.assertIn("'ticket' is a required property", bad["error"])
+    self.assertEqual(bad["state"], "REJECTED")
+    self.assertEqual(bad["json_schema"]["required"], ["approved", "ticket"])
+
+    err, ok = self._call(
+        "resume_lightflow",
+        log_id="c1",
+        stage="gate",
+        resolution="APPROVE",
+        payload={"ticket": "CHG-1"},
+    )
+    self.assertFalse(err)
+    self.assertEqual(ok["state"], "COMPLETED")
+    self.assertIsNone(ok["next_action"])
+
+  def test_genuine_failure_is_error_and_verbose_has_no_stdout(self) -> None:
+    bad = os.path.join(self.temp_dir, "bad.yaml")
+    with open(bad, "w", encoding="utf-8") as f:
+      f.write(
+          "name: bad_wf\nactions:\n  - id: c\n    python_import: nope_mod.fn\n"
+          "stages:\n  - name: s\n    python_action: {action_id: c}\n"
+      )
+    err, data = self._call("run_lightflow", lightflow=bad, log_id="c2")
+    self.assertTrue(err)
+    self.assertEqual((data["state"], data["status"]), ("FAILED", "FAILED"))
+    self.assertEqual(data["next_action"]["arguments"], {"log_id": "c2"})
+    err, verbose = self._call("get_lightflow_status", log_id="c2", verbose=True)
+    self.assertTrue(err)
+    self.assertIn("mermaid_diagram", verbose)
+    self.assertIn("stamps", verbose["passport"])
+    self.assertNotIn("stdout", verbose)
+
+  def test_not_found_and_list(self) -> None:
+    err, data = self._call("get_lightflow_status", log_id="ghost")
+    self.assertFalse(err)
+    self.assertEqual((data["state"], data["exit_code"]), ("NOT_FOUND", 3))
+    self.assertIn(self.temp_dir, data["message"])
+    self.assertIsNone(data["next_action"])
+    self._call("run_lightflow", lightflow=self.manifest, log_id="c3")
+    _, listing = self._call("list_lightflow_runs")
+    run = next(r for r in listing["runs"] if r["log_id"] == "c3")
+    self.assertEqual(run["state"], "PAUSED")
 
 
 if __name__ == "__main__":

@@ -18,10 +18,12 @@ from __future__ import annotations
 
 import ast
 import dataclasses
+import difflib
 import functools
 import inspect
 import json
 import os
+import re
 import sys
 from typing import Any
 
@@ -30,6 +32,10 @@ try:
   from . import engine
   from . import lib
 except ImportError:
+  # Fallback for running this file directly from a source checkout (e.g.
+  # ``python lightflow/runner.py``) without installing the package: put the
+  # repository root on sys.path so ``lightflow.*`` resolves as a top-level
+  # package. No-op when installed via pip (the relative import above succeeds).
   _OSS_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
   if _OSS_ROOT not in sys.path:
     sys.path.insert(0, _OSS_ROOT)
@@ -37,7 +43,7 @@ except ImportError:
   from lightflow import lib  # pyrefly: ignore[missing-import]
 # pylint: enable=g-import-not-at-top,g-bad-import-order
 
-_VERSION = "0.1.0"
+_VERSION = "0.3.0"
 
 
 def _parse_arg(val: Any) -> Any:
@@ -188,6 +194,36 @@ def _is_balanced_json_like(text: str) -> bool:
   return depth <= 0 and s[-1] in ("}", "]")
 
 
+def _render_command_help(cmd_name: str, target: Any) -> str:
+  """Renders `lightflow <cmd> --help` as flags + docstring, not a signature."""
+  doc = inspect.cleandoc(getattr(target, "__doc__", "") or "")
+  sig = getattr(target, "__signature__", None)
+  if sig is None:
+    try:
+      sig = inspect.signature(target)
+    except (ValueError, TypeError):
+      sig = None
+  flags: list[str] = []
+  if sig is not None:
+    for name, param in sig.parameters.items():
+      if param.kind not in (
+          inspect.Parameter.POSITIONAL_OR_KEYWORD,
+          inspect.Parameter.KEYWORD_ONLY,
+      ):
+        continue
+      default = param.default
+      if default is inspect.Parameter.empty:
+        flags.append(f"--{name}=<value>")
+      elif isinstance(default, bool) and not default:
+        flags.append(f"[--{name}]")
+      elif default in (None, "", "{}"):
+        flags.append(f"[--{name}=<value>]")
+      else:
+        flags.append(f"[--{name}={default}]")
+  usage = f"Usage: lightflow {cmd_name} " + " ".join(flags)
+  return f"{usage}\n\n{doc}".strip()
+
+
 def _dispatch_argv(wrapper: CliWrapper, argv: list[str]) -> None:
   """Dispatches command-line arguments to a CLI command."""
   commands = sorted(dir(wrapper))
@@ -217,9 +253,7 @@ def _dispatch_argv(wrapper: CliWrapper, argv: list[str]) -> None:
   while i < len(argv):
     tok = argv[i]
     if tok in ("-h", "--help"):
-      doc = getattr(target, "__doc__", "") or ""
-      sig = getattr(target, "__signature__", "")
-      print(f"lightflow {cmd_name}{sig}\n\n{doc}".strip())
+      print(_render_command_help(cmd_name, target))
       sys.exit(0)
     if tok.startswith("--"):
       body = tok[2:]
@@ -283,7 +317,37 @@ def _dispatch_argv(wrapper: CliWrapper, argv: list[str]) -> None:
         " instead."
     )
 
-  target(*pos_args, **kw_args)
+  try:
+    target(*pos_args, **kw_args)
+  except TypeError as e:
+    unknown = re.search(r"unexpected keyword argument '(\w+)'", str(e))
+    if not unknown:
+      raise
+    flag = unknown.group(1)
+    supported: list[str] = []
+    sig = getattr(target, "__signature__", None)
+    if sig is None:
+      try:
+        sig = inspect.signature(target)
+      except (ValueError, TypeError):
+        sig = None
+    if sig is not None:
+      supported = [
+          f"--{name}"
+          for name, param in sig.parameters.items()
+          if param.kind
+          in (
+              inspect.Parameter.POSITIONAL_OR_KEYWORD,
+              inspect.Parameter.KEYWORD_ONLY,
+          )
+      ]
+    close = difflib.get_close_matches(f"--{flag}", supported, n=1, cutoff=0.6)
+    hint = f" Did you mean '{close[0]}'?" if close else ""
+    listing = f" Supported: {', '.join(supported)}." if supported else ""
+    raise ValueError(
+        f"Unknown flag '--{flag}' for '{cmd_name}'.{hint}{listing} Run"
+        f" 'lightflow {cmd_name} --help' for details."
+    ) from None
 
 
 def run_cli() -> None:
@@ -300,8 +364,13 @@ def run_cli() -> None:
   except lib.LightflowAlreadyCompletedError as e:
     print(f"\n{e}")
     sys.exit(0)
+  except lib.LightflowWaitingError as e:
+    if not e.already_reported:
+      print(f"\n{e}")
+    sys.exit(lib.EXIT_WAITING)
   except lib.LightflowRunFailedError as e:
-    print(f"\n{e}")
+    if not e.already_reported:
+      print(f"\n{e}")
     sys.exit(lib.EXIT_FAILED)
   except lib.LightflowStateNotFoundError as e:
     print(f"\n{e}")

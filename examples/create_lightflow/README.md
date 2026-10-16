@@ -52,7 +52,7 @@ Suppose you and the agent agree to build a new workflow `hello_billing` in
 ```bash
 mkdir -p /tmp/hello_billing
 
-lightflow resume --lightflow=examples/create_lightflow/lightflow.yaml \
+lightflow resume \
   --log_id=demo_scaffold \
   --stage=align_on_design \
   --resolution=APPROVE \
@@ -76,7 +76,7 @@ def calculate_invoice(payload: dict[str, Any], **kwargs: Any) -> tuple[dict[str,
     return {"invoice_total": total}, f"Calculated invoice total ${total}"
 EOF
 
-lightflow resume --lightflow=examples/create_lightflow/lightflow.yaml \
+lightflow resume \
   --log_id=demo_scaffold \
   --stage=implement_and_test_actions \
   --resolution=APPROVE \
@@ -114,7 +114,7 @@ stages:
       json_schema: '{"type": "object", "required": ["approved"]}'
 EOF
 
-lightflow resume --lightflow=examples/create_lightflow/lightflow.yaml \
+lightflow resume \
   --log_id=demo_scaffold \
   --stage=draft_and_explain_manifest \
   --resolution=APPROVE \

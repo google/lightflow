@@ -220,12 +220,12 @@ stages:
 """,
     )
     cli = lib.LightflowRunnerCLI()
-    with self.assertRaises(engine.EngineError):
+    with self.assertRaises(lib.LightflowRunFailedError):
       cli.start(lightflow=manifest, log_id="chain_run")
     _STAGE_2_SHOULD_FAIL = False
     # cascade=False surgically re-runs only 'two'; 'three' stays FAILED until
     # resumed.
-    with self.assertRaises(engine.EngineError):
+    with self.assertRaises(lib.LightflowRunFailedError):
       cli.resume(lightflow=manifest, log_id="chain_run", cascade=False)
     self.assertEqual(_CALLS, ["step_2", "step_2"])
     cli.resume(lightflow=manifest, log_id="chain_run")
@@ -701,7 +701,7 @@ stages:
       )
 
     cli = lib.LightflowRunnerCLI()
-    with self.assertRaisesRegex(engine.EngineError, "s1"):
+    with self.assertRaisesRegex(lib.LightflowRunFailedError, "s1"):
       cli.start(lightflow=wf_path, log_id="hot_run")
 
     # Edit hot_actions.py in place and resume within the same process
@@ -755,7 +755,10 @@ stages:
     _STAGE_2_SHOULD_FAIL = True
     runner_eng = engine.LightflowEngine(wf)
     p_timeout = runner_eng.execute_stage("build-api", schema.Passport())
-    self.assertIn("timed out after 1s", p_timeout.stamps[-1].message)
+    self.assertIn("exceeded timeout_seconds=1", p_timeout.stamps[-1].message)
+    self.assertIn(
+        "worker thread may keep running", p_timeout.stamps[-1].message
+    )
 
 
 if __name__ == "__main__":

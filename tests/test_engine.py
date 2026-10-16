@@ -516,13 +516,66 @@ stages:
     )
     op = wf.stages[0].operator_action
     assert op is not None
+    # No --lightflow: the run records its manifest, so the command is valid
+    # from any cwd and after the manifest moves.
     self.assertEqual(
         eng.build_resume_command("stage with space", op),
         "lightflow resume"
-        " --lightflow='dir with space/lf.yaml'"
         " --log_id=<log_id>"
         " --stage='stage with space'"
         " --resolution=APPROVE",
+    )
+
+  def test_build_resume_command_payload_placeholder_from_schema(self) -> None:
+    def _cmd(json_schema: str) -> str:
+      wf = schema.Lightflow(
+          name="wf",
+          stages=[
+              schema.Stage(
+                  name="gate",
+                  operator_action=schema.OperatorAction(
+                      instructions="'Approve?'", json_schema=json_schema
+                  ),
+              )
+          ],
+      )
+      eng = engine.LightflowEngine(wf, lightflow_path="lf.yaml", log_id="r1")
+      op = wf.stages[0].operator_action
+      assert op is not None
+      return eng.build_resume_command("gate", op)
+
+    # Only `approved` required: --resolution covers it, so no --payload.
+    self.assertEqual(
+        _cmd('{"type": "object", "required": ["approved"]}'),
+        "lightflow resume --log_id=r1 --stage=gate --resolution=APPROVE",
+    )
+    # Extra required keys get typed, editable placeholders.
+    self.assertEqual(
+        _cmd(
+            '{"type": "object", "required": ["approved", "ticket", "count",'
+            ' "tier"], "properties": {"ticket": {"type": "string"},'
+            ' "count": {"type": "integer"},'
+            ' "tier": {"type": "string", "enum": ["low", "high"]}}}'
+        ),
+        "lightflow resume --log_id=r1 --stage=gate --resolution=APPROVE"
+        ' --payload=\'{"ticket": "<string>", "count": <integer>,'
+        ' "tier": "<low|high>"}\'',
+    )
+    # A single legal value (`const`, or a one-item `enum`) is written out, so
+    # the command pastes as-is; non-string choices are not quoted.
+    self.assertEqual(
+        _cmd(
+            '{"type": "object", "required": ["approved", "ack", "seen", "n"],'
+            ' "properties": {"ack": {"type": "boolean", "const": true},'
+            ' "seen": {"type": "boolean", "enum": [true]},'
+            ' "n": {"type": "integer", "enum": [1, 2]}}}'
+        ),
+        "lightflow resume --log_id=r1 --stage=gate --resolution=APPROVE"
+        ' --payload=\'{"ack": true, "seen": true, "n": <1|2>}\'',
+    )
+    # Unparseable schema falls back to the generic placeholder.
+    self.assertIn(
+        "--payload='<JSON matching the stage json_schema>'", _cmd("{not json")
     )
     with self.assertRaisesRegex(
         engine.EngineError, "Keyword arguments are not supported"
@@ -586,6 +639,67 @@ stages:
       eng_b.compile()
       p_b = eng_b.execute_stage("s1", schema.Passport())
       self.assertEqual(p_b.payload["origin"], "from_b")
+
+
+class NoneFailedTriggerRuleTest(unittest.TestCase):
+  """NONE_FAILED: runs after skips, waits for stragglers, cascades failures."""
+
+  def _engine_and_join(self):
+    wf = schema.Lightflow.from_dict({
+        "name": "nf",
+        "actions": [{"id": "x", "python_import": "m.f"}],
+        "stages": [
+            {"name": "a", "python_action": {"action_id": "x"}},
+            {"name": "b", "python_action": {"action_id": "x"}},
+            {
+                "name": "join",
+                "run_after": ["a", "b"],
+                "trigger_rule": "NONE_FAILED",
+                "python_action": {"action_id": "x"},
+            },
+        ],
+    })
+    eng = engine.LightflowEngine(wf)
+    eng.compile()
+    return eng, wf.stages[2]
+
+  def _passport(self, **statuses: schema.StampStatus) -> schema.Passport:
+    pp = schema.Passport()
+    for name, st in statuses.items():
+      stamp = pp.stamps.add()
+      stamp.stage_name = name
+      stamp.status = st
+    return pp
+
+  def test_completed_plus_skipped_runs(self) -> None:
+    eng, join = self._engine_and_join()
+    ok, _, _ = eng.evaluate_trigger_rule(
+        join,
+        self._passport(
+            a=schema.StampStatus.COMPLETED, b=schema.StampStatus.SKIPPED
+        ),
+    )
+    self.assertTrue(ok)
+
+  def test_completed_plus_failed_is_blocked(self) -> None:
+    eng, join = self._engine_and_join()
+    ok, status, reason = eng.evaluate_trigger_rule(
+        join,
+        self._passport(
+            a=schema.StampStatus.COMPLETED, b=schema.StampStatus.FAILED
+        ),
+    )
+    self.assertFalse(ok)
+    self.assertEqual(status, schema.StampStatus.FAILED)
+    self.assertEqual(reason, engine.UPSTREAM_FAILED_MESSAGE)
+
+  def test_failed_plus_unstarted_waits_for_the_straggler(self) -> None:
+    eng, join = self._engine_and_join()
+    ok, status, _ = eng.evaluate_trigger_rule(
+        join, self._passport(a=schema.StampStatus.FAILED)
+    )
+    self.assertFalse(ok)
+    self.assertNotEqual(status, schema.StampStatus.FAILED)
 
 
 if __name__ == "__main__":

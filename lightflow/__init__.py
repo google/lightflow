@@ -29,9 +29,10 @@ except ImportError:
   from lightflow import visualizer  # pyrefly: ignore[missing-import]
 # pylint: enable=g-import-not-at-top,g-bad-import-order
 
-__version__ = "0.2.1"
+__version__ = "0.3.0"
 
 EngineError = engine.EngineError
+MissingFieldError = engine.MissingFieldError
 StageTimeoutError = engine.StageTimeoutError
 OperatorActionSuspended = engine.OperatorActionSuspended
 SafeCelEvaluator = engine.SafeCelEvaluator
@@ -42,7 +43,15 @@ PassportManager = lib.PassportManager
 LightflowRunnerCLI = lib.LightflowRunnerCLI
 LightflowAlreadyPausedError = lib.LightflowAlreadyPausedError
 LightflowAlreadyCompletedError = lib.LightflowAlreadyCompletedError
+LightflowRunFailedError = lib.LightflowRunFailedError
+LightflowStateNotFoundError = lib.LightflowStateNotFoundError
+LightflowRunningError = lib.LightflowRunningError
+LightflowWaitingError = lib.LightflowWaitingError
+EXIT_FAILED = lib.EXIT_FAILED
 EXIT_SUSPENDED = lib.EXIT_SUSPENDED
+EXIT_NO_STATE = lib.EXIT_NO_STATE
+EXIT_RUNNING = lib.EXIT_RUNNING
+EXIT_WAITING = lib.EXIT_WAITING
 
 Lightflow = schema.Lightflow
 Stage = schema.Stage
@@ -64,13 +73,22 @@ generate_visualizer_html = visualizer.generate_visualizer_html
 __all__ = [
     "__version__",
     "ActionDefinition",
+    "EXIT_FAILED",
+    "EXIT_NO_STATE",
+    "EXIT_RUNNING",
     "EXIT_SUSPENDED",
+    "EXIT_WAITING",
     "EngineError",
     "Lightflow",
     "LightflowAlreadyCompletedError",
     "LightflowAlreadyPausedError",
     "LightflowEngine",
+    "LightflowRunFailedError",
     "LightflowRunnerCLI",
+    "LightflowRunningError",
+    "LightflowStateNotFoundError",
+    "LightflowWaitingError",
+    "MissingFieldError",
     "OperatorAction",
     "OperatorActionSuspended",
     "Passport",

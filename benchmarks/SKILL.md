@@ -20,7 +20,7 @@ Why structural rigor is negative-cost in Lightflow:
     Intermediate data (`payload.outputs.<stage>`) flows between stages on disk
     via `passport.json` rather than being printed to `stdout` and re-emitted
     token-by-token by the LLM in subsequent tool calls.
-3.  **No bespoke state-file plumbing per skill**: One reusable 1,014-token
+3.  **No bespoke state-file plumbing per skill**: One reusable ~1,123-token
     runner skill (`skills/run_lightflows/SKILL.md`) replaces writing custom
     `/tmp/state.json`, `--step`, and rollback CLI glue inside every skill.
 
@@ -49,9 +49,9 @@ bit-for-bit reproducibility) and measures:
     (`actions.py`, `actions_test.py`, `lightflow.yaml`), and the exact
     `stdout`/`stderr` returned to the agent's context window.
 2.  **Cold-Start Context (`N=1` and `N=6`)**: Explicitly adds
-    `skills/run_lightflows/SKILL.md` (4,056 chars / ~1,014 tokens) for execution
+    `skills/run_lightflows/SKILL.md` (4,492 chars / ~1,123 tokens) for execution
     workflows (`1–4 and 6`) and both `run_lightflows/SKILL.md` +
-    `create_lightflows/SKILL.md` (+5,641 chars / ~1,410 tokens) for the
+    `create_lightflows/SKILL.md` (+8,204 chars / ~2,051 tokens) for the
     `create_lightflow` authoring meta-workflow.
 3.  **Multi-Turn Cumulative Tokens**: Accounts for stateful LLM conversation
     billing where Turn $k$ re-sends the accumulated tool calls and outputs from
@@ -83,8 +83,8 @@ these rules:
     -   *Warm / Marginal*: The per-run cost once
         `skills/run_lightflows/SKILL.md` (or MCP tool schemas) is in context.
     -   *Single-Workflow Cold Start (`N=1`)*: Add
-        `skills/run_lightflows/SKILL.md` (~1,014 tokens) to a single execution
-        run, and also add `skills/create_lightflows/SKILL.md` (~1,410 tokens)
+        `skills/run_lightflows/SKILL.md` (~1,123 tokens) to a single execution
+        run, and also add `skills/create_lightflows/SKILL.md` (~2,051 tokens)
         when benchmarking `create_lightflow`.
     -   *Multi-Workflow Session (`N=6`)*: Count each required `SKILL.md` once
         across the session.

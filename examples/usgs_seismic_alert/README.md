@@ -19,8 +19,8 @@ flowchart LR
 # 1. Poll live USGS feed and pause at 'incident_commander_gate'
 lightflow start --lightflow=examples/usgs_seismic_alert/lightflow.yaml --log_id=usgs_01
 
-# 2. Approve and classify severity
-lightflow resume --lightflow=examples/usgs_seismic_alert/lightflow.yaml \
+# 2. Approve and classify severity (--log_id remembers the manifest)
+lightflow resume \
   --log_id=usgs_01 \
   --stage=incident_commander_gate \
   --resolution=APPROVE \

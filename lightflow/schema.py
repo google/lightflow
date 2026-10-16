@@ -42,6 +42,42 @@ except ImportError:
   yaml = None
 
 
+def _opt_int(data: dict[str, Any], key: str, context: str) -> Optional[int]:
+  """Reads an optional whole-number field, rejecting fractional values.
+
+  `int(0.2)` would silently become 0 and then fail a later range check with a
+  misleading "got 0". Report the raw value instead so the author sees what
+  they actually wrote.
+
+  Args:
+    data: The policy mapping from the manifest.
+    key: Field name to read.
+    context: Policy name for the error message.
+
+  Returns:
+    The integer value, or None when the key is absent or null.
+
+  Raises:
+    ValueError: The value is a bool, fractional, or otherwise not a whole
+      number.
+  """
+  if key not in data or data[key] is None:
+    return None
+  raw = data[key]
+  if isinstance(raw, bool):
+    raise ValueError(f"{context}.{key} must be a whole number, got {raw!r}.")
+  if isinstance(raw, int):
+    return raw
+  if isinstance(raw, float) and raw.is_integer():
+    return int(raw)
+  if isinstance(raw, str) and raw.strip().lstrip("-").isdigit():
+    return int(raw.strip())
+  raise ValueError(
+      f"{context}.{key} must be a whole number of seconds/attempts (an"
+      f" integer), got {raw!r}. Fractional values are not supported."
+  )
+
+
 def _reject_unknown_keys(
     data: dict[str, Any], allowed: set[str], context: str
 ) -> None:
@@ -68,6 +104,7 @@ class TriggerRule(enum.IntEnum):
 
   ALL_SUCCESS = 0
   ALL_DONE = 1
+  NONE_FAILED = 2
 
   @classmethod
   def Name(cls, val: int | str) -> str:  # pylint: disable=invalid-name
@@ -306,16 +343,9 @@ class RetryPolicy:
         "RetryPolicy",
     )
     return cls(
-        max_attempts=(
-            int(data["max_attempts"])
-            if "max_attempts" in data and data["max_attempts"] is not None
-            else None
-        ),
-        initial_backoff_seconds=(
-            int(data["initial_backoff_seconds"])
-            if "initial_backoff_seconds" in data
-            and data["initial_backoff_seconds"] is not None
-            else None
+        max_attempts=_opt_int(data, "max_attempts", "RetryPolicy"),
+        initial_backoff_seconds=_opt_int(
+            data, "initial_backoff_seconds", "RetryPolicy"
         ),
         backoff_multiplier=(
             float(data["backoff_multiplier"])
@@ -372,22 +402,9 @@ class PollingPolicy:
     tick = data.get("poll_tick_action")
     return cls(
         condition=str(data.get("condition", "")),
-        interval_seconds=(
-            int(data["interval_seconds"])
-            if "interval_seconds" in data
-            and data["interval_seconds"] is not None
-            else None
-        ),
-        timeout_seconds=(
-            int(data["timeout_seconds"])
-            if "timeout_seconds" in data and data["timeout_seconds"] is not None
-            else None
-        ),
-        max_attempts=(
-            int(data["max_attempts"])
-            if "max_attempts" in data and data["max_attempts"] is not None
-            else None
-        ),
+        interval_seconds=_opt_int(data, "interval_seconds", "PollingPolicy"),
+        timeout_seconds=_opt_int(data, "timeout_seconds", "PollingPolicy"),
+        max_attempts=_opt_int(data, "max_attempts", "PollingPolicy"),
         poll_tick_action=(
             PythonAction.from_dict(tick) if isinstance(tick, dict) else None
         ),
@@ -525,10 +542,8 @@ class Stage:
         metadata={
             str(k): str(v) for k, v in (data.get("metadata") or {}).items()
         },
-        timeout_seconds=(
-            int(data["timeout_seconds"])
-            if "timeout_seconds" in data and data["timeout_seconds"] is not None
-            else None
+        timeout_seconds=_opt_int(
+            data, "timeout_seconds", f"Stage '{data.get('name', '?')}'"
         ),
     )
 
@@ -564,6 +579,7 @@ class Lightflow:
   stages: list[Stage] = field(default_factory=list)
   metadata: dict[str, str] = field(default_factory=dict)
   runner_target: str = ""
+  strict_expressions: bool = False
 
   def to_dict(self) -> dict[str, Any]:
     res: dict[str, Any] = {"name": self.name}
@@ -577,6 +593,8 @@ class Lightflow:
       res["metadata"] = dict(self.metadata)
     if self.runner_target:
       res["runner_target"] = self.runner_target
+    if self.strict_expressions:
+      res["strict_expressions"] = True
     return res
 
   @classmethod
@@ -592,6 +610,7 @@ class Lightflow:
             "stages",
             "metadata",
             "runner_target",
+            "strict_expressions",
         },
         "Lightflow",
     )
@@ -639,6 +658,7 @@ class Lightflow:
             str(k): str(v) for k, v in (data.get("metadata") or {}).items()
         },
         runner_target=str(data.get("runner_target", "")),
+        strict_expressions=bool(data.get("strict_expressions", False)),
     )
 
 
@@ -706,6 +726,9 @@ class Passport:
 
   payload: StructDict = field(default_factory=StructDict)
   stamps: StampList = field(default_factory=StampList)
+  # Recorded on first `start` so `list`/`status` can label and locate runs.
+  lightflow_name: str = ""
+  lightflow_path: str = ""
 
   def __post_init__(self) -> None:
     if not isinstance(self.payload, StructDict):
@@ -722,6 +745,10 @@ class Passport:
       res["payload"] = dict(self.payload)
     if self.stamps:
       res["stamps"] = [s.to_dict() for s in self.stamps]
+    if self.lightflow_name:
+      res["lightflow_name"] = self.lightflow_name
+    if self.lightflow_path:
+      res["lightflow_path"] = self.lightflow_path
     return res
 
   @classmethod
@@ -736,6 +763,8 @@ class Passport:
             s if isinstance(s, Stamp) else Stamp.from_dict(s)
             for s in stamps_data
         ),
+        lightflow_name=str(data.get("lightflow_name", "") or ""),
+        lightflow_path=str(data.get("lightflow_path", "") or ""),
     )
 
 
