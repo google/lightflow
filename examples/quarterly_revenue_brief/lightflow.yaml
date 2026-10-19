@@ -1,0 +1,83 @@
+name: quarterly_revenue_brief
+description: >-
+  Queries regional revenue from SQLite, computes QoQ and plan variances in
+  Python, pauses at an operator_action checkpoint for commentary review,
+  renders a Markdown report, and pauses at a second checkpoint before sending.
+
+actions:
+  - id: query_sql_metrics
+    python_import: examples.quarterly_revenue_brief.actions.query_sql_metrics
+  - id: analyze_variances
+    python_import: examples.quarterly_revenue_brief.actions.analyze_variances
+  - id: render_report
+    python_import: examples.quarterly_revenue_brief.actions.render_report
+  - id: send_report
+    python_import: examples.quarterly_revenue_brief.actions.send_report
+
+stages:
+  - name: query_sql_metrics
+    description: Query regional revenue rows from SQLite (stdlib sqlite3)
+    python_action:
+      action_id: query_sql_metrics
+
+  - name: analyze_variances
+    description: Compute QoQ growth, net margin, and plan variances in Python
+    run_after:
+      - query_sql_metrics
+    python_action:
+      action_id: analyze_variances
+      static_kwargs:
+        plan_alert_threshold_pct: -5.0
+
+  - name: draft_commentary
+    description: Review computed SQL figures and supply narrative commentary
+    run_after:
+      - analyze_variances
+    operator_action:
+      instructions: >-
+        'SQL variance analysis complete (' + payload.outputs.analyze_variances.summary + '). Propose or edit narrative commentary for the report:'
+      json_schema:
+        type: object
+        required:
+          - approved
+          - commentary
+        properties:
+          approved:
+            type: boolean
+          commentary:
+            type: string
+            minLength: 1
+          output_path:
+            type: string
+
+  - name: render_report
+    description: Render the Markdown report combining the SQL table and reviewed commentary
+    run_after:
+      - draft_commentary
+    run_if: "payload.outputs.draft_commentary.approved == true"
+    python_action:
+      action_id: render_report
+      static_kwargs:
+        default_output: /tmp/q3_revenue_brief.md
+
+  - name: approve_send
+    description: Final sign-off before dispatching the rendered report
+    run_after:
+      - render_report
+    operator_action:
+      instructions: >-
+        'Report rendered to ' + payload.outputs.render_report.report_path + '. Review the file and approve to dispatch.'
+      json_schema:
+        type: object
+        properties:
+          channel:
+            type: string
+
+  - name: send_report
+    description: Dispatch the approved report and write a delivery receipt
+    run_after:
+      - approve_send
+    python_action:
+      action_id: send_report
+      static_kwargs:
+        default_channel: "#exec-staff"

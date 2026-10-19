@@ -1,0 +1,320 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 628" width="100%" height="100%" role="img" aria-label="Lightflow Demo: SQLite query, Python variance analysis, Agent+Human commentary checkpoint, report rendering, final send approval gate, and delivery">
+  <defs>
+    <style>
+      .bg { fill: #0b1017; }
+      .header { fill: #151d2a; }
+      .sidebar { fill: #0e1520; }
+      .border { stroke: #263244; stroke-width: 1.5; fill: none; }
+      .sans {
+        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        font-size: 12.5px;
+        fill: #e2e8f0;
+      }
+      .mono {
+        font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+        font-size: 11px;
+        fill: #cbd5e1;
+        white-space: pre;
+      }
+      .mono-cmd {
+        font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+        font-size: 10.2px;
+        fill: #cbd5e1;
+        white-space: pre;
+      }
+      .header-title {
+        font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+        font-size: 13px;
+        font-weight: 700;
+        fill: #f8fafc;
+      }
+      .header-sub {
+        font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+        font-size: 11.5px;
+        font-weight: 400;
+        fill: #64748b;
+      }
+      .sec-label {
+        font-family: ui-sans-serif, system-ui, sans-serif;
+        font-size: 10.5px;
+        font-weight: 700;
+        fill: #64748b;
+        letter-spacing: 0.6px;
+      }
+      /* DAG nodes in left sidebar */
+      .dag-py { fill: #131c2b; stroke: #38bdf8; stroke-width: 1.2; }
+      .dag-gate { fill: #23180a; stroke: #f59e0b; stroke-width: 1.4; }
+      .dag-title {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 11px;
+        font-weight: 700;
+        fill: #f1f5f9;
+      }
+      .dag-sub {
+        font-family: ui-sans-serif, system-ui, sans-serif;
+        font-size: 10px;
+        fill: #94a3b8;
+      }
+      .dag-gate-sub {
+        font-family: ui-sans-serif, system-ui, sans-serif;
+        font-size: 10px;
+        font-weight: 600;
+        fill: #fbbf24;
+      }
+      .dag-edge { stroke: #334155; stroke-width: 1.5; }
+      .pill-ok { fill: #064e3b; stroke: #10b981; stroke-width: 1; }
+      .pill-ok-txt {
+        font-family: ui-sans-serif, system-ui, sans-serif;
+        font-size: 9px;
+        font-weight: 700;
+        fill: #6ee7b7;
+      }
+      .pill-wait { fill: #451a03; stroke: #f59e0b; stroke-width: 1; }
+      .pill-wait-txt {
+        font-family: ui-sans-serif, system-ui, sans-serif;
+        font-size: 9px;
+        font-weight: 700;
+        fill: #fcd34d;
+      }
+
+      /* Chat bubbles and tool cards */
+      .user-bubble { fill: #1e293b; stroke: #334155; stroke-width: 1; }
+      .agent-bubble { fill: #141c28; stroke: #243044; stroke-width: 1; }
+      .agent-avatar { fill: #6366f1; }
+      .user-avatar { fill: #0ea5e9; }
+      .avatar-txt {
+        font-family: ui-sans-serif, system-ui, sans-serif;
+        font-size: 10px;
+        font-weight: 700;
+        fill: #ffffff;
+      }
+      .tool-card { fill: #111823; stroke: #243044; stroke-width: 1; }
+      .tool-header { fill: #17202f; }
+      .accent-amber { fill: #f59e0b; }
+      .accent-green { fill: #10b981; }
+      .badge-amber { fill: #451a03; stroke: #d97706; stroke-width: 1; }
+      .badge-amber-txt {
+        font-family: ui-sans-serif, system-ui, sans-serif;
+        font-size: 10px;
+        font-weight: 700;
+        fill: #fcd34d;
+      }
+      .badge-green { fill: #022c22; stroke: #059669; stroke-width: 1; }
+      .badge-green-txt {
+        font-family: ui-sans-serif, system-ui, sans-serif;
+        font-size: 10px;
+        font-weight: 700;
+        fill: #6ee7b7;
+      }
+      .muted { fill: #64748b; }
+      .stage { fill: #7dd3fc; font-weight: 600; }
+      .gate-txt { fill: #fbbf24; font-weight: 600; }
+      .ok-txt { fill: #34d399; font-weight: 600; }
+
+      /* 24-second 3-act loop */
+      .act1-u { opacity: 0; animation: k-a1u 24s infinite; }
+      .act1-t { opacity: 0; animation: k-a1t 24s infinite; }
+      .act1-g { opacity: 0; animation: k-a1g 24s infinite; }
+      .act2-u { opacity: 0; animation: k-a2u 24s infinite; }
+      .act2-t { opacity: 0; animation: k-a2t 24s infinite; }
+      .act2-g { opacity: 0; animation: k-a2g 24s infinite; }
+      .act3-u { opacity: 0; animation: k-a3u 24s infinite; }
+      .act3-t { opacity: 0; animation: k-a3t 24s infinite; }
+      .act3-g { opacity: 0; animation: k-a3g 24s infinite; }
+      .g1-wait { opacity: 0; animation: k-g1w 24s infinite; }
+      .g2-wait { opacity: 0; animation: k-g2w 24s infinite; }
+
+      @media (prefers-reduced-motion: reduce) {
+        .act1-u, .act1-t, .act1-g, .act2-u, .act2-t, .act2-g, .act3-u, .act3-t, .act3-g {
+          opacity: 1 !important;
+          animation: none !important;
+        }
+        .g1-wait, .g2-wait {
+          opacity: 0 !important;
+          animation: none !important;
+        }
+      }
+
+      @keyframes k-a1u { 0%, 1%  { opacity: 0; } 3%,  96% { opacity: 1; } 98%, 100% { opacity: 0; } }
+      @keyframes k-a1t { 0%, 6%  { opacity: 0; } 9%,  96% { opacity: 1; } 98%, 100% { opacity: 0; } }
+      @keyframes k-a1g { 0%, 15% { opacity: 0; } 18%, 96% { opacity: 1; } 98%, 100% { opacity: 0; } }
+      @keyframes k-a2u { 0%, 34% { opacity: 0; } 37%, 96% { opacity: 1; } 98%, 100% { opacity: 0; } }
+      @keyframes k-a2t { 0%, 42% { opacity: 0; } 45%, 96% { opacity: 1; } 98%, 100% { opacity: 0; } }
+      @keyframes k-a2g { 0%, 51% { opacity: 0; } 54%, 96% { opacity: 1; } 98%, 100% { opacity: 0; } }
+      @keyframes k-a3u { 0%, 66% { opacity: 0; } 69%, 96% { opacity: 1; } 98%, 100% { opacity: 0; } }
+      @keyframes k-a3t { 0%, 73% { opacity: 0; } 76%, 96% { opacity: 1; } 98%, 100% { opacity: 0; } }
+      @keyframes k-a3g { 0%, 81% { opacity: 0; } 84%, 96% { opacity: 1; } 98%, 100% { opacity: 0; } }
+      @keyframes k-g1w { 0%, 6%  { opacity: 0; } 9%,  41% { opacity: 1; } 43%, 100% { opacity: 0; } }
+      @keyframes k-g2w { 0%, 42% { opacity: 0; } 45%, 72% { opacity: 1; } 74%, 100% { opacity: 0; } }
+    </style>
+  </defs>
+
+  <!-- Outer Frame -->
+  <rect class="bg" x="2" y="2" width="956" height="624" rx="12" ry="12"/>
+  <path d="M 2 14 Q 2 2 14 2 L 946 2 Q 958 2 958 14 L 958 42 L 2 42 Z" class="header"/>
+  <rect class="sidebar" x="2" y="42" width="248" height="584"/>
+  <rect class="border" x="2" y="2" width="956" height="624" rx="12" ry="12"/>
+  <line x1="2" y1="42" x2="958" y2="42" stroke="#263244" stroke-width="1"/>
+  <line x1="250" y1="42" x2="250" y2="626" stroke="#263244" stroke-width="1"/>
+
+  <!-- Top Header -->
+  <circle cx="24" cy="22" r="9" class="agent-avatar"/>
+  <text x="24" y="26" text-anchor="middle" class="avatar-txt">✦</text>
+  <text x="42" y="26" class="header-title">Agent Session in Claude Code / Antigravity <tspan class="header-sub" dx="8">workflow: examples/quarterly_revenue_brief/lightflow.yaml</tspan></text>
+
+  <!-- LEFT COLUMN: 6-Stage Hybrid DAG Spine -->
+  <text x="20" y="66" class="sec-label">WORKFLOW DAG (6 STAGES)</text>
+
+  <!-- Node 1 -->
+  <rect x="18" y="82" width="214" height="52" rx="7" class="dag-py"/>
+  <text x="30" y="102" class="dag-title">1. query_sql_metrics</text>
+  <text x="30" y="120" class="dag-sub">python_action · SQLite query</text>
+  <g class="act1-t">
+    <rect x="182" y="88" width="42" height="15" rx="3" class="pill-ok"/>
+    <text x="203" y="99" text-anchor="middle" class="pill-ok-txt">✓ DONE</text>
+  </g>
+  <line x1="125" y1="134" x2="125" y2="156" class="dag-edge"/>
+
+  <!-- Node 2 -->
+  <rect x="18" y="156" width="214" height="52" rx="7" class="dag-py"/>
+  <text x="30" y="176" class="dag-title">2. analyze_variances</text>
+  <text x="30" y="194" class="dag-sub">python_action · exact QoQ math</text>
+  <g class="act1-t">
+    <rect x="182" y="162" width="42" height="15" rx="3" class="pill-ok"/>
+    <text x="203" y="173" text-anchor="middle" class="pill-ok-txt">✓ DONE</text>
+  </g>
+  <line x1="125" y1="208" x2="125" y2="232" class="dag-edge"/>
+
+  <!-- Node 3 (Gate 1) -->
+  <rect x="18" y="232" width="214" height="58" rx="7" class="dag-gate"/>
+  <text x="30" y="252" class="dag-title">3. draft_commentary</text>
+  <text x="30" y="269" class="dag-gate-sub">⏸ operator_action (exit 2)</text>
+  <text x="30" y="283" class="dag-sub">Agent proposes · Human edits</text>
+  <g class="g1-wait">
+    <rect x="176" y="238" width="48" height="15" rx="3" class="pill-wait"/>
+    <text x="200" y="249" text-anchor="middle" class="pill-wait-txt">PAUSED</text>
+  </g>
+  <g class="act2-t">
+    <rect x="182" y="238" width="42" height="15" rx="3" class="pill-ok"/>
+    <text x="203" y="249" text-anchor="middle" class="pill-ok-txt">✓ DONE</text>
+  </g>
+  <line x1="125" y1="290" x2="125" y2="366" class="dag-edge"/>
+
+  <!-- Node 4 -->
+  <rect x="18" y="366" width="214" height="52" rx="7" class="dag-py"/>
+  <text x="30" y="386" class="dag-title">4. render_report</text>
+  <text x="30" y="404" class="dag-sub">python_action · tables + prose</text>
+  <g class="act2-t">
+    <rect x="182" y="372" width="42" height="15" rx="3" class="pill-ok"/>
+    <text x="203" y="383" text-anchor="middle" class="pill-ok-txt">✓ DONE</text>
+  </g>
+  <line x1="125" y1="418" x2="125" y2="442" class="dag-edge"/>
+
+  <!-- Node 5 (Gate 2) -->
+  <rect x="18" y="442" width="214" height="58" rx="7" class="dag-gate"/>
+  <text x="30" y="462" class="dag-title">5. approve_send</text>
+  <text x="30" y="479" class="dag-gate-sub">⏸ operator_action (exit 2)</text>
+  <text x="30" y="493" class="dag-sub">Human sign-off before send</text>
+  <g class="g2-wait">
+    <rect x="176" y="448" width="48" height="15" rx="3" class="pill-wait"/>
+    <text x="200" y="459" text-anchor="middle" class="pill-wait-txt">PAUSED</text>
+  </g>
+  <g class="act3-t">
+    <rect x="182" y="448" width="42" height="15" rx="3" class="pill-ok"/>
+    <text x="203" y="459" text-anchor="middle" class="pill-ok-txt">✓ DONE</text>
+  </g>
+  <line x1="125" y1="500" x2="125" y2="564" class="dag-edge"/>
+
+  <!-- Node 6 -->
+  <rect x="18" y="564" width="214" height="52" rx="7" class="dag-py"/>
+  <text x="30" y="584" class="dag-title">6. send_report</text>
+  <text x="30" y="602" class="dag-sub">python_action · dispatches brief</text>
+  <g class="act3-t">
+    <rect x="182" y="570" width="42" height="15" rx="3" class="pill-ok"/>
+    <text x="203" y="581" text-anchor="middle" class="pill-ok-txt">✓ DONE</text>
+  </g>
+
+  <!-- RIGHT COLUMN: 3-Act Agent + Human Session -->
+
+  <!-- ACT 1: User starts -> SQL + Python analysis -> Pauses at Gate 1 (draft_commentary) -->
+  <g class="act1-u">
+    <rect x="510" y="52" width="408" height="30" rx="12" class="user-bubble"/>
+    <text x="526" y="71" class="sans">Prepare the Q3 revenue brief and send it to #exec-staff.</text>
+    <circle cx="934" cy="67" r="10" class="user-avatar"/>
+    <text x="934" y="71" text-anchor="middle" class="avatar-txt">U</text>
+  </g>
+
+  <g class="act1-t">
+    <rect x="268" y="92" width="676" height="82" rx="7" class="tool-card"/>
+    <path d="M 268 99 Q 268 92 275 92 L 937 92 Q 944 92 944 99 L 944 114 L 268 114 Z" class="tool-header"/>
+    <rect x="268" y="92" width="4" height="82" rx="2" class="accent-amber"/>
+    <text x="280" y="107" class="mono-cmd">▾ <tspan fill="#f8fafc" font-weight="600">lightflow start --lightflow=examples/quarterly_revenue_brief --log_id=q3</tspan></text>
+    <rect x="762" y="95" width="174" height="16" rx="3" class="badge-amber"/>
+    <text x="849" y="106" text-anchor="middle" class="badge-amber-txt">PAUSED AT GATE 1 (EXIT 2)</text>
+
+    <text x="280" y="131" class="mono">✓ <tspan class="stage">[query_sql_metrics]</tspan> Queried SQLite regional_revenue (12 rows across NA, EMEA, APAC)</text>
+    <text x="280" y="148" class="mono">✓ <tspan class="stage">[analyze_variances]</tspan> Total $14.2M (+12.4% QoQ) · Net margin 24.1% · Flag: EMEA -6.2% vs plan</text>
+    <text x="280" y="165" class="mono gate-txt">⏸ Suspended at 'draft_commentary' — supply validated {"approved": bool, "commentary": str}</text>
+  </g>
+
+  <g class="act1-g">
+    <rect x="268" y="182" width="676" height="58" rx="8" class="agent-bubble"/>
+    <text x="282" y="201" class="sans"><tspan fill="#a5b4fc" font-weight="700">✦ Agent:</tspan> SQL &amp; variance math done (<tspan font-weight="600">$14.2M, +12.4% QoQ</tspan>; <tspan fill="#fbbf24">EMEA -6.2% vs plan</tspan>). Proposed take:</text>
+    <text x="282" y="219" class="sans" fill="#cbd5e1"><tspan font-style="italic">"Q3 revenue grew +12.4% QoQ led by NA/APAC; EMEA trailed plan by 6.2% on Q4 renewal timing."</tspan></text>
+    <text x="282" y="235" class="sans" fill="#94a3b8">Paused at <tspan class="mono stage">draft_commentary</tspan> — approve this commentary or suggest edits?</text>
+  </g>
+
+  <!-- ACT 2: User tweaks commentary -> Agent resumes -> Renders report -> Pauses at Gate 2 (approve_send) -->
+  <g class="act2-u">
+    <rect x="440" y="248" width="478" height="30" rx="12" class="user-bubble"/>
+    <text x="456" y="267" class="sans">Approve — note that the slipped EMEA renewals already closed Oct 4.</text>
+    <circle cx="934" cy="263" r="10" class="user-avatar"/>
+    <text x="934" y="267" text-anchor="middle" class="avatar-txt">U</text>
+  </g>
+
+  <g class="act2-t">
+    <rect x="268" y="286" width="676" height="82" rx="7" class="tool-card"/>
+    <path d="M 268 293 Q 268 286 275 286 L 937 286 Q 944 286 944 293 L 944 308 L 268 308 Z" class="tool-header"/>
+    <rect x="268" y="286" width="4" height="82" rx="2" class="accent-amber"/>
+    <text x="280" y="301" class="mono-cmd">▾ <tspan fill="#f8fafc" font-weight="600">lightflow resume --log_id=q3 --stage=draft_commentary --payload='{...}'</tspan></text>
+    <rect x="762" y="289" width="174" height="16" rx="3" class="badge-amber"/>
+    <text x="849" y="300" text-anchor="middle" class="badge-amber-txt">PAUSED AT GATE 2 (EXIT 2)</text>
+
+    <text x="280" y="325" class="mono muted">✓ [draft_commentary] Schema validated · Stages 1–2 already COMPLETED in passport.json (not re-run)</text>
+    <text x="280" y="342" class="mono">✓ <tspan class="stage">[render_report]</tspan>    Rendered /tmp/q3_revenue_brief.md (computed SQL table + reviewed commentary)</text>
+    <text x="280" y="359" class="mono gate-txt">⏸ Suspended at 'approve_send' — send_report blocked until final draft is approved</text>
+  </g>
+
+  <g class="act2-g">
+    <rect x="268" y="376" width="676" height="44" rx="8" class="agent-bubble"/>
+    <text x="282" y="395" class="sans"><tspan fill="#a5b4fc" font-weight="700">✦ Agent:</tspan> Draft rendered to <tspan class="mono">/tmp/q3_revenue_brief.md</tspan> with the computed SQL table and your Oct 4</text>
+    <text x="282" y="412" class="sans" fill="#cbd5e1">EMEA renewal note. Paused at <tspan class="mono stage">approve_send</tspan> — ready to send to <tspan class="mono">#exec-staff</tspan>?</text>
+  </g>
+
+  <!-- ACT 3: User authorizes send -> Agent resumes -> Sends report (exit 0) -->
+  <g class="act3-u">
+    <rect x="690" y="428" width="228" height="30" rx="12" class="user-bubble"/>
+    <text x="706" y="447" class="sans">Looks great — send it out.</text>
+    <circle cx="934" cy="443" r="10" class="user-avatar"/>
+    <text x="934" y="447" text-anchor="middle" class="avatar-txt">U</text>
+  </g>
+
+  <g class="act3-t">
+    <rect x="268" y="466" width="676" height="82" rx="7" class="tool-card"/>
+    <path d="M 268 473 Q 268 466 275 466 L 937 466 Q 944 466 944 473 L 944 488 L 268 488 Z" class="tool-header"/>
+    <rect x="268" y="466" width="4" height="82" rx="2" class="accent-green"/>
+    <text x="280" y="481" class="mono-cmd">▾ <tspan fill="#f8fafc" font-weight="600">lightflow resume --log_id=q3 --stage=approve_send --resolution=APPROVE</tspan></text>
+    <rect x="762" y="469" width="174" height="16" rx="3" class="badge-green"/>
+    <text x="849" y="480" text-anchor="middle" class="badge-green-txt">COMPLETED (EXIT CODE 0)</text>
+
+    <text x="280" y="505" class="mono muted">✓ [approve_send] Final sign-off stamped (actor: dev · agent:session-c741) · Stages 1–4 not re-run</text>
+    <text x="280" y="522" class="mono">✓ <tspan class="stage">[send_report]</tspan>  Dispatched /tmp/q3_revenue_brief.md to #exec-staff (receipt recorded)</text>
+    <text x="280" y="539" class="mono ok-txt">✅ Lightflow completed! (6/6 stages · full audit trail in passport.json)</text>
+  </g>
+
+  <g class="act3-g">
+    <rect x="268" y="558" width="676" height="44" rx="8" class="agent-bubble"/>
+    <text x="282" y="577" class="sans"><tspan fill="#a5b4fc" font-weight="700">✦ Agent:</tspan> Sent <tspan class="mono">/tmp/q3_revenue_brief.md</tspan> to <tspan class="mono">#exec-staff</tspan>.</text>
+    <text x="282" y="594" class="sans" fill="#94a3b8">All 6 stages and both review approvals are recorded in <tspan class="mono">passport.json</tspan>.</text>
+  </g>
+</svg>

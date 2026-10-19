@@ -2,54 +2,54 @@
 
 # Lightflow: Deterministic DAG Workflow Engine for AI Agents
 
-**Lightflow** is a lightweight, local-first workflow compiler and execution
-engine that gives AI agents a structural backbone for multi-step
-workflows—turning steps an agent would otherwise follow from prose instructions
-into an explicit DAG of `python_action` stages and `operator_action` checkpoints
-with dependencies, retries, and rollbacks enforced by the engine.
+Agent skills (`SKILL.md`) are typically written as prose checklists: run a
+query, analyze the output, ask the user to review, render an artifact, ask
+before sending. In practice, models drift past review steps, pull raw data into
+the context window, and lose their place when a command fails or the session
+compacts.
 
-Every step runs across process boundaries as a plain CLI command that an agent
-or operator can start, pause, and resume against a single append-only JSON
-ledger (`passport.json`). Rather than burying *"ask before step 7"* inside a
-long prompt blob where context decay and momentum cause agents to skip ahead,
-Lightflow halts the process (`exit 2`) and delivers each checkpoint as a fresh,
-dedicated turn at the exact moment of decision. It provides **zero-daemon,
-append-only state guardrails** in pure Python—depending only on `PyYAML` and
-`jsonschema`, with built-in standard-library fallbacks when running directly
-from a checkout.
+**Lightflow** replaces the prose checklist with an executable DAG
+(`lightflow.yaml`). Deterministic steps are Python functions (`python_action`);
+steps that require agent synthesis or human sign-off are explicit checkpoints
+(`operator_action`). You interact with your agent in chat as usual while the
+agent drives Lightflow through its CLI:
 
-```mermaid
-flowchart LR
-    S1["1. fetch_top_stories<br/>(python_action + retry)<br/>Fetch live API data"] --> S2{"2. editorial_gate<br/>(operator_action · exit 2)<br/>Human/Agent approval + JSON Schema"}
-    S2 -->|payload.outputs.editorial_gate.approved == true| S3["3. publish_digest<br/>(python_action)<br/>Idempotent side effect"]
-```
+![Lightflow Demo](./docs/demo.svg)
+
+-   **Enforced ordering and checkpoints**: The engine runs `python_action`
+    stages in topological order and halts at each `operator_action` (`exit 2`),
+    returning control to the agent turn so it presents the checkpoint in chat
+    and resumes only after a schema-validated response is supplied.
+-   **Data stays out of model context**: Intermediate outputs pass between
+    Python stages on disk (`passport.json`) rather than through tool `stdout`.
+    The model sees one-line stage summaries and checkpoint prompts
+    ([~250–1,700 tokens](./benchmarks/README.md) across the benchmarked
+    workflows).
+-   **Resumable without repeating side effects**: If a stage fails or a session
+    is interrupted, `lightflow resume` continues from the stopped node and
+    re-runs only the failed subgraph—completed upstream stages are not
+    re-executed.
+-   **Auditable state (`passport.json`)**: Every stage transition and every
+    checkpoint payload is appended to a local JSON ledger with operator and
+    session attribution (`user` / `agent:<session_id>`), inspectable via
+    `lightflow status --verbose` or `lightflow visualize`.
+-   **Reliable in scheduled agent automations**: When an agent runs unattended
+    on a schedule (e.g., `/automation`, `claude -p`, or CI), nobody is watching
+    the turn-by-turn chat to catch skipped steps. Driving the run through a
+    Lightflow manifest guarantees the scheduled agent executes every Python and
+    `operator_action` stage in order, validates its own intermediate outputs
+    against JSON Schema, and only halts when a checkpoint requires human
+    sign-off.
+
+Lightflow is a pure-Python package (`PyYAML` and `jsonschema`, with stdlib
+fallbacks from a checkout) with no server or daemon. Existing `SKILL.md`
+procedures can be converted into manifests using the bundled
+[`create_lightflows`](./skills/create_lightflows/SKILL.md) skill.
 
 --------------------------------------------------------------------------------
 
 ## Key Features
 
--   **Append-Only Passport Ledger (`passport.json`)**: Every stage transition
-    appends an immutable `Stamp` (`PENDING`, `COMPLETED`, `PAUSED`, `SKIPPED`,
-    `FAILED`) guarded by cross-platform file locks and atomic `os.replace`,
-    recording operator and agent session provenance (`LIGHTFLOW_OPERATOR` /
-    `ANTIGRAVITY_CONVERSATION_ID`).
--   **Selective Subgraph Re-Arming**: When a stage fails, fix the underlying
-    code or environment and run `resume`. Lightflow re-arms *only* the failed
-    stage and its downstream collateral subgraph—never re-executing completed
-    upstream side effects.
--   **Human-in-the-Loop Checkpoints (`operator_action`)**: Suspends execution
-    with exit code `2` so the gate arrives as its own dedicated turn rather than
-    a buried prompt instruction, validates operator payloads against JSON Schema,
-    and auto-generates drift-free `resume` commands.
--   **Safe, CEL-like Expressions**: `run_if`, polling conditions, and dynamic
-    gate instructions use a small subset of [CEL](https://cel.dev) syntax
-    (`string()`, `int()`, `size()`, `has()`), evaluated by a pure-Python AST
-    walker without native C/Go dependencies or unsafe `eval()`.
--   **YAML & JSON Manifests**: Author workflows declaratively in **YAML
-    (`.yaml`)** or **JSON (`.json`)**.
--   **Zero-Dependency Interactive Visualizer (`visualizer.html`)**: Generates a
-    standalone, single-file HTML5 DAG canvas, execution trace log, and
-    payload/manifest inspector with zero external CDN requests.
 -   **First-Class Agent Integrations**:
     -   **Agent Guides**: [`AGENTS.md`](./AGENTS.md) and
         [`CLAUDE.md`](./CLAUDE.md) for Claude Code, Gemini CLI, Codex, Cursor,
@@ -59,16 +59,18 @@ flowchart LR
         [`skills/run_lightflows/SKILL.md`](./skills/run_lightflows/SKILL.md)
         (executing and resuming workflows),
         [`skills/create_lightflows/SKILL.md`](./skills/create_lightflows/SKILL.md)
-        (authoring new workflows), and
+        (authoring and converting `SKILL.md` files into workflows), and
         [`benchmarks/SKILL.md`](./benchmarks/SKILL.md), plus optional milestone
         notifications when running inside `agentapi`-compatible hosts.
--   **Compact Context Footprint ([Benchmarks](./benchmarks/README.md))**:
-    Intermediate stage outputs (`payload.outputs.<stage>`) flow between Python
-    actions on disk via `passport.json` rather than through tool `stdout`, so
-    the agent only sees 1-line stage status summaries and active gate prompts
-    (`~250–1,700 tokens` end-to-end across the 6 included workflows, and
-    $3.1\times$ fewer agent-generated tool-input tokens than an unstructured run
-    where the LLM re-serializes intermediate state across turns).
+-   **YAML & JSON Manifests**: Author workflows declaratively in **YAML
+    (`.yaml`)** or **JSON (`.json`)**.
+-   **Safe, CEL-like Expressions**: `run_if`, polling conditions, and dynamic
+    gate instructions use a small subset of [CEL](https://cel.dev) syntax
+    (`string()`, `int()`, `size()`, `has()`), evaluated by a pure-Python AST
+    walker without native C/Go dependencies or unsafe `eval()`.
+-   **Zero-Dependency Interactive Visualizer (`visualizer.html`)**: Generates a
+    standalone, single-file HTML5 DAG canvas, execution trace log, and
+    payload/manifest inspector with zero external CDN requests.
 
 --------------------------------------------------------------------------------
 
@@ -88,9 +90,6 @@ Look elsewhere when:
 
 -   **You need concurrent execution.** Execution is strictly single-threaded and
     evaluates stages sequentially in deterministic topological order.
--   **You need unattended scheduling.** Lightflow does not include a cron
-    daemon; trigger `lightflow start` from `cron`, `systemd`, or CI if you need
-    a recurring run.
 -   **You need shared multi-user state.** State is a local file guarded by an
     advisory lock (`flock` / `msvcrt`), not a networked service.
 -   **It is a single step.** Just call the function directly.
@@ -139,22 +138,27 @@ directory cannot shadow allowlisted packages.
 
 ## 60-Second Runnable Quickstart
 
-Run the included live Hacker News curation workflow right out of the box:
+Run the workflow shown in the demo above. It uses only the standard library
+(`sqlite3`) and writes to `/tmp`:
 
 ```bash
 # 1. Dry-run simulation (validates DAG topology, CEL-like expressions & JSON Schemas)
-lightflow dry_run --lightflow=examples/hn_digest/lightflow.yaml
+lightflow dry_run --lightflow=examples/quarterly_revenue_brief/lightflow.yaml
 
-# 2. Start execution (fetches live HN top stories, then suspends at 'editorial_gate' with exit code 2)
-lightflow start --lightflow=examples/hn_digest/lightflow.yaml --log_id=hn_demo
+# 2. Start execution (runs SQLite query + Python variance analysis, then pauses at 'draft_commentary' with exit code 2)
+lightflow start --lightflow=examples/quarterly_revenue_brief/lightflow.yaml --log_id=q3
 
-# 3. Approve the human gate and finish the workflow (--log_id remembers the manifest)
-lightflow resume --log_id=hn_demo \
-  --stage=editorial_gate --resolution=APPROVE \
-  --payload='{"editor_note": "Top engineering reads today.", "output_path": "/tmp/hn_digest.md"}'
+# 3. Supply the reviewed commentary (renders /tmp/q3_revenue_brief.md, then pauses at 'approve_send' with exit code 2)
+lightflow resume --log_id=q3 \
+  --stage=draft_commentary --resolution=APPROVE \
+  --payload='{"approved": true, "commentary": "Q3 revenue grew +12.4% QoQ led by NA and APAC; EMEA trailed plan by 6.2% on Q4 renewal timing (closed Oct 4)."}'
 
-# 4. Generate a standalone interactive HTML5 DAG & timeline visualizer
-lightflow visualize --log_id=hn_demo --output=/tmp/viz.html
+# 4. Approve final delivery (dispatches report, writes receipt, and exits 0)
+lightflow resume --log_id=q3 \
+  --stage=approve_send --resolution=APPROVE
+
+# 5. Generate a standalone interactive HTML5 DAG & timeline visualizer
+lightflow visualize --log_id=q3 --output=/tmp/viz.html
 ```
 
 `python3 -m lightflow ...` is equivalent to `lightflow ...` whenever the console
@@ -169,12 +173,13 @@ payloads from a file or stdin via `--payload=@payload.json`, `--payload=@-`, or
 
 | # | Example | Pattern Demonstrated | External API / Mechanism |
 | :-- | :-- | :-- | :-- |
-| 1 | **[`examples/hn_digest/`](./examples/hn_digest/README.md)** | **Live API → Human Editorial Gate → Idempotent Publish**: Fetches top stories, previews the #1 story in the gate prompt, and writes a Markdown digest. | Hacker News Firebase API (zero auth) |
-| 2 | **[`examples/usgs_seismic_alert/`](./examples/usgs_seismic_alert/README.md)** | **Live Telemetry Triage**: Polls 24h M4.5+ global seismic events, pauses for severity classification (`INFO` / `ADVISORY` / `WATCH`), and emits a bulletin. | USGS GeoJSON Feed (zero auth) |
-| 3 | **[`examples/pypi_upgrade_guard/`](./examples/pypi_upgrade_guard/README.md)** | **Live Audit → Approval Gate → Automatic `rollback_action`**: Compares pinned packages against live PyPI, applies upgrades, and automatically restores `.bak` if smoke tests fail. | PyPI JSON API (zero auth) |
-| 4 | **[`examples/async_job_watcher/`](./examples/async_job_watcher/README.md)** | **Async Background Polling & `ALL_DONE` Cleanup**: Spawns a 10–20s background process, polls its status file via `polling_policy` until `READY`, and cleans up temp files. | Detached Worker + Local JSON Status File |
-| 5 | **[`examples/create_lightflow/`](./examples/create_lightflow/README.md)** | **Staggered Agent Skill Delivery ("A Lightflow to Create Lightflows")**: 3 human/agent design & coding gates interleaved with deterministic AST, `unittest`, and `dry_run` verification stages. | Python `ast` + `unittest` + `LightflowEngine` |
-| 6 | **[`examples/tenant_gitops_onboarding/`](./examples/tenant_gitops_onboarding/README.md)** | **22-Stage Multi-Branch Kubernetes, Cloud IAM & GitOps Onboarding**: 4-phase orchestration with 3 branching patterns (role-based early handoff, 3-way IAM status fan-out + `ALL_DONE` join, parallel S3/Vault + compliance-tier KMS diamond), 2 human gates, 2 GitOps PR merge loops, and ArgoCD sync polling. | Local Mocked GitOps / Cloud IAM / SCIM / KMS / ArgoCD Sandbox |
+| 1 | **[`examples/quarterly_revenue_brief/`](./examples/quarterly_revenue_brief/README.md)** | **SQL Query → Python Analysis → Commentary Checkpoint → Render → Send Checkpoint → Send**: 6-stage reporting workflow with two `operator_action` checkpoints (commentary review, send approval). | Python `sqlite3` (standard library) |
+| 2 | **[`examples/hn_digest/`](./examples/hn_digest/README.md)** | **Live API → Human Editorial Gate → Idempotent Publish**: Fetches top stories, previews the #1 story in the gate prompt, and writes a Markdown digest. | Hacker News Firebase API (zero auth) |
+| 3 | **[`examples/usgs_seismic_alert/`](./examples/usgs_seismic_alert/README.md)** | **Live Telemetry Triage**: Polls 24h M4.5+ global seismic events, pauses for severity classification (`INFO` / `ADVISORY` / `WATCH`), and emits a bulletin. | USGS GeoJSON Feed (zero auth) |
+| 4 | **[`examples/pypi_upgrade_guard/`](./examples/pypi_upgrade_guard/README.md)** | **Live Audit → Approval Gate → Automatic `rollback_action`**: Compares pinned packages against live PyPI, applies upgrades, and automatically restores `.bak` if smoke tests fail. | PyPI JSON API (zero auth) |
+| 5 | **[`examples/async_job_watcher/`](./examples/async_job_watcher/README.md)** | **Async Background Polling & `ALL_DONE` Cleanup**: Spawns a 10–20s background process, polls its status file via `polling_policy` until `READY`, and cleans up temp files. | Detached Worker + Local JSON Status File |
+| 6 | **[`examples/create_lightflow/`](./examples/create_lightflow/README.md)** | **Staggered Agent Skill Delivery ("A Lightflow to Create Lightflows")**: 3 human/agent design & coding gates interleaved with deterministic AST, `unittest`, and `dry_run` verification stages. | Python `ast` + `unittest` + `LightflowEngine` |
+| 7 | **[`examples/tenant_gitops_onboarding/`](./examples/tenant_gitops_onboarding/README.md)** | **22-Stage Multi-Branch Kubernetes, Cloud IAM & GitOps Onboarding**: 4-phase orchestration with 3 branching patterns (role-based early handoff, 3-way IAM status fan-out + `ALL_DONE` join, parallel S3/Vault + compliance-tier KMS diamond), 2 human gates, 2 GitOps PR merge loops, and ArgoCD sync polling. | Local Mocked GitOps / Cloud IAM / SCIM / KMS / ArgoCD Sandbox |
 
 --------------------------------------------------------------------------------
 

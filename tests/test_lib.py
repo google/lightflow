@@ -877,6 +877,46 @@ stages:
         rb_stamps["wait_argocd_mesh_sync"], schema.StampStatus.COMPLETED
     )
 
+    # 5. Dry-run and execute 6-stage quarterly_revenue_brief across both gates
+    qrb_wf = os.path.join(
+        examples_dir, "quarterly_revenue_brief", "lightflow.yaml"
+    )
+    qrb_report = os.path.join(self.temp_dir, "q3_revenue_brief.md")
+    with contextlib.redirect_stdout(io.StringIO()):
+      cli.dry_run(lightflow=qrb_wf)
+      with self.assertRaises(engine.OperatorActionSuspended) as g1:
+        cli.start(
+            lightflow=qrb_wf,
+            log_id="qrb_test_run",
+            payload={"output_path": qrb_report},
+        )
+      self.assertIn("draft_commentary", str(g1.exception))
+      with self.assertRaises(engine.OperatorActionSuspended) as g2:
+        cli.resume(
+            log_id="qrb_test_run",
+            stage="draft_commentary",
+            resolution="APPROVE",
+            payload={
+                "approved": True,
+                "commentary": (
+                    "Q3 revenue grew +12.4% QoQ led by NA/APAC; EMEA trailed"
+                    " plan by 6.2% on Q4 renewal timing (closed Oct 4)."
+                ),
+            },
+        )
+      self.assertIn("approve_send", str(g2.exception))
+      cli.resume(
+          log_id="qrb_test_run",
+          stage="approve_send",
+          resolution="APPROVE",
+      )
+    self.assertTrue(os.path.isfile(qrb_report))
+    self.assertTrue(os.path.isfile(f"{qrb_report}.receipt.json"))
+    with open(qrb_report, encoding="utf-8") as f:
+      report_body = f.read()
+    self.assertIn("Total $14.2M (+12.4% QoQ)", report_body)
+    self.assertIn("closed Oct 4", report_body)
+
   def test_stage_timeout_allows_all_done_cleanup_in_engine_loop(self) -> None:
     wf = schema.Lightflow(
         name="timeout_wf",
