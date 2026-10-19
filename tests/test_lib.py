@@ -963,6 +963,106 @@ stages:
     })
     self.assertEqual(delta["output_keys_by_action"], {"calc": ["total"]})
 
+    # Issue #25: mismatched return keys across offline/dry_run and live branches
+    # must be rejected even when sample_payload={"offline": True} only exercises
+    # the offline branch at runtime.
+    with open(
+        os.path.join(scaffold_dir, "bad_actions.py"), "w", encoding="utf-8"
+    ) as f:
+      f.write(
+          "def fetch(payload, dry_run=False, **kwargs):\n"
+          "  if dry_run or payload.get('offline'):\n"
+          "    return {'items': [], 'count': 0}, 'offline'\n"
+          "  return {'items': [], 'count': 0, 'source': 'live'}, 'live'\n"
+      )
+    with self.assertRaisesRegex(
+        ValueError, "mismatched output keys.*source"
+    ):
+      cl_actions.verify_actions({
+          "outputs": {
+              "align_on_design": {
+                  "target_dir": scaffold_dir,
+                  "action_names": ["fetch"],
+              },
+              "implement_and_test_actions": {
+                  "actions_file": "bad_actions.py",
+                  "sample_payload": {"offline": True},
+              },
+          }
+      })
+
+    # Variable-mutated return dict with extra key on live path is also rejected
+    with open(
+        os.path.join(scaffold_dir, "bad_actions.py"), "w", encoding="utf-8"
+    ) as f:
+      f.write(
+          "def fetch(payload, dry_run=False, **kwargs):\n"
+          "  out = {'items': [], 'count': 0}\n"
+          "  if dry_run or payload.get('offline'):\n"
+          "    return out, 'offline'\n"
+          "  out['source'] = 'live'\n"
+          "  return out, 'live'\n"
+      )
+    with self.assertRaisesRegex(
+        ValueError, "mismatched output keys.*source"
+    ):
+      cl_actions.verify_actions({
+          "outputs": {
+              "align_on_design": {
+                  "target_dir": scaffold_dir,
+                  "action_names": ["fetch"],
+              },
+              "implement_and_test_actions": {
+                  "actions_file": "bad_actions.py",
+                  "sample_payload": {"offline": True},
+              },
+          }
+      })
+
+    # Dynamic key mismatch between sample_payload and dry_run=True is rejected
+    with open(
+        os.path.join(scaffold_dir, "bad_actions.py"), "w", encoding="utf-8"
+    ) as f:
+      f.write(
+          "def fetch(payload, dry_run=False, **kwargs):\n"
+          "  keys = ('a',) if dry_run else ('a', 'b')\n"
+          "  return {k: 1 for k in keys}, 'ok'\n"
+      )
+    with self.assertRaisesRegex(
+        ValueError, "different output keys between sample_payload"
+    ):
+      cl_actions.verify_actions({
+          "outputs": {
+              "align_on_design": {
+                  "target_dir": scaffold_dir,
+                  "action_names": ["fetch"],
+              },
+              "implement_and_test_actions": {
+                  "actions_file": "bad_actions.py",
+                  "sample_payload": {},
+              },
+          }
+      })
+
+    # Every bundled example's actions.py passes verify_actions AST key parity
+    examples_root = os.path.dirname(
+        os.path.dirname(os.path.abspath(cl_actions.__file__))
+    )
+    for example_name in sorted(os.listdir(examples_root)):
+      example_dir = os.path.join(examples_root, example_name)
+      if os.path.isfile(os.path.join(example_dir, "actions.py")):
+        cl_actions.verify_actions({
+            "outputs": {
+                "align_on_design": {
+                    "target_dir": example_dir,
+                    "action_names": [],
+                },
+                "implement_and_test_actions": {
+                    "actions_file": "actions.py",
+                },
+            }
+        })
+
     # Referencing payload.outputs.s1 without run_after: [s1] is rejected
     bad_manifest = os.path.join(scaffold_dir, "bad.yaml")
     with open(bad_manifest, "w", encoding="utf-8") as f:

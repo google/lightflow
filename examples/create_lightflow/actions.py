@@ -49,6 +49,164 @@ def _is_dry_run(payload: dict[str, Any], static_kwargs: dict[str, Any]) -> bool:
   return bool(payload.get("dry_run") or static_kwargs.get("dry_run"))
 
 
+def _dict_literal_keys(node: ast.AST) -> set[str] | None:
+  """Extracts string keys from a dict literal if all keys are string constants."""
+  if not isinstance(node, ast.Dict):
+    return None
+  keys: set[str] = set()
+  for k in node.keys:
+    if not (isinstance(k, ast.Constant) and isinstance(k.value, str)):
+      return None
+    keys.add(k.value)
+  return keys
+
+
+def _extract_return_key_sets(
+    fn: ast.FunctionDef,
+) -> list[tuple[int, set[str]]]:
+  """Collects `(lineno, key_set)` for return statements in `fn`."""
+  results: list[tuple[int, set[str]]] = []
+
+  def _return_payload_expr(val: ast.AST | None) -> ast.AST | None:
+    if val is None:
+      return None
+    if isinstance(val, ast.Tuple) and len(val.elts) == 2:
+      return val.elts[0]
+    return val
+
+  def _walk_block(stmts: list[ast.stmt], env: dict[str, set[str]]) -> bool:
+    for stmt in stmts:
+      if isinstance(
+          stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+      ):
+        continue
+      if isinstance(stmt, ast.Return):
+        expr = _return_payload_expr(stmt.value)
+        if expr is not None:
+          lit_keys = _dict_literal_keys(expr)
+          if lit_keys is not None:
+            results.append((stmt.lineno, lit_keys))
+          elif isinstance(expr, ast.Name) and expr.id in env:
+            results.append((stmt.lineno, set(env[expr.id])))
+        return True
+      if isinstance(stmt, ast.Raise):
+        return True
+      if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1:
+        target = stmt.targets[0]
+        if isinstance(target, ast.Name):
+          lit_keys = _dict_literal_keys(stmt.value)
+          if lit_keys:
+            env[target.id] = lit_keys
+          else:
+            env.pop(target.id, None)
+        elif (
+            isinstance(target, ast.Subscript)
+            and isinstance(target.value, ast.Name)
+            and target.value.id in env
+        ):
+          if isinstance(target.slice, ast.Constant) and isinstance(
+              target.slice.value, str
+          ):
+            env[target.value.id] = env[target.value.id] | {target.slice.value}
+          else:
+            env.pop(target.value.id, None)
+      elif isinstance(stmt, ast.AnnAssign) and isinstance(
+          stmt.target, ast.Name
+      ):
+        if stmt.value is not None:
+          lit_keys = _dict_literal_keys(stmt.value)
+          if lit_keys:
+            env[stmt.target.id] = lit_keys
+          else:
+            env.pop(stmt.target.id, None)
+      elif (
+          isinstance(stmt, ast.Expr)
+          and isinstance(stmt.value, ast.Call)
+          and isinstance(stmt.value.func, ast.Attribute)
+          and isinstance(stmt.value.func.value, ast.Name)
+          and stmt.value.func.value.id in env
+      ):
+        var_name = stmt.value.func.value.id
+        attr = stmt.value.func.attr
+        if (
+            attr == "update"
+            and len(stmt.value.args) == 1
+            and not stmt.value.keywords
+        ):
+          upd_keys = _dict_literal_keys(stmt.value.args[0])
+          if upd_keys is not None:
+            env[var_name] = env[var_name] | upd_keys
+          else:
+            env.pop(var_name, None)
+        elif attr in ("pop", "clear", "popitem", "setdefault", "update"):
+          env.pop(var_name, None)
+      elif isinstance(stmt, ast.If):
+        then_env = copy.deepcopy(env)
+        else_env = copy.deepcopy(env)
+        then_term = _walk_block(stmt.body, then_env)
+        else_term = _walk_block(stmt.orelse, else_env)
+        if then_term and else_term:
+          return True
+        if then_term:
+          env.clear()
+          env.update(else_env)
+        elif else_term:
+          env.clear()
+          env.update(then_env)
+        else:
+          merged: dict[str, set[str]] = {}
+          for k in set(then_env) & set(else_env):
+            if then_env[k] == else_env[k]:
+              merged[k] = then_env[k]
+          env.clear()
+          env.update(merged)
+      elif isinstance(stmt, (ast.For, ast.AsyncFor, ast.While)):
+        _walk_block(stmt.body, copy.deepcopy(env))
+        _walk_block(stmt.orelse, copy.deepcopy(env))
+      elif isinstance(stmt, (ast.With, ast.AsyncWith)):
+        if _walk_block(stmt.body, env):
+          return True
+      elif isinstance(stmt, ast.Try):
+        try_env = copy.deepcopy(env)
+        try_term = _walk_block(stmt.body, try_env)
+        for handler in stmt.handlers:
+          _walk_block(handler.body, copy.deepcopy(env))
+        _walk_block(stmt.orelse, try_env)
+        _walk_block(stmt.finalbody, try_env)
+        if not try_term:
+          env.clear()
+          env.update(try_env)
+    return False
+
+  _walk_block(fn.body, {})
+  return results
+
+
+def _unpack_action_result(name: str, res: Any) -> dict[str, Any]:
+  """Validates that `res` is `(dict, str)` or `dict` and JSON-serializable."""
+  if (
+      isinstance(res, tuple)
+      and len(res) == 2
+      and isinstance(res[0], dict)
+      and isinstance(res[1], str)
+  ):
+    delta, _ = res
+  elif isinstance(res, dict):
+    delta = res
+  else:
+    raise ValueError(
+        f"Action '{name}' must return `(dict, str)` or `dict`, got"
+        f" `{type(res).__name__}`."
+    )
+  try:
+    json.dumps(delta)
+  except (TypeError, OverflowError) as e:
+    raise ValueError(
+        f"Action '{name}' returned non-JSON-serializable payload dict: {e}"
+    ) from e
+  return delta
+
+
 def verify_actions(
     payload: dict[str, Any], dry_run: bool = False, **static_kwargs: Any
 ) -> tuple[dict[str, Any], str]:
@@ -133,6 +291,8 @@ def verify_actions(
 
   targets_to_check = expected_actions or sorted(functions.keys())
   dry_run_capable: list[str] = []
+  static_return_keys: dict[str, set[str]] = {}
+  accepts_dry_run_kwarg: dict[str, bool] = {}
   for name in targets_to_check:
     fn = functions[name]
     if isinstance(fn, ast.AsyncFunctionDef):
@@ -148,14 +308,33 @@ def verify_actions(
           f"Action '{name}' in '{actions_path}' must accept `payload` as its"
           " first parameter."
       )
+    accepts_dry_run_kwarg[name] = (
+        "dry_run" in arg_names or fn.args.kwarg is not None
+    )
     has_dry_run_param = (
-        "dry_run" in arg_names
-        or fn.args.kwarg is not None
+        accepts_dry_run_kwarg[name]
         or "dry_run" in ast.unparse(fn)
         or "offline" in ast.unparse(fn)
     )
     if has_dry_run_param:
       dry_run_capable.append(name)
+
+    return_key_sets = _extract_return_key_sets(fn)
+    if return_key_sets:
+      first_lineno, first_keys = return_key_sets[0]
+      for lineno, keys in return_key_sets[1:]:
+        if keys != first_keys:
+          missing_keys = sorted(first_keys - keys)
+          extra_keys = sorted(keys - first_keys)
+          raise ValueError(
+              f"Action '{name}' in '{actions_path}' has return paths with"
+              f" mismatched output keys: line {first_lineno} returns"
+              f" {sorted(first_keys)} vs line {lineno} returns"
+              f" {sorted(keys)} (missing={missing_keys}, extra={extra_keys})."
+              " Every return path (including dry_run/offline) must return"
+              " the exact same output dictionary keys."
+          )
+      static_return_keys[name] = first_keys
 
   output_keys_by_action: dict[str, list[str]] = {}
   if isinstance(sample_payload, dict):
@@ -172,27 +351,40 @@ def verify_actions(
       for name in targets_to_check:
         fn_obj = getattr(mod, name)
         res = fn_obj(copy.deepcopy(running_payload))
+        delta = _unpack_action_result(name, res)
         if (
-            isinstance(res, tuple)
-            and len(res) == 2
-            and isinstance(res[0], dict)
-            and isinstance(res[1], str)
+            name in static_return_keys
+            and set(delta.keys()) != static_return_keys[name]
         ):
-          delta, _ = res
-        elif isinstance(res, dict):
-          delta = res
-        else:
           raise ValueError(
-              f"Action '{name}' must return `(dict, str)` or `dict`, got"
-              f" `{type(res).__name__}`."
+              f"Action '{name}' in '{actions_path}' returned keys"
+              f" {sorted(delta.keys())} for sample_payload, which do not"
+              " match its static return path keys"
+              f" {sorted(static_return_keys[name])}. Every return path must"
+              " return the exact same output dictionary keys."
           )
-        try:
-          json.dumps(delta)
-        except (TypeError, OverflowError) as e:
-          raise ValueError(
-              f"Action '{name}' returned non-JSON-serializable payload dict:"
-              f" {e}"
-          ) from e
+        if accepts_dry_run_kwarg.get(name):
+          dry_res = fn_obj(copy.deepcopy(running_payload), dry_run=True)
+          dry_delta = _unpack_action_result(name, dry_res)
+          if set(dry_delta.keys()) != set(delta.keys()):
+            raise ValueError(
+                f"Action '{name}' in '{actions_path}' returned different"
+                f" output keys between sample_payload ({sorted(delta.keys())})"
+                f" and dry_run=True ({sorted(dry_delta.keys())}). Every return"
+                " path must return the exact same output dictionary keys."
+            )
+        elif name in dry_run_capable:
+          dry_payload = copy.deepcopy(running_payload)
+          dry_payload["dry_run"] = True
+          dry_res = fn_obj(dry_payload)
+          dry_delta = _unpack_action_result(name, dry_res)
+          if set(dry_delta.keys()) != set(delta.keys()):
+            raise ValueError(
+                f"Action '{name}' in '{actions_path}' returned different"
+                f" output keys between sample_payload ({sorted(delta.keys())})"
+                f" and dry_run=True ({sorted(dry_delta.keys())}). Every return"
+                " path must return the exact same output dictionary keys."
+            )
         output_keys_by_action[name] = sorted(delta.keys())
         running_payload.update(delta)
         engine.record_stage_outputs(running_payload, name, delta)
@@ -286,7 +478,11 @@ def validate_manifest_dry_run(
     return (
         {
             "manifest_path": manifest_path,
+            "workflow_name": str(design.get("workflow_name", "")),
             "compiled_stages": [],
+            "resolved_imports": [],
+            "visualizer_html": os.path.join(target_dir, "visualizer.html"),
+            "dry_run_status": "DRY_RUN_COMPLETE",
             "simulated": True,
         },
         f"[DRY RUN] Would compile and dry-run '{manifest_path}'.",

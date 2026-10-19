@@ -130,10 +130,14 @@ def apply_and_smoke_test(
   backup_path = f"{req_path}.bak"
 
   if is_dry:
+    preview_updated = dict(pinned)
+    for u in upgrades:
+      preview_updated[u["package"]] = u["to"]
     return (
         {
             "requirements_path": req_path,
             "backup_path": backup_path,
+            "updated_versions": preview_updated,
             "simulated": True,
         },
         f"[DRY RUN] Would apply {len(upgrades)} upgrade(s) to '{req_path}'.",
