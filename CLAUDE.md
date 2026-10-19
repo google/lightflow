@@ -5,35 +5,7 @@ migrations, API batch modifications, code deployments, or multi-stage reports),
 use **Lightflow** to guarantee topological execution order, atomic state
 checkpoints, and human-in-the-loop approval gates.
 
-## Available MCP Tools (`lightflow-mcp`)
-
-If the `lightflow` MCP server is connected, prefer calling its structured tools
-directly:
-
-1.  **`dry_run_lightflow`**: Validate DAG dependencies, CEL-like expressions
-    (`run_if`, `instructions`), and JSON schemas before executing.
-2.  **`run_lightflow`**: Launch or continue a lightflow (`lightflow`, `log_id`,
-    `payload`).
-    -   When `state == "SUSPENDED"` (`exit_code == 2`), present the
-        `instructions` and `json_schema` to the user and wait for explicit human
-        confirmation before calling `resume_lightflow`; `next_action` names the
-        call and its `required_payload_keys`.
-3.  **`resume_lightflow`**: Resolve an `operator_action` (`resolution="APPROVE"`
-    or `"REJECT"`) or re-arm a repaired failed stage without repeating
-    already-completed upstream stages. `lightflow` is optional: runs remember
-    their manifest. On a rejected gate, passing `resolution` re-opens it and
-    applies the decision in one call.
-4.  **`get_lightflow_status`** / **`list_lightflow_runs`**: One run (compact:
-    `state`, one entry per stage, gate details, `exit_code`, `next_action`;
-    `verbose: true` adds the stamp log and Mermaid diagram) or every saved run.
-    `isError` is true only when the call could not do what was asked or a stage
-    genuinely failed; `REJECTED`, `SUSPENDED`, `WAITING` (a polling stage
-    yielded, `exit_code == 5`, nothing is broken) and `NOT_FOUND` are answers,
-    not errors.
-5.  **`visualize_lightflow`**: Generate a self-contained HTML5 DAG canvas and
-    timeline playback artifact.
-
-## Terminal CLI Commands
+## CLI Commands
 
 When working via the bash tool in Claude Code (`python3 -m lightflow` is
 equivalent to `lightflow` whenever the console script is not on `PATH`):

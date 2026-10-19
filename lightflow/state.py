@@ -321,8 +321,7 @@ class PassportManager:
       )
     cleaned_id = workflow_id.lower().strip()
     if cleaned_id != workflow_id.strip():
-      # stderr, so stdout stays clean for callers that parse it (and for the
-      # MCP server's JSON-RPC stream).
+      # stderr, so stdout stays clean for callers that parse it.
       print(
           f"ℹ️ Log IDs are case-insensitive: '{workflow_id.strip()}' shares"
           f" state with '{cleaned_id}'.",
@@ -607,7 +606,7 @@ def effective_status_name(stamp: schema.Stamp) -> str:
   """Returns the user-facing status of a stamp.
 
   The engine stamps three different situations as FAILED; tell them apart so
-  `status`, `list`, the failure footer and the MCP server agree: REJECTED (an
+  `status`, `list` and the failure footer agree: REJECTED (an
   operator said no), BLOCKED (never ran because an upstream failed) and
   WAITING (a polling stage yielded). Everything else is the stamp's own
   status name.

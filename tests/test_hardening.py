@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Regression tests for the v0.1 hardening pass (timeouts, CEL caps, MCP input validation)."""
+"""Regression tests for the v0.1 hardening pass (timeouts, CEL caps, CLI input validation)."""
 
 from __future__ import annotations
 
@@ -35,13 +35,11 @@ if _OSS_ROOT not in sys.path:
 try:
   from ..lightflow import engine
   from ..lightflow import lib
-  from ..lightflow import mcp_server
   from ..lightflow import runner
   from ..lightflow import schema
 except (ImportError, ValueError):
   from lightflow import engine  # pyrefly: ignore[missing-import]
   from lightflow import lib  # pyrefly: ignore[missing-import]
-  from lightflow import mcp_server  # pyrefly: ignore[missing-import]
   from lightflow import runner  # pyrefly: ignore[missing-import]
   from lightflow import schema  # pyrefly: ignore[missing-import]
 # pylint: enable=g-import-not-at-top,g-bad-import-order
@@ -240,51 +238,6 @@ stages:
         },
         {"two", "three"},
     )
-
-  # --- mcp: input validation never crashes the loop -----------------------
-
-  def test_tools_call_validates_params_before_dispatch(self) -> None:
-    def call(params: Any) -> dict[str, Any]:
-      resp = mcp_server.handle_jsonrpc_message(
-          {"jsonrpc": "2.0", "id": 9, "method": "tools/call", "params": params}
-      )
-      assert resp is not None
-      return resp
-
-    self.assertEqual(call("garbage")["error"]["code"], -32602)
-    self.assertEqual(call({"name": 42})["error"]["code"], -32602)
-    unknown = call({"name": "nope", "arguments": {}})["error"]
-    self.assertEqual(unknown["code"], -32602)
-    self.assertIn("run_lightflow", unknown["message"])
-    missing = call({"name": "run_lightflow", "arguments": {"log_id": "x"}})
-    self.assertEqual(missing["error"]["code"], -32602)
-    self.assertIn("lightflow", missing["error"]["message"])
-    empty_req = call({
-        "name": "run_lightflow",
-        "arguments": {"lightflow": "  ", "log_id": "x"},
-    })
-    self.assertEqual(empty_req["error"]["code"], -32602)
-    self.assertEqual(
-        call({"name": "run_lightflow", "arguments": "nope"})["error"]["code"],
-        -32602,
-    )
-
-  def test_tools_call_handler_exception_is_an_internal_error(self) -> None:
-    with mock.patch.object(
-        mcp_server, "call_tool", side_effect=RuntimeError("unexpected crash")
-    ):
-      resp = mcp_server.handle_jsonrpc_message({
-          "jsonrpc": "2.0",
-          "id": 10,
-          "method": "tools/call",
-          "params": {
-              "name": "dry_run_lightflow",
-              "arguments": {"lightflow": "examples/hn_digest"},
-          },
-      })
-    assert resp is not None
-    self.assertEqual(resp["error"]["code"], -32603)
-    self.assertIn("RuntimeError: unexpected crash", resp["error"]["message"])
 
   # --- schema: the stdlib YAML fallback fails loudly on unsupported syntax ---
 

@@ -2729,7 +2729,7 @@ def act_failing_rollback(
 
 
 class DayTwoOperationsTest(_SandboxTestCase):
-  """Day-two behaviours: moved manifests, --force, re-opened gates, MCP."""
+  """Day-two behaviours: moved manifests, --force, re-opened gates."""
 
   state_subdir = "state"
   silence_notifications = True

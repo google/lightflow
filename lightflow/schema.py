@@ -16,7 +16,7 @@
 
 Provides zero-protoc dataclass models with Protobuf compatibility shims so
 workflows can be authored in YAML (.yaml/.yml), JSON (.json), or
-Textproto (.textproto) across local CLI, MCP, and Python environments.
+Textproto (.textproto) across local CLI and Python environments.
 """
 
 from __future__ import annotations

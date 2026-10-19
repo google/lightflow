@@ -69,7 +69,7 @@ these rules:
 -   **Always report both Warm (marginal) and Cold-Start (`N=1` and session `N`)
     numbers**:
     -   *Warm / Marginal*: The per-run cost once
-        `skills/run_lightflows/SKILL.md` (or MCP tool schemas) is in context.
+        `skills/run_lightflows/SKILL.md` is in context.
     -   *Single-Workflow Cold Start (`N=1`)*: Add
         `skills/run_lightflows/SKILL.md` (~1,122 tokens) to a single execution
         run, and also add `skills/create_lightflows/SKILL.md` (~2,044 tokens)

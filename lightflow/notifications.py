@@ -91,7 +91,7 @@ def send_notification(title: str, content: str) -> None:
 
   Custom handlers registered via `register_notification_handler` receive
   every event. The `agentapi` push to the hosting agent is controlled by
-  `LIGHTFLOW_NOTIFY`: `off` (default, so synchronous CLI/MCP runs do not
+  `LIGHTFLOW_NOTIFY`: `off` (default, so synchronous CLI runs do not
   double-notify a caller that already reads stdout/JSON) disables the push;
   `milestones` forwards only gate suspensions, waiting yields, failures,
   rejections, rollbacks, and the final run outcome; `all` forwards every

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lightflow-dag"
-version = "0.3.1"
+version = "0.4.0"
 description = "Lightweight, local-first deterministic DAG workflow engine and human-in-the-loop guardrails for AI agents."
 readme = "README.md"
 license = {text = "Apache-2.0"}
@@ -17,7 +17,6 @@ keywords = [
   "workflow",
   "dag",
   "human-in-the-loop",
-  "mcp",
   "claude",
   "antigravity"
 ]
@@ -49,7 +48,6 @@ dev = [
 
 [project.scripts]
 lightflow = "lightflow.runner:run_cli"
-lightflow-mcp = "lightflow.mcp_server:main"
 
 [tool.setuptools]
 packages = ["lightflow"]

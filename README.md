@@ -51,9 +51,10 @@ flowchart LR
     standalone, single-file HTML5 DAG canvas, execution trace log, and
     payload/manifest inspector with zero external CDN requests.
 -   **First-Class Agent Integrations**:
-    -   **Model Context Protocol (MCP)**: Built-in stdio MCP server
-        (`lightflow-mcp`) for Claude Code, Claude Desktop, Gemini CLI, and
-        Cursor, plus [`AGENTS.md`](./AGENTS.md) and [`CLAUDE.md`](./CLAUDE.md).
+    -   **Agent Guides**: [`AGENTS.md`](./AGENTS.md) and
+        [`CLAUDE.md`](./CLAUDE.md) for Claude Code, Gemini CLI, Codex, Cursor,
+        and Antigravity. Agents drive Lightflow through the CLI; every command
+        returns a compact, parseable summary and a process exit code.
     -   **Agent Skills & Streaming Notifications**: Includes
         [`skills/run_lightflows/SKILL.md`](./skills/run_lightflows/SKILL.md)
         (executing and resuming workflows),
@@ -270,8 +271,8 @@ stages:
     (including `❌ N would fail` for expressions that would error at runtime), a
     ready-to-paste `💡 --payload` hint when a branch reads unseeded keys, and
     the `stage→action` pairs that lack `dry_run` support.
--   **Run Discovery & Remembered Manifests**: `lightflow list` (and the
-    `list_lightflow_runs` MCP tool) enumerates saved runs with the manifest each
+-   **Run Discovery & Remembered Manifests**: `lightflow list` enumerates
+    saved runs with the manifest each
     was started from. Runs record their manifest in `passport.json`, so
     `status`, `resume`, `visualize`, and `cleanup` need only `--log_id=<id>`; if
     the manifest moves, pass `--lightflow=<new path>` once and it is
@@ -283,7 +284,7 @@ stages:
     re-armed or the gate re-opened, so it runs again at the real end of the run.
 -   **Milestone Push Notifications (`agentapi`)**: Agent push notifications via
     `agentapi` are disabled by default (`LIGHTFLOW_NOTIFY=off`) so synchronous
-    CLI/MCP runs do not double-notify a caller that already reads stdout/JSON;
+    CLI runs do not double-notify a caller that already reads stdout;
     set `LIGHTFLOW_NOTIFY=milestones` (for detached/background runs) to push
     only gate suspensions, failures, rejections, rollbacks, and the final
     outcome, or `LIGHTFLOW_NOTIFY=all` for every stage transition.
@@ -360,10 +361,10 @@ stage plus any paused gate's Instructions, Payload Schema, and resume command;
 
 ### For Antigravity (`agy`) & Skill-Based Agents
 
-This repository ships with [`plugin.json`](./plugin.json), [`mcp_config.json`](./mcp_config.json), and two progressive-disclosure skills ([`skills/run_lightflows/SKILL.md`](./skills/run_lightflows/SKILL.md) and [`skills/create_lightflows/SKILL.md`](./skills/create_lightflows/SKILL.md)):
+This repository ships with [`plugin.json`](./plugin.json) and two progressive-disclosure skills ([`skills/run_lightflows/SKILL.md`](./skills/run_lightflows/SKILL.md) and [`skills/create_lightflows/SKILL.md`](./skills/create_lightflows/SKILL.md)):
 
 ```bash
-# Option A: Mount the entire repository as a single plugin (skills + MCP server)
+# Option A: Mount the entire repository as a single plugin
 ln -s "$(pwd)" ~/.gemini/config/plugins/lightflow
 
 # Option B: Mount only the on-demand skills
@@ -371,20 +372,7 @@ ln -s "$(pwd)/skills/run_lightflows" ~/.gemini/config/skills/run_lightflows
 ln -s "$(pwd)/skills/create_lightflows" ~/.gemini/config/skills/create_lightflows
 ```
 
-### For Claude Code, Claude Desktop, Gemini CLI & Cursor (MCP)
-
-Add `lightflow-mcp` to your `claude_desktop_config.json` or `.mcp.json`:
-
-```json
-{
-  "mcpServers": {
-    "lightflow": {
-      "command": "lightflow-mcp",
-      "args": []
-    }
-  }
-}
-```
+### For Claude Code, Gemini CLI, Codex & Cursor
 
 Copy [`AGENTS.md`](./AGENTS.md) or [`CLAUDE.md`](./CLAUDE.md) into your
 repository root (or install

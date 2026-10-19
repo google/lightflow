@@ -1,6 +1,6 @@
 ---
 name: run_lightflows
-description: Executes, inspects, and resumes existing Lightflow DAG workflows via CLI (`lightflow`, or the equivalent `python3 -m lightflow`) or MCP (`lightflow-mcp`). Use when asked to run, dry-run, check status, visualize, resolve an `operator_action` human-in-the-loop checkpoint (`EXIT_CODE=2`), or recover a failed Lightflow run without authoring a new workflow. Run `start` directly without pre-reading the manifest or `actions.py`.
+description: Executes, inspects, and resumes existing Lightflow DAG workflows via CLI (`lightflow`, or the equivalent `python3 -m lightflow`). Use when asked to run, dry-run, check status, visualize, resolve an `operator_action` human-in-the-loop checkpoint (`EXIT_CODE=2`), or recover a failed Lightflow run without authoring a new workflow. Run `start` directly without pre-reading the manifest or `actions.py`.
 ---
 
 # Running & Resuming Lightflow Workflows (`run_lightflows`)
@@ -42,13 +42,6 @@ lightflow list                     # every saved run: log ID, lightflow, state, 
 lightflow visualize --log_id=<id> --output=/tmp/viz.html
 lightflow cleanup --log_id=<id>    # deletes the run's state only; workflow artifacts on disk are untouched
 ```
-
-**MCP (`lightflow-mcp`)**: if connected, prefer `run_lightflow`,
-`resume_lightflow`, `get_lightflow_status`, `list_lightflow_runs`,
-`dry_run_lightflow`, and `visualize_lightflow`; the rules below apply to their
-`state` / `exit_code` fields. Results are compact (`state`, one entry per stage,
-paused-gate details, a `next_action`); `verbose: true` on `get_lightflow_status`
-adds the stamp log and Mermaid diagram.
 
 ## 2. Exit Codes & Governance
 
