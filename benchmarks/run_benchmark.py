@@ -14,7 +14,7 @@
 # limitations under the License.
 """Reproducible token-efficiency benchmark for Lightflow example workflows.
 
-Executes all 6 included example Lightflows end-to-end and measures:
+Executes all 7 included example Lightflows end-to-end and measures:
 1. Runtime Agent Context (CLI command invocations + authored files + stdout).
 2. Multi-Turn Cumulative Input Tokens (accounting for transcript re-reads across
    turns in a stateful LLM conversation).
@@ -246,6 +246,66 @@ class BenchmarkRunner:
         exit_code=res.returncode,
         stdout_chars=len(norm_out),
         cmd_chars=len(norm_cmd) + extra_input_chars,
+    )
+
+  def bench_quarterly_revenue_brief(self) -> WorkflowBenchmark:
+    log_id = "bench_q3"
+    out_md = os.path.join(self.work_dir, "q3_revenue_brief.md")
+    steps = [
+        self._run_step(
+            "start (SQL query + variance analysis -> pause at draft_commentary)",
+            [
+                "start",
+                "--lightflow=examples/quarterly_revenue_brief",
+                f"--log_id={log_id}",
+                f'--payload={{"output_path": "{out_md}"}}',
+            ],
+            expected_exit=2,
+        ),
+        self._run_step(
+            "resume draft_commentary (render_report -> pause at approve_send)",
+            [
+                "resume",
+                f"--log_id={log_id}",
+                "--stage=draft_commentary",
+                "--resolution=APPROVE",
+                (
+                    '--payload={"approved": true, "commentary": "Q3 revenue'
+                    " grew +12.4% QoQ led by NA and APAC; EMEA trailed plan by"
+                    ' 6.2% on Q4 renewal timing (closed Oct 4)."}'
+                ),
+            ],
+            expected_exit=2,
+        ),
+        self._run_step(
+            "resume approve_send (send_report -> complete)",
+            [
+                "resume",
+                f"--log_id={log_id}",
+                "--stage=approve_send",
+                "--resolution=APPROVE",
+            ],
+            expected_exit=0,
+        ),
+    ]
+    p_chars, p_out_chars = self._measure_passport(log_id)
+    steps.append(
+        self._run_step("cleanup", ["cleanup", f"--log_id={log_id}"], 0)
+    )
+    y_ch, a_ch, r_ch = self._measure_blueprint("quarterly_revenue_brief")
+    return WorkflowBenchmark(
+        name="quarterly_revenue_brief",
+        description=(
+            "SQLite query -> Python variance math -> commentary gate -> render"
+            " -> send gate -> receipt"
+        ),
+        is_authoring_workflow=False,
+        steps=steps,
+        yaml_chars=y_ch,
+        actions_chars=a_ch,
+        readme_chars=r_ch,
+        passport_chars=p_chars,
+        passport_outputs_chars=p_out_chars,
     )
 
   def bench_hn_digest(self) -> WorkflowBenchmark:
@@ -614,6 +674,7 @@ class BenchmarkRunner:
 
   def run_all(self) -> list[WorkflowBenchmark]:
     return [
+        self.bench_quarterly_revenue_brief(),
         self.bench_hn_digest(),
         self.bench_usgs_seismic_alert(),
         self.bench_pypi_upgrade_guard(),

@@ -1,4 +1,5 @@
 name: quarterly_revenue_brief
+strict_expressions: true
 description: >-
   Queries regional revenue from SQLite, computes QoQ and plan variances in
   Python, pauses at an operator_action checkpoint for commentary review,
@@ -69,7 +70,11 @@ stages:
         'Report rendered to ' + payload.outputs.render_report.report_path + '. Review the file and approve to dispatch.'
       json_schema:
         type: object
+        required:
+          - approved
         properties:
+          approved:
+            type: boolean
           channel:
             type: string
 
@@ -77,6 +82,7 @@ stages:
     description: Dispatch the approved report and write a delivery receipt
     run_after:
       - approve_send
+    run_if: "payload.outputs.approve_send.approved == true"
     python_action:
       action_id: send_report
       static_kwargs:

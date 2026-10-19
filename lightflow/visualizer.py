@@ -115,20 +115,22 @@ def generate_visualizer_html(
     )
     if secrets and isinstance(pp_data.get("payload"), dict):
       pp_data["payload"] = engine.redact_payload(raw_payload, secrets)
-    if secrets and pp_data.get("stamps"):
-      redacted_stamps = []
+    if pp_data.get("stamps"):
+      normalized_stamps = []
       for st in pp_data["stamps"]:
         st_copy = dict(st)
-        if st_copy.get("message"):
-          st_copy["message"] = engine.redact_text(
-              st_copy["message"], raw_payload, secrets
-          )
-        if st_copy.get("instructions"):
-          st_copy["instructions"] = engine.redact_text(
-              st_copy["instructions"], raw_payload, secrets
-          )
-        redacted_stamps.append(st_copy)
-      pp_data["stamps"] = redacted_stamps
+        st_copy["status"] = state.effective_status_name(st_copy)
+        if secrets:
+          if st_copy.get("message"):
+            st_copy["message"] = engine.redact_text(
+                st_copy["message"], raw_payload, secrets
+            )
+          if st_copy.get("instructions"):
+            st_copy["instructions"] = engine.redact_text(
+                st_copy["instructions"], raw_payload, secrets
+            )
+        normalized_stamps.append(st_copy)
+      pp_data["stamps"] = normalized_stamps
 
   wf_json = json.dumps(wf_data).replace("<", "\\u003c")
   pp_json = json.dumps(pp_data).replace("<", "\\u003c")

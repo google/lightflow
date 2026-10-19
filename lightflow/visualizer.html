@@ -140,20 +140,22 @@
     .status-dot[data-status="COMPLETED"] { background-color: #10b981; }
     .status-dot[data-status="PENDING"] { background-color: #0ea5e9; }
     .status-dot[data-status="PAUSED"] { background-color: #f59e0b; animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
-    .status-dot[data-status="FAILED"] { background-color: #f43f5e; }
+    .status-dot[data-status="WAITING"] { background-color: #f59e0b; }
+    .status-dot[data-status="FAILED"], .status-dot[data-status="REJECTED"] { background-color: #f43f5e; }
     .status-badge { background-color: #1e293b; color: #94a3b8; border: 1px solid transparent; }
     .status-badge[data-status="COMPLETED"] { background-color: #022c22; color: #6ee7b7; border-color: #065f46; font-weight: 600; }
     .status-badge[data-status="PENDING"], .status-badge[data-status="RUNNING"] { background-color: #082f49; color: #7dd3fc; border-color: #075985; }
     .status-badge[data-status="PAUSED"] { background-color: #451a03; color: #fcd34d; border-color: #92400e; font-weight: 600; animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
     .status-badge[data-status="WAITING"] { background-color: #451a03; color: #fcd34d; border-color: #92400e; font-weight: 600; }
     .status-badge[data-status="FAILED"], .status-badge[data-status="REJECTED"] { background-color: #4c0519; color: #fda4af; border-color: #9f1239; font-weight: 600; }
-    .status-badge[data-status="SKIPPED"] { background-color: #0f172a; color: #64748b; }
+    .status-badge[data-status="SKIPPED"], .status-badge[data-status="BLOCKED"] { background-color: #0f172a; color: #64748b; }
     .stage-card { outline: 2px solid transparent; outline-offset: 0; } /* outline, not ring: combines with box-shadow */
     .stage-card[data-status="COMPLETED"] { outline-color: rgba(16, 185, 129, 0.5); border-color: rgba(16, 185, 129, 0.6); }
     .stage-card[data-status="PAUSED"] { outline-color: rgba(245, 158, 11, 0.6); border-color: #f59e0b; animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
     .stage-card[data-status="PAUSED"] .status-badge { animation: none; }
-    .stage-card[data-status="FAILED"] { outline-color: #f43f5e; border-color: #e11d48; }
-    .stage-card[data-status="SKIPPED"] { border-style: dashed; border-color: #334155; opacity: 0.6; }
+    .stage-card[data-status="WAITING"] { outline-color: rgba(245, 158, 11, 0.5); border-color: rgba(245, 158, 11, 0.6); }
+    .stage-card[data-status="FAILED"], .stage-card[data-status="REJECTED"] { outline-color: #f43f5e; border-color: #e11d48; }
+    .stage-card[data-status="SKIPPED"], .stage-card[data-status="BLOCKED"] { border-style: dashed; border-color: #334155; opacity: 0.6; }
     .stage-card.selected { outline-color: #38bdf8; box-shadow: 0 10px 15px -3px rgba(14, 165, 233, 0.2); }
     .border-slate-700 { border-color: #334155; }
     .border-slate-800 { border-color: #1e293b; }
@@ -929,6 +931,26 @@
         `;
       }
 
+      if (stage.rollback_action && stage.rollback_action.action_id) {
+        detailsHtml += `
+          <div class="mt-2 pt-2 border-t border-slate-800">
+            <span class="text-slate-400 font-semibold">Rollback Action:</span> <span class="font-mono text-amber-300 font-bold">${escapeHtml(stage.rollback_action.action_id)}</span>
+          </div>
+        `;
+      }
+
+      if (stage.trigger_rule && stage.trigger_rule !== "ALL_SUCCESS" && stage.trigger_rule !== "TRIGGER_RULE_UNSPECIFIED") {
+        detailsHtml += `
+          <div class="mt-1.5"><span class="text-slate-400 font-semibold">Trigger Rule:</span> <span class="font-mono text-sky-300">${escapeHtml(stage.trigger_rule)}</span></div>
+        `;
+      }
+
+      if (stage.timeout_seconds !== undefined && stage.timeout_seconds !== null) {
+        detailsHtml += `
+          <div class="mt-1.5"><span class="text-slate-400 font-semibold">Timeout:</span> <span class="font-mono text-slate-300">${stage.timeout_seconds > 0 ? escapeHtml(stage.timeout_seconds) + "s" : "disabled (0s)"}</span></div>
+        `;
+      }
+
       document.getElementById("inspect-type-icon").textContent = icon;
       document.getElementById("inspect-kind").textContent = kind;
       document.getElementById("inspect-action-details").innerHTML = detailsHtml;
@@ -971,6 +993,9 @@
           COMPLETED: "Executed successfully.",
           PENDING: "Started.",
           PAUSED: "Paused.",
+          WAITING: "Polling yielded.",
+          REJECTED: "Rejected.",
+          BLOCKED: "Blocked by upstream failure.",
           FAILED: "Failed.",
           SKIPPED: "Skipped.",
         }[stamp.status] || stamp.status || "";

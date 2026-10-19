@@ -1427,6 +1427,23 @@ class LightflowRunnerCLI:
         )
         raise LightflowRunFailedError(headline, already_reported=True)
 
+      # --- Root failure cleared with --cascade=false; downstream still blocked.
+      if not roots:
+        headline = (
+            "Lightflow incomplete. Blocked downstream stage(s) (not re-armed):"
+            f" {', '.join(blocked)}"
+        )
+        self._send_status_notification(
+            runner, passport, headline, is_failed=True
+        )
+        print(f"\n{headline}")
+        print(f"⛔ Blocked downstream (not run): {', '.join(blocked)}")
+        print(
+            "\nContinue with the remaining stage(s) (preserves completed"
+            f" stages):\n  {resume_cmd}"
+        )
+        raise LightflowRunFailedError(headline, already_reported=True)
+
       # --- Genuine failures: root causes first, collateral summarised.
       err_msg = (
           f"Lightflow failed. Root failure(s): {', '.join(roots or rejected)}"

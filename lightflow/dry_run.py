@@ -43,7 +43,7 @@ def generate_status_mermaid(
   stage_messages = {}
   if passport is not None:
     for stamp in passport.stamps:
-      stage_statuses[stamp.stage_name] = stamp.status
+      stage_statuses[stamp.stage_name] = state.effective_status_name(stamp)
       stage_messages[stamp.stage_name] = stamp.message
 
   node_ids: dict[str, str] = {}
@@ -64,10 +64,10 @@ def generate_status_mermaid(
     name = stage.name
     node_id = node_ids[name]
     desc = html.escape(stage.description or name).replace('"', '\\"')
-    status = stage_statuses.get(name, schema.StampStatus.STATUS_UNSPECIFIED)
+    status = stage_statuses.get(name, "STATUS_UNSPECIFIED")
     msg = stage_messages.get(name, "")
     rollback_suffix = ""
-    if passport is not None and status == schema.StampStatus.FAILED:
+    if passport is not None and status in ("FAILED", "REJECTED"):
       if "Rollback executed successfully" in msg:
         rollback_suffix = " [rolled back]"
       elif "Rollback action " in msg and " failed:" in msg:
@@ -95,20 +95,20 @@ def generate_status_mermaid(
         )
       continue
 
-    if status == schema.StampStatus.COMPLETED:
+    if status == "COMPLETED":
       lines.append(
           f"  style {node_id} fill:#e2f0d9,stroke:#385723,stroke-width:2px"
       )
-    elif status == schema.StampStatus.SKIPPED:
+    elif status in ("SKIPPED", "BLOCKED"):
       lines.append(
           f"  style {node_id}"
           " fill:#f2f2f2,stroke:#7f7f7f,stroke-width:1px,stroke-dasharray: 5 5"
       )
-    elif status == schema.StampStatus.FAILED:
+    elif status in ("FAILED", "REJECTED"):
       lines.append(
           f"  style {node_id} fill:#f8cbad,stroke:#c00000,stroke-width:2px"
       )
-    elif status == schema.StampStatus.PAUSED:
+    elif status in ("PAUSED", "WAITING"):
       lines.append(
           f"  style {node_id} fill:#fff3cd,stroke:#ffc107,stroke-width:2px"
       )

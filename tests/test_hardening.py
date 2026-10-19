@@ -668,9 +668,26 @@ stages:
     _STAGE_2_SHOULD_FAIL = False
     # cascade=False surgically re-runs only 'two'; 'three' stays FAILED until
     # resumed.
-    with self.assertRaises(lib.LightflowRunFailedError):
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf), self.assertRaises(
+        lib.LightflowRunFailedError
+    ):
       cli.resume(lightflow=manifest, log_id="chain_run", cascade=False)
+    self.assertIn(
+        "Lightflow incomplete. Blocked downstream stage(s)", buf.getvalue()
+    )
+    self.assertNotIn("Root failure(s):", buf.getvalue())
     self.assertEqual(_CALLS, ["step_2", "step_2"])
+    list_buf = io.StringIO()
+    with contextlib.redirect_stdout(list_buf):
+      cli.list()
+    self.assertIn("INCOMPLETE", list_buf.getvalue())
+    self.assertNotIn("COMPLETED", list_buf.getvalue())
+    viz_html = lib.visualizer.generate_visualizer_html(
+        engine.load_lightflow(manifest),
+        lib.PassportManager("chain_run").load_passport(),
+    )
+    self.assertIn('"stage_name": "three", "status": "BLOCKED"', viz_html)
     cli.resume(lightflow=manifest, log_id="chain_run")
     self.assertEqual(_CALLS, ["step_2", "step_2", "step_3"])
     passport = lib.PassportManager("chain_run").load_passport()
@@ -1142,11 +1159,20 @@ stages:
     stamp.stage_name = "build-api"
     stamp.status = schema.StampStatus.FAILED
     stamp.message = "Failed.\nRollback executed successfully."
+    stamp_blocked = passport.stamps.add()
+    stamp_blocked.stage_name = "build_api"
+    stamp_blocked.status = schema.StampStatus.FAILED
+    stamp_blocked.reason = schema.StampReason.UPSTREAM_FAILED
     mermaid = lib.generate_status_mermaid(wf, passport)
     self.assertIn("build_api[", mermaid)
     self.assertIn("build_api_2[", mermaid)
     self.assertIn("build_api --> build_api_2", mermaid)
     self.assertIn("[rolled back]", mermaid)
+    self.assertIn(
+        "style build_api_2"
+        " fill:#f2f2f2,stroke:#7f7f7f,stroke-width:1px,stroke-dasharray: 5 5",
+        mermaid,
+    )
 
     # Verify rollback_action honors stage.timeout_seconds
     global _STAGE_2_SHOULD_FAIL

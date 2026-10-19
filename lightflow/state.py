@@ -1229,6 +1229,8 @@ def _summarise_run(
     state = "PAUSED"
   elif "WAITING" in states:
     state = "WAITING"
+  elif "BLOCKED" in states:
+    state = "INCOMPLETE"
   elif "PENDING" in states or not states:
     state = "STARTED"
   else:
