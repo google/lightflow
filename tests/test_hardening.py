@@ -95,8 +95,10 @@ def act_undo(payload: dict[str, Any], **_: Any) -> dict[str, Any]:
   return {"rolled_back": True}
 
 
-def act_boom(payload: dict[str, Any], **_: Any) -> None:
-  raise RuntimeError(f"real failure ({payload.get('db_password', 'no-pw')})")
+def act_boom(payload: dict[str, Any], **_: Any) -> tuple[dict[str, Any], str]:
+  if not payload.get("fixed"):
+    raise RuntimeError(f"real failure ({payload.get('db_password', 'no-pw')})")
+  return {}, f"repaired with {payload.get('db_password', 'no-pw')}"
 
 
 def act_mint_token(
@@ -336,12 +338,14 @@ actions:
     python_import: {__name__}.act_ok
 stages:
   - name: a
-    python_action: {{action_id: boom}}
+    python_action:
+      action_id: boom
   - name: gate
     operator_action:
       instructions: "'approve?'"
   - name: independent
-    python_action: {{action_id: ok}}
+    python_action:
+      action_id: ok
 """,
     )
     out = io.StringIO()
@@ -382,10 +386,14 @@ actions:
     python_import: {__name__}.act_undo
 stages:
   - name: deploy
-    python_action: {{action_id: deploy}}
-    rollback_action: {{action_id: undo}}
+    python_action:
+      action_id: deploy
+    rollback_action:
+      action_id: undo
     timeout_seconds: 1
-    retry_policy: {{max_attempts: 2, initial_backoff_seconds: 1}}
+    retry_policy:
+      max_attempts: 2
+      initial_backoff_seconds: 1
 """,
     )
     with self.assertRaises(lib.LightflowRunFailedError):
@@ -416,9 +424,11 @@ actions:
 stages:
   - name: watch
     timeout_seconds: 1
-    rollback_action: {{action_id: undo}}
+    rollback_action:
+      action_id: undo
     polling_policy:
-      poll_tick_action: {{action_id: tick}}
+      poll_tick_action:
+        action_id: tick
       condition: "payload.outputs.watch.deployed == true"
       interval_seconds: 1
       max_attempts: 2
@@ -446,14 +456,19 @@ actions:
     python_import: {__name__}.act_boom
 stages:
   - name: gate_a
-    operator_action: {{instructions: "'a?'"}}
+    operator_action:
+      instructions: "'a?'"
   - name: gate_b
-    operator_action: {{instructions: "'b?'"}}
+    operator_action:
+      instructions: "'b?'"
   - name: after_a
-    run_after: [gate_a]
-    python_action: {{action_id: ok}}
+    run_after:
+      - gate_a
+    python_action:
+      action_id: ok
   - name: boom
-    python_action: {{action_id: boom}}
+    python_action:
+      action_id: boom
 """,
     )
     cli = lib.LightflowRunnerCLI()
@@ -484,12 +499,14 @@ stages:
   # --- secret_keys: never in shared output, always in passport.json ------
 
   def test_secret_keys_are_redacted_in_shared_output_only(self) -> None:
-    # github.com/google/lightflow/issues/21 (item 6), #22, and #23.
+    # github.com/google/lightflow/issues/21 (item 6), #22, #23, and #24.
     manifest = self._write(
         "secrets.yaml",
         f"""
 name: secrets_wf
-secret_keys: [db_password, api_token]
+secret_keys:
+  - db_password
+  - api_token
 actions:
   - id: mint
     python_import: {__name__}.act_mint_token
@@ -499,16 +516,21 @@ actions:
     python_import: {__name__}.act_ok
 stages:
   - name: mint
-    python_action: {{action_id: mint}}
+    python_action:
+      action_id: mint
   - name: gate
-    run_after: [mint]
+    run_after:
+      - mint
     operator_action:
       instructions: "'Token in use: ' + payload.api_token"
   - name: boom
-    python_action: {{action_id: boom}}
+    python_action:
+      action_id: boom
   - name: tail
-    run_after: [mint]
-    python_action: {{action_id: ok}}
+    run_after:
+      - mint
+    python_action:
+      action_id: ok
 """,
     )
     cli = lib.LightflowRunnerCLI()
@@ -527,8 +549,14 @@ stages:
       html_path = cli.visualize(
           log_id="secrets_run", output=os.path.join(self.temp_dir, "v.html")
       )
+    resume_out = io.StringIO()
+    with contextlib.redirect_stdout(resume_out):
+      with self.assertRaises(engine.OperatorActionSuspended) as suspended:
+        cli.resume(log_id="secrets_run", payload={"fixed": True})
     dry_text = dry_out.getvalue()
+    start_text = start_out.getvalue()
     status_text = status_out.getvalue()
+    resume_text = resume_out.getvalue() + str(suspended.exception)
     with open(html_path, encoding="utf-8") as f:
       html = f.read()
     pm = lib.PassportManager("secrets_run")
@@ -537,10 +565,16 @@ stages:
 
     for secret in ("hunter2", "tok-SECRET-123"):
       self.assertNotIn(secret, dry_text)  # dry_run echo, sim output & gate
+      self.assertNotIn(secret, start_text)  # start progress, failure & footer
       self.assertNotIn(secret, status_text)  # status & --verbose
+      self.assertNotIn(secret, resume_text)  # resume progress & gate briefing
       self.assertNotIn(secret, html)  # visualizer payload, stamps & gate
       self.assertIn(secret, passport_json)  # resume still has the values
     self.assertIn('"db_password": "<redacted>"', dry_text)
+    self.assertIn("ℹ️ [mint] logged in with <redacted>", start_text)
+    self.assertIn("real failure (<redacted>)", start_text)
+    self.assertIn("ℹ️ [boom] repaired with <redacted>", resume_text)
+    self.assertIn("Instructions: Token in use: <redacted>", resume_text)
     self.assertIn('"session": "sess-for-<redacted>"', status_text)
     self.assertIn("Instructions: Token in use: <redacted>", status_text)
     self.assertIn("logged in with <redacted>", status_text)
@@ -548,7 +582,8 @@ stages:
     # so the visualizer header state must agree with `status`: FAILED.
     self.assertIn('"run_state": "FAILED"', html)
     self.assertIn("eu", html)  # non-secret keys untouched
-    self.assertEqual(oct(os.stat(pm.resolved_path).st_mode & 0o777), "0o700")
+    if os.name != "nt":
+      self.assertEqual(oct(os.stat(pm.resolved_path).st_mode & 0o777), "0o700")
 
   # --- engine: import-time errors are configuration errors, not transient ---
 
@@ -565,7 +600,9 @@ stages:
   - name: only
     python_action:
       action_id: go
-    retry_policy: {max_attempts: 3, initial_backoff_seconds: 1}
+    retry_policy:
+      max_attempts: 3
+      initial_backoff_seconds: 1
 """,
     )
 

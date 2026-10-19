@@ -612,9 +612,14 @@ class LightflowRunnerCLI:
         try:
           engine.validate_json_schema(validation_dict, schema_dict)
         except ValueError as e:
+          detail = engine.redact_text(
+              str(e),
+              {**payload_dict, **input_dict},
+              workflow_proto.secret_keys,
+          )
           raise ValueError(
               "Operator action resume payload failed JSON schema"
-              f" validation: {e}"
+              f" validation: {detail}"
           ) from e
 
       payload_dict.update(input_dict)
@@ -1304,10 +1309,18 @@ class LightflowRunnerCLI:
         pm.save_passport(passport)
       except Exception as e:
         pm.save_passport(passport)
-        self._send_status_notification(
-            runner, passport, f"Execution Failed: {e}", is_failed=True
+        redacted_err = engine.redact_text(
+            str(e),
+            engine.payload_to_dict(passport.payload),
+            runner.workflow.secret_keys,
         )
-        print(f"\nExecution Failed: {e}")
+        self._send_status_notification(
+            runner,
+            passport,
+            f"Execution Failed: {redacted_err}",
+            is_failed=True,
+        )
+        print(f"\nExecution Failed: {redacted_err}")
         raise
 
     latest_status = {}
@@ -1337,11 +1350,21 @@ class LightflowRunnerCLI:
     rejected = [n for n in failed_stages if kinds[n] == "REJECTED"]
     blocked = [n for n in failed_stages if kinds[n] == "BLOCKED"]
     roots = [n for n in failed_stages if kinds[n] == "FAILED"]
+    payload_dict = (
+        engine.payload_to_dict(passport.payload)
+        if paused or failed_stages
+        else {}
+    )
+    secret_keys = runner.workflow.secret_keys
+
+    def _redact(text: str) -> str:
+      return engine.redact_text(text, payload_dict, secret_keys)
+
     if paused and not (roots or rejected):
       briefing = "\n\n".join(
           runner.gate_briefing(
               n,
-              latest_stamp_by_stage[n].instructions,
+              _redact(latest_stamp_by_stage[n].instructions),
               latest_stamp_by_stage[n].resume_command,
           )
           for n in paused
@@ -1368,7 +1391,7 @@ class LightflowRunnerCLI:
       if yielded and not roots and not rejected:
         name = yielded[0]
         m = _LAST_PROGRESS_RE.search(_msg(name))
-        progress = f" Last progress: {m.group(1)}." if m else ""
+        progress = f" Last progress: {_redact(m.group(1))}." if m else ""
         headline = (
             f"⏳ Lightflow is waiting: polling stage '{name}' yielded before"
             f" its condition was met.{progress}"
@@ -1386,7 +1409,7 @@ class LightflowRunnerCLI:
         gate = rejected[0]
         headline = (
             f"🛑 Lightflow stopped: operator gate '{gate}' was rejected"
-            f" ({engine.summarise(_msg(gate))})."
+            f" ({engine.summarise(_redact(_msg(gate)))})."
         )
         self._send_status_notification(
             runner, passport, headline, is_failed=True
@@ -1412,7 +1435,7 @@ class LightflowRunnerCLI:
       print(f"\n{err_msg}")
       print("❌ Root failure(s):")
       for s_name in roots:
-        lines = _msg(s_name).splitlines()
+        lines = _redact(_msg(s_name)).splitlines()
         first = lines[0] if lines else ""
         rolled = (
             " · rolled back"
@@ -1424,8 +1447,8 @@ class LightflowRunnerCLI:
         if rb_fail:
           print(
               f"    ⚠️ rollback '{rb_fail.group(1)}' ALSO FAILED:"
-              f" {engine.summarise(rb_fail.group(2))} — side effects may be"
-              " partially applied; verify by hand before resuming."
+              f" {engine.summarise(_redact(rb_fail.group(2)))} — side effects"
+              " may be partially applied; verify by hand before resuming."
           )
       if rejected:
         print(f"🛑 Rejected gate(s): {', '.join(rejected)}")

@@ -706,6 +706,10 @@ class LightflowEngine:
     """Whether the manifest opted into strict expression field access."""
     return bool(self.lightflow.strict_expressions)
 
+  def _redact(self, text: str, payload_dict: dict[str, Any]) -> str:
+    """Scrubs values held under `secret_keys` from `text`."""
+    return redact_text(text, payload_dict, self.lightflow.secret_keys)
+
   def get_stage(self, stage_name: str) -> Optional[schema.Stage]:
     """Returns the stage object by name, or None if not found."""
     return self._stages_by_name.get(stage_name)
@@ -1454,7 +1458,9 @@ class LightflowEngine:
       set_payload(passport.payload, payload_dict)
       suffix = f": {rollback_msg}" if rollback_msg else "."
       failed_stamp.message += f"\nRollback executed successfully{suffix}"
-      print(f"  Rollback executed successfully{suffix}")
+      print(
+          f"  Rollback executed successfully{self._redact(suffix, payload_dict)}"
+      )
       send_notification(
           f"Rollback Completed: {stage_name}",
           f"🔄 {stage_name}: rolled back",
@@ -1464,7 +1470,9 @@ class LightflowEngine:
       failed_stamp.message += (
           f"\nRollback action '{action_id}' failed: {rollback_err}\n{err_trace}"
       )
-      print(f"  Rollback failed: {rollback_err}")
+      print(
+          f"  Rollback failed: {self._redact(str(rollback_err), payload_dict)}"
+      )
       send_notification(
           f"Rollback Failed: {stage_name}",
           f"⚠️ {stage_name}: rollback failed",
@@ -1626,7 +1634,9 @@ class LightflowEngine:
         failed_stamp.message = (
             f"Condition evaluation failed: {e}\n{traceback.format_exc()}"
         )
-        _announce_failure(stage_name, failed_stamp.message)
+        _announce_failure(
+            stage_name, self._redact(failed_stamp.message, payload_dict)
+        )
         return passport
 
       if not should_run:
@@ -1715,7 +1725,9 @@ class LightflowEngine:
           failed_stamp.message = (
               f"Polling tick failed: {e}\n{traceback.format_exc()}"
           )
-          _announce_failure(stage_name, failed_stamp.message)
+          _announce_failure(
+              stage_name, self._redact(failed_stamp.message, payload_dict)
+          )
           tick_worker = getattr(e, "worker", None)
           self.run_rollback_if_defined(
               stage_name,
@@ -1736,7 +1748,9 @@ class LightflowEngine:
           failed_stamp.message = (
               f"Condition evaluation failed: {e}\n{traceback.format_exc()}"
           )
-          _announce_failure(stage_name, failed_stamp.message)
+          _announce_failure(
+              stage_name, self._redact(failed_stamp.message, payload_dict)
+          )
           self.run_rollback_if_defined(
               stage_name, stage, passport, payload_dict, failed_stamp
           )
@@ -1751,7 +1765,7 @@ class LightflowEngine:
               else f"Polling condition met after {attempts} attempts."
           )
           if message:
-            print(f"  ℹ️ [{stage_name}] {message}")
+            print(f"  ℹ️ [{stage_name}] {self._redact(message, payload_dict)}")
           send_notification(
               f"Stage Completed: {stage_name}",
               f"✅ {stage_name}: completed",
@@ -1761,7 +1775,10 @@ class LightflowEngine:
         # Echo tick progress before the threshold check so the final tick's
         # message is still visible on the console when polling yields.
         if message:
-          print(f"  ⏳ [{stage_name}] {message}", flush=True)
+          print(
+              f"  ⏳ [{stage_name}] {self._redact(message, payload_dict)}",
+              flush=True,
+          )
 
         elapsed = time.monotonic() - start_time
         if (timeout > 0 and elapsed >= timeout) or (
@@ -1793,7 +1810,10 @@ class LightflowEngine:
               reason=schema.Stamp.POLL_YIELD,
           )
 
-          print(f"  ⏳ [{stage_name}] {err_msg}", flush=True)
+          print(
+              f"  ⏳ [{stage_name}] {self._redact(err_msg, payload_dict)}",
+              flush=True,
+          )
           send_notification(
               f"Stage Waiting: {stage_name}",
               f"⏳ {stage_name}: waiting for an external condition",
@@ -1846,7 +1866,7 @@ class LightflowEngine:
           else:
             completed_stamp.message = message
           if message:
-            print(f"  ℹ️ [{stage_name}] {message}")
+            print(f"  ℹ️ [{stage_name}] {self._redact(message, payload_dict)}")
           send_notification(
               f"Stage Completed: {stage_name}",
               f"✅ {stage_name}: completed",
@@ -1867,8 +1887,9 @@ class LightflowEngine:
             if not any(w.is_alive() for w in live_workers):
               print(
                   f"  Attempt {attempts} timed out for stage '{stage_name}':"
-                  f" {e}. Retrying (capped backoff: {sleep_time:.1f}s, backoff"
-                  f" multiplier {backoff_multiplier})..."
+                  f" {self._redact(str(e), payload_dict)}. Retrying (capped"
+                  f" backoff: {sleep_time:.1f}s, backoff multiplier"
+                  f" {backoff_multiplier})..."
               )
               time.sleep(max(0.0, deadline - time.monotonic()))
               current_backoff = min(current_backoff * backoff_multiplier, 300.0)
@@ -1886,7 +1907,9 @@ class LightflowEngine:
                 " backoff ended, and a second one would overlap it."
             )
 
-          _announce_failure(stage_name, failed_stamp.message)
+          _announce_failure(
+              stage_name, self._redact(failed_stamp.message, payload_dict)
+          )
           self.run_rollback_if_defined(
               stage_name,
               stage,
@@ -1905,7 +1928,9 @@ class LightflowEngine:
                 f" {e}\n{traceback.format_exc()}"
             )
 
-            _announce_failure(stage_name, failed_stamp.message)
+            _announce_failure(
+                stage_name, self._redact(failed_stamp.message, payload_dict)
+            )
             self.run_rollback_if_defined(
                 stage_name, stage, passport, payload_dict, failed_stamp
             )
@@ -1916,9 +1941,10 @@ class LightflowEngine:
           actual_sleep = sleep_time * jitter
 
           print(
-              f"  Attempt {attempts} failed for stage '{stage_name}': {e}."
-              f" Retrying in {actual_sleep:.1f}s (capped backoff:"
-              f" {sleep_time:.1f}s, backoff multiplier {backoff_multiplier})..."
+              f"  Attempt {attempts} failed for stage '{stage_name}':"
+              f" {self._redact(str(e), payload_dict)}. Retrying in"
+              f" {actual_sleep:.1f}s (capped backoff: {sleep_time:.1f}s,"
+              f" backoff multiplier {backoff_multiplier})..."
           )
           time.sleep(actual_sleep)
           current_backoff = min(current_backoff * backoff_multiplier, 300.0)
@@ -1946,7 +1972,9 @@ class LightflowEngine:
             f" {e}\n{traceback.format_exc()}"
         )
 
-        _announce_failure(stage_name, failed_stamp.message)
+        _announce_failure(
+            stage_name, self._redact(failed_stamp.message, payload_dict)
+        )
         return passport
 
       resume_command = self.build_resume_command(stage_name, operator_action)
@@ -1963,7 +1991,11 @@ class LightflowEngine:
       )
 
       raise OperatorActionSuspended(
-          self.gate_briefing(stage_name, instructions, resume_command)
+          self.gate_briefing(
+              stage_name,
+              self._redact(instructions, payload_dict),
+              resume_command,
+          )
           + GATE_FOOTER
       )
 
@@ -1971,7 +2003,9 @@ class LightflowEngine:
       err_msg = f"Stage '{stage_name}' has no defined action rule."
       failed_stamp = add_stamp(passport, stage_name, _FAILED, err_msg)
 
-      _announce_failure(stage_name, failed_stamp.message)
+      _announce_failure(
+          stage_name, self._redact(failed_stamp.message, payload_dict)
+      )
       raise EngineError(err_msg)
 
   def gate_briefing(
