@@ -96,11 +96,18 @@ def act_undo(payload: dict[str, Any], **_: Any) -> dict[str, Any]:
 
 
 def act_boom(payload: dict[str, Any], **_: Any) -> None:
-  raise RuntimeError("real failure")
+  raise RuntimeError(f"real failure ({payload.get('db_password', 'no-pw')})")
 
 
-def act_mint_token(payload: dict[str, Any], **_: Any) -> dict[str, Any]:
-  return {"api_token": "tok-SECRET-123", "rows": 3}
+def act_mint_token(
+    payload: dict[str, Any], dry_run: bool = False, **_: Any
+) -> tuple[dict[str, Any], str]:
+  del dry_run
+  pw = payload.get("db_password", "")
+  return (
+      {"api_token": "tok-SECRET-123", "session": f"sess-for-{pw}", "rows": 3},
+      f"logged in with {pw}",
+  )
 
 
 def act_slow_rollback(
@@ -477,7 +484,7 @@ stages:
   # --- secret_keys: never in shared output, always in passport.json ------
 
   def test_secret_keys_are_redacted_in_shared_output_only(self) -> None:
-    # github.com/google/lightflow/issues/21 (item 6).
+    # github.com/google/lightflow/issues/21 (item 6), #22, and #23.
     manifest = self._write(
         "secrets.yaml",
         f"""
@@ -486,22 +493,42 @@ secret_keys: [db_password, api_token]
 actions:
   - id: mint
     python_import: {__name__}.act_mint_token
+  - id: boom
+    python_import: {__name__}.act_boom
+  - id: ok
+    python_import: {__name__}.act_ok
 stages:
   - name: mint
     python_action: {{action_id: mint}}
+  - name: gate
+    run_after: [mint]
+    operator_action:
+      instructions: "'Token in use: ' + payload.api_token"
+  - name: boom
+    python_action: {{action_id: boom}}
+  - name: tail
+    run_after: [mint]
+    python_action: {{action_id: ok}}
 """,
     )
     cli = lib.LightflowRunnerCLI()
     seed = {"db_password": "hunter2", "region": "eu"}
-    out = io.StringIO()
-    with contextlib.redirect_stdout(out):
+    dry_out = io.StringIO()
+    with contextlib.redirect_stdout(dry_out):
       cli.dry_run(lightflow=manifest, payload=seed)
-      cli.start(lightflow=manifest, log_id="secrets_run", payload=seed)
-      cli.status(log_id="secrets_run", verbose=True)
+    start_out = io.StringIO()
+    with contextlib.redirect_stdout(start_out):
+      with self.assertRaises(lib.LightflowRunFailedError):
+        cli.start(lightflow=manifest, log_id="secrets_run", payload=seed)
+    status_out = io.StringIO()
+    with contextlib.redirect_stdout(status_out):
+      with self.assertRaises(lib.LightflowRunFailedError):
+        cli.status(log_id="secrets_run", verbose=True)
       html_path = cli.visualize(
           log_id="secrets_run", output=os.path.join(self.temp_dir, "v.html")
       )
-    text = out.getvalue()
+    dry_text = dry_out.getvalue()
+    status_text = status_out.getvalue()
     with open(html_path, encoding="utf-8") as f:
       html = f.read()
     pm = lib.PassportManager("secrets_run")
@@ -509,10 +536,17 @@ stages:
       passport_json = f.read()
 
     for secret in ("hunter2", "tok-SECRET-123"):
-      self.assertNotIn(secret, text)  # dry_run echo, status --verbose
-      self.assertNotIn(secret, html)  # visualizer, incl. outputs.mint mirror
+      self.assertNotIn(secret, dry_text)  # dry_run echo, sim output & gate
+      self.assertNotIn(secret, status_text)  # status & --verbose
+      self.assertNotIn(secret, html)  # visualizer payload, stamps & gate
       self.assertIn(secret, passport_json)  # resume still has the values
-    self.assertIn('"db_password": "<redacted>"', text)
+    self.assertIn('"db_password": "<redacted>"', dry_text)
+    self.assertIn('"session": "sess-for-<redacted>"', status_text)
+    self.assertIn("Instructions: Token in use: <redacted>", status_text)
+    self.assertIn("logged in with <redacted>", status_text)
+    # Issue #22: `tail` finished last (COMPLETED), yet the run failed (`boom`),
+    # so the visualizer header state must agree with `status`: FAILED.
+    self.assertIn('"run_state": "FAILED"', html)
     self.assertIn("eu", html)  # non-secret keys untouched
     self.assertEqual(oct(os.stat(pm.resolved_path).st_mode & 0o777), "0o700")
 

@@ -603,47 +603,92 @@ _MISSING_KEY_RE = re.compile(
 )
 
 
-def effective_status_name(stamp: schema.Stamp) -> str:
+def effective_status_name(stamp: Any) -> str:
   """Returns the user-facing status of a stamp.
 
   The engine stamps three different situations as FAILED; tell them apart so
-  `status`, `list` and the failure footer agree: REJECTED (an
+  `status`, `list`, the visualizer and the failure footer agree: REJECTED (an
   operator said no), BLOCKED (never ran because an upstream failed) and
   WAITING (a polling stage yielded). Everything else is the stamp's own
-  status name.
+  status name. Accepts either a `Stamp` message or a serialized stamp dict.
 
   Args:
-    stamp: Any Passport stamp.
+    stamp: Any Passport stamp (message or dict).
 
   Returns:
     One of COMPLETED, SKIPPED, PENDING, PAUSED, FAILED, REJECTED, BLOCKED,
     WAITING.
   """
-  name = schema.StampStatus.Name(stamp.status)
+  if isinstance(stamp, dict):
+    name = str(stamp.get("status") or "STATUS_UNSPECIFIED")
+    reason = stamp.get("reason")
+    message = stamp.get("message") or ""
+    stage_name = stamp.get("stage_name") or ""
+  else:
+    name = schema.StampStatus.Name(stamp.status)
+    reason = stamp.reason
+    message = stamp.message or ""
+    stage_name = stamp.stage_name
   if name != "FAILED":
     return name
   by_reason = {
       schema.Stamp.REJECTED: "REJECTED",
       schema.Stamp.UPSTREAM_FAILED: "BLOCKED",
       schema.Stamp.POLL_YIELD: "WAITING",
+      "REJECTED": "REJECTED",
+      "UPSTREAM_FAILED": "BLOCKED",
+      "POLL_YIELD": "WAITING",
   }
-  if stamp.reason in by_reason:
-    return by_reason[stamp.reason]
+  if reason in by_reason:
+    return by_reason[reason]
   # Passports written before `reason` existed: fall back to the message text.
   # The yield check is anchored on the engine's own message prefix so an
   # action's exception text that merely contains the marker is not mistaken
   # for a yield (github.com/google/lightflow/issues/14).
-  message = stamp.message or ""
   if message.startswith(_REJECTED_PREFIX):
     return "REJECTED"
   if message == engine.UPSTREAM_FAILED_MESSAGE:
     return "BLOCKED"
   if (
-      message.startswith(f"Stage '{stamp.stage_name}' polling")
+      message.startswith(f"Stage '{stage_name}' polling")
       and engine.POLL_YIELD_MARKER in message
   ):
     return "WAITING"
   return "FAILED"
+
+
+def run_state(
+    stage_names: list[str],
+    stamps: Any,
+    *,
+    running: bool = False,
+) -> str:
+  """Computes the overall run state (`status` and the visualizer header)."""
+  latest: dict[str, Any] = {}
+  for stamp in stamps:
+    name = (
+        stamp.get("stage_name", "")
+        if isinstance(stamp, dict)
+        else stamp.stage_name
+    )
+    latest[name] = stamp
+  names = stage_names or list(latest.keys())
+  effective = {
+      s: effective_status_name(latest[s]) if s in latest else "" for s in names
+  }
+  if running:
+    return "RUNNING"
+  if any(effective[s] == "FAILED" for s in names):
+    return "FAILED"
+  if any(effective[s] == "REJECTED" for s in names):
+    return "REJECTED"
+  if any(effective[s] == "PAUSED" for s in names):
+    return "PAUSED"
+  if any(effective[s] == "WAITING" for s in names):
+    return "WAITING"
+  if any(effective[s] not in ("COMPLETED", "SKIPPED") for s in names):
+    return "INCOMPLETE"
+  return "COMPLETED"
 
 
 def _missing_top_level_keys_from_failures(

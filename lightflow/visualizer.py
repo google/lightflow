@@ -31,9 +31,11 @@ from typing import Any, Optional
 try:
   from . import engine
   from . import schema
+  from . import state
 except ImportError:
   from lightflow import engine  # pyrefly: ignore[missing-import]
   from lightflow import schema  # pyrefly: ignore[missing-import]
+  from lightflow import state  # pyrefly: ignore[missing-import]
 # pylint: enable=g-import-not-at-top,g-bad-import-order
 
 
@@ -100,9 +102,33 @@ def generate_visualizer_html(
   pp_data = passport_to_dict(passport)
   # The standalone HTML is made to be shared: hide secret payload values.
   secrets = wf_data.get("secret_keys") or []
-  if secrets and pp_data and isinstance(pp_data.get("payload"), dict):
+  if pp_data is not None:
     pp_data = dict(pp_data)  # never mutate a caller-supplied dict
-    pp_data["payload"] = engine.redact_payload(pp_data["payload"], secrets)
+    stage_names = [s.get("name", "") for s in wf_data.get("stages") or []]
+    pp_data["run_state"] = state.run_state(
+        stage_names, pp_data.get("stamps") or []
+    )
+    raw_payload = (
+        pp_data.get("payload")
+        if isinstance(pp_data.get("payload"), dict)
+        else {}
+    )
+    if secrets and isinstance(pp_data.get("payload"), dict):
+      pp_data["payload"] = engine.redact_payload(raw_payload, secrets)
+    if secrets and pp_data.get("stamps"):
+      redacted_stamps = []
+      for st in pp_data["stamps"]:
+        st_copy = dict(st)
+        if st_copy.get("message"):
+          st_copy["message"] = engine.redact_text(
+              st_copy["message"], raw_payload, secrets
+          )
+        if st_copy.get("instructions"):
+          st_copy["instructions"] = engine.redact_text(
+              st_copy["instructions"], raw_payload, secrets
+          )
+        redacted_stamps.append(st_copy)
+      pp_data["stamps"] = redacted_stamps
 
   wf_json = json.dumps(wf_data).replace("<", "\\u003c")
   pp_json = json.dumps(pp_data).replace("<", "\\u003c")

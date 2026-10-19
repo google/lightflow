@@ -31,6 +31,7 @@ import keyword
 import os
 import queue
 import random
+import re
 import shlex
 import shutil  # pylint: disable=unused-import
 import subprocess  # pylint: disable=unused-import
@@ -122,13 +123,52 @@ POLL_YIELD_MARKER = "Yielding control back to operator/agent"
 REDACTED = "<redacted>"
 
 
+def _secret_values(
+    payload_dict: dict[str, Any], secret_keys: Collection[str]
+) -> list[str]:
+  """Returns non-empty string values held under `secret_keys`, longest first."""
+  secrets = set(secret_keys)
+  if not secrets or not isinstance(payload_dict, dict):
+    return []
+  found: set[str] = set()
+
+  def collect(value: Any, under_secret: bool = False) -> None:
+    if isinstance(value, dict):
+      for k, v in value.items():
+        collect(v, under_secret or (k in secrets))
+    elif isinstance(value, list):
+      for item in value:
+        collect(item, under_secret)
+    elif under_secret and isinstance(value, str) and value:
+      found.add(value)
+
+  collect(payload_dict)
+  return sorted(found, key=len, reverse=True)
+
+
+def _scrub_secrets(text: str, secret_vals: list[str]) -> str:
+  """Single-pass replacement of `secret_vals` in `text`."""
+  if not text or not secret_vals:
+    return text
+  pattern = re.compile("|".join(re.escape(s) for s in secret_vals))
+  return pattern.sub(lambda _: REDACTED, text)
+
+
+def redact_text(
+    text: str, payload_dict: dict[str, Any], secret_keys: Collection[str]
+) -> str:
+  """Replaces any secret value from `payload_dict` that appears in `text`."""
+  return _scrub_secrets(text, _secret_values(payload_dict, secret_keys))
+
+
 def redact_payload(
     payload_dict: dict[str, Any], secret_keys: Collection[str]
 ) -> dict[str, Any]:
   """Returns a copy with every value under a secret key replaced.
 
   Keys match at any depth, so the `outputs.<stage>.<key>` mirror of a stage
-  result is covered as well as the top level.
+  result is covered as well as the top level. String values held under those
+  keys are also scrubbed from any other string in the payload.
 
   Args:
     payload_dict: The payload as a plain dict.
@@ -140,6 +180,7 @@ def redact_payload(
   secrets = set(secret_keys)
   if not secrets:
     return payload_dict
+  secret_vals = _secret_values(payload_dict, secrets)
 
   def walk(value: Any) -> Any:
     if isinstance(value, dict):
@@ -148,6 +189,8 @@ def redact_payload(
       }
     if isinstance(value, list):
       return [walk(v) for v in value]
+    if isinstance(value, str) and secret_vals:
+      return _scrub_secrets(value, secret_vals)
     return value
 
   return walk(payload_dict)

@@ -71,6 +71,7 @@ _ROLLBACK_FAILED_RE = state_lib._ROLLBACK_FAILED_RE
 _LAST_PROGRESS_RE = state_lib._LAST_PROGRESS_RE
 _MISSING_KEY_RE = state_lib._MISSING_KEY_RE
 effective_status_name = state_lib.effective_status_name
+run_state = state_lib.run_state
 _missing_top_level_keys_from_failures = (
     state_lib._missing_top_level_keys_from_failures
 )
@@ -961,20 +962,9 @@ class LightflowRunnerCLI:
     ]
     # Same precedence as the run footer: a decided failure outranks an open
     # gate, and an open gate outranks a polling yield.
-    if running:
-      state = "RUNNING"
-    elif failed:
-      state = "FAILED"
-    elif rejected:
-      state = "REJECTED"
-    elif paused:
-      state = "PAUSED"
-    elif waiting:
-      state = "WAITING"
-    elif unfinished:
-      state = "INCOMPLETE"
-    else:
-      state = "COMPLETED"
+    state = run_state(ordered_stages, passport.stamps, running=running)
+    payload_dict = engine.payload_to_dict(passport.payload)
+    secret_keys = lightflow_proto.secret_keys
 
     shown_id = pm.workflow_id
     if not os.path.isabs(os.path.expanduser(shown_id)):
@@ -988,7 +978,9 @@ class LightflowRunnerCLI:
         continue
       detail = ""
       if name in ("FAILED", "REJECTED", "PENDING", "SKIPPED", "WAITING"):
-        message = latest[stage_name].message or ""
+        message = engine.redact_text(
+            latest[stage_name].message or "", payload_dict, secret_keys
+        )
         if name == "WAITING":
           # Lead with what the operator needs: the last progress seen.
           m = _LAST_PROGRESS_RE.search(message)
@@ -1019,7 +1011,10 @@ class LightflowRunnerCLI:
       json_schema = action.json_schema if action else ""
       print(f"\nPaused at operator action '{stage_name}':")
       if stamp.instructions:
-        print(f"  Instructions: {stamp.instructions}")
+        shown_instr = engine.redact_text(
+            stamp.instructions, payload_dict, secret_keys
+        )
+        print(f"  Instructions: {shown_instr}")
       if json_schema:
         print(f"  Payload Schema: {json_schema}")
       if stamp.resume_command:
@@ -1030,18 +1025,13 @@ class LightflowRunnerCLI:
       print("\nPASSPORT PAYLOAD (JSON):")
       print(
           json.dumps(
-              engine.redact_payload(
-                  engine.payload_to_dict(passport.payload),
-                  lightflow_proto.secret_keys,
-              ),
+              engine.redact_payload(payload_dict, secret_keys),
               indent=2,
               default=str,
           )
       )
 
-      provenance = engine.top_level_key_provenance(
-          engine.payload_to_dict(passport.payload)
-      )
+      provenance = engine.top_level_key_provenance(payload_dict)
       if provenance:
         print("\nTOP-LEVEL KEY PROVENANCE (payload.<key> ← last writer):")
         for key, (owner, others) in sorted(provenance.items()):
@@ -1053,7 +1043,10 @@ class LightflowRunnerCLI:
       for stamp in passport.stamps:
         status_name = schema.StampStatus.Name(stamp.status).title()
         time_str = stamp.timestamp.ToJsonString()
-        msg = f": {stamp.message}" if stamp.message else ""
+        redacted_msg = engine.redact_text(
+            stamp.message, payload_dict, secret_keys
+        )
+        msg = f": {redacted_msg}" if redacted_msg else ""
         # Elapsed time from the stage's most recent PENDING stamp to this
         # terminal stamp, so slow stages stand out in the audit log.
         took = ""

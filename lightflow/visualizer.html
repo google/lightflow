@@ -143,9 +143,10 @@
     .status-dot[data-status="FAILED"] { background-color: #f43f5e; }
     .status-badge { background-color: #1e293b; color: #94a3b8; border: 1px solid transparent; }
     .status-badge[data-status="COMPLETED"] { background-color: #022c22; color: #6ee7b7; border-color: #065f46; font-weight: 600; }
-    .status-badge[data-status="PENDING"] { background-color: #082f49; color: #7dd3fc; border-color: #075985; }
+    .status-badge[data-status="PENDING"], .status-badge[data-status="RUNNING"] { background-color: #082f49; color: #7dd3fc; border-color: #075985; }
     .status-badge[data-status="PAUSED"] { background-color: #451a03; color: #fcd34d; border-color: #92400e; font-weight: 600; animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
-    .status-badge[data-status="FAILED"] { background-color: #4c0519; color: #fda4af; border-color: #9f1239; font-weight: 600; }
+    .status-badge[data-status="WAITING"] { background-color: #451a03; color: #fcd34d; border-color: #92400e; font-weight: 600; }
+    .status-badge[data-status="FAILED"], .status-badge[data-status="REJECTED"] { background-color: #4c0519; color: #fda4af; border-color: #9f1239; font-weight: 600; }
     .status-badge[data-status="SKIPPED"] { background-color: #0f172a; color: #64748b; }
     .stage-card { outline: 2px solid transparent; outline-offset: 0; } /* outline, not ring: combines with box-shadow */
     .stage-card[data-status="COMPLETED"] { outline-color: rgba(16, 185, 129, 0.5); border-color: rgba(16, 185, 129, 0.6); }
@@ -555,11 +556,16 @@
       document.getElementById("stage-count-badge").textContent = (WORKFLOW_DATA.stages || []).length;
       
       const badge = document.getElementById("wf-status-badge");
-      if (PASSPORT_DATA && PASSPORT_DATA.stamps && PASSPORT_DATA.stamps.length > 0) {
-        const lastStamp = PASSPORT_DATA.stamps[PASSPORT_DATA.stamps.length - 1];
-        badge.textContent = lastStamp.status;
+      const runState = PASSPORT_DATA && (
+        PASSPORT_DATA.run_state ||
+        (PASSPORT_DATA.stamps && PASSPORT_DATA.stamps.length > 0
+          ? PASSPORT_DATA.stamps[PASSPORT_DATA.stamps.length - 1].status
+          : "")
+      );
+      if (runState) {
+        badge.textContent = runState;
         badge.className = "status-badge text-[10px] px-2 py-0.5 rounded-full font-medium";
-        badge.dataset.status = lastStamp.status;
+        badge.dataset.status = runState;
       }
     }
 

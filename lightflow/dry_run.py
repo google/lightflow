@@ -478,17 +478,20 @@ def run_dry_run(
               stage_name in runner.get_downstream_dependents(u)
               for u in unsimulated_stages
           )
+          shown_err = engine.redact_text(
+              str(e), current_payload, workflow_proto.secret_keys
+          )
           if _is_deferrable_dry_run_eval_error(
               e, output_refs, has_unsimulated_ancestor
           ):
             print(
                 f"  Condition '{stage_proto.run_if}' -> [DEFERRED TO RUNTIME"
-                f" ({e})]"
+                f" ({shown_err})]"
             )
             deferred_stages.add(stage_name)
             should_run = True
           else:
-            print(f"  Condition evaluation failed: {e}")
+            print(f"  Condition evaluation failed: {shown_err}")
             would_fail = True
 
     if would_fail:
@@ -533,7 +536,10 @@ def run_dry_run(
           collisions = engine.merge_stage_payload(
               current_payload, stage_name, sim_payload
           )
-          print(f"    Dry-Run Output: {sim_msg}")
+          shown_msg = engine.redact_text(
+              sim_msg, current_payload, workflow_proto.secret_keys
+          )
+          print(f"    Dry-Run Output: {shown_msg}")
           counts["simulated"] += 1
           for key, previous_owner in collisions:
             if key in runner.top_level_keys_read:
@@ -563,7 +569,10 @@ def run_dry_run(
         collisions = engine.merge_stage_payload(
             current_payload, stage_name, sim_payload
         )
-        print(f"    Dry-Run Output: {sim_msg}")
+        shown_msg = engine.redact_text(
+            sim_msg, current_payload, workflow_proto.secret_keys
+        )
+        print(f"    Dry-Run Output: {shown_msg}")
         counts["simulated"] += 1
         for key, previous_owner in collisions:
           if key in runner.top_level_keys_read:
@@ -641,22 +650,28 @@ def run_dry_run(
               strict=bool(workflow_proto.strict_expressions),
           )
           print("  Action: [SUSPEND] waits at operator_action")
-          print(f"    Instructions: {instructions}")
+          shown_instr = engine.redact_text(
+              str(instructions), current_payload, workflow_proto.secret_keys
+          )
+          print(f"    Instructions: {shown_instr}")
         except Exception as e:  # pylint: disable=broad-exception-caught
           has_unsimulated_ancestor = any(
               stage_name in runner.get_downstream_dependents(u)
               for u in unsimulated_stages
           )
+          shown_err = engine.redact_text(
+              str(e), current_payload, workflow_proto.secret_keys
+          )
           if _is_deferrable_dry_run_eval_error(
               e, instr_refs, has_unsimulated_ancestor
           ):
             print("  Action: [SUSPEND] waits at operator_action")
-            print(f"    Instructions: [DEFERRED TO RUNTIME ({e})]")
+            print(f"    Instructions: [DEFERRED TO RUNTIME ({shown_err})]")
             deferred_stages.add(stage_name)
           else:
             print(
                 "  Action: [SUSPEND] waits at operator_action (instructions"
-                f" eval failed: {e})"
+                f" eval failed: {shown_err})"
             )
             print("    ❌ At runtime this stage would FAIL before pausing.")
             counts["would_fail"] += 1
