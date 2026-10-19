@@ -52,7 +52,7 @@ except ImportError:
 
 SERVER_INFO = {
     "name": "lightflow-mcp",
-    "version": "0.3.0",
+    "version": "0.3.1",
 }
 
 MCP_TOOLS: list[dict[str, Any]] = [

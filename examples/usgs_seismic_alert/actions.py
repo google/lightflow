@@ -45,7 +45,7 @@ def fetch_usgs_feed(
     limit: int = 5,
     dry_run: bool = False,
     **kwargs: Any,
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], str]:
   """Fetches the past 24 hours of M4.5+ earthquakes from the USGS GeoJSON API."""
   del kwargs
   is_dry = bool(dry_run or payload.get("dry_run") or payload.get("offline"))
@@ -92,13 +92,19 @@ def fetch_usgs_feed(
           "url": "https://earthquake.usgs.gov",
       }
   )
-  return {
-      "events": events,
-      "event_count": len(events),
-      "max_magnitude": strongest["magnitude"],
-      "strongest_place": strongest["place"],
-      "source": source,
-  }
+  return (
+      {
+          "events": events,
+          "event_count": len(events),
+          "max_magnitude": strongest["magnitude"],
+          "strongest_place": strongest["place"],
+          "source": source,
+      },
+      (
+          f"Fetched {len(events)} M4.5+ seismic event(s) via {source}"
+          f" (strongest: M{strongest['magnitude']} at {strongest['place']})."
+      ),
+  )
 
 
 def emit_bulletin(

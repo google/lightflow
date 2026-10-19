@@ -430,6 +430,32 @@ stages:
     self.assertIn("Do NOT self-approve", str(ctx.exception))
     self.assertEqual(passport.stamps[-1].status, schema.StampStatus.PAUSED)
     self.assertIn("resume", passport.stamps[-1].resume_command)
+    # The schema lists `approved` under `required` but the resume command
+    # omits it; the briefing must say why, right under the command.
+    self.assertIn(
+        "--resolution=APPROVE records approved=true", str(ctx.exception)
+    )
+
+  def test_resume_note_names_remaining_payload_keys(self) -> None:
+    note = engine.resume_note(
+        '{"type": "object", "required": ["approved", "ticket", "tier"]}'
+    )
+    self.assertIn("records approved=true for you", note)
+    self.assertIn("--payload only needs: ticket, tier.", note)
+    self.assertIn('--resolution=REJECT --comment="<reason>"', note)
+    # Only `approved` required: no payload at all.
+    self.assertIn(
+        "no --payload is needed.",
+        engine.resume_note('{"type": "object", "required": ["approved"]}'),
+    )
+    self.assertIn("no --payload is needed.", engine.resume_note(""))
+    # Unparseable schema: still explains APPROVE, defers on the key list.
+    self.assertIn("the keys the schema requires", engine.resume_note("{nope"))
+    # A malformed `required` (not a list) must not be iterated char by char.
+    self.assertIn(
+        "the keys the schema requires",
+        engine.resume_note('{"type": "object", "required": "approved"}'),
+    )
 
   def test_retry_polling_rollback_and_all_done_trigger(self) -> None:
     module_name = __name__

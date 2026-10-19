@@ -411,8 +411,8 @@ stages:
 
     pm = lib.PassportManager("win_lock_run")
     with (
-        mock.patch.object(lib, "fcntl", None),
-        mock.patch.object(lib, "msvcrt", fake_msvcrt),
+        mock.patch.object(lib.state_lib, "fcntl", None),
+        mock.patch.object(lib.state_lib, "msvcrt", fake_msvcrt),
     ):
       with pm.lock():
         pass
@@ -431,8 +431,8 @@ stages:
     )
 
     with (
-        mock.patch.object(lib, "fcntl", None),
-        mock.patch.object(lib, "msvcrt", busy_msvcrt),
+        mock.patch.object(lib.state_lib, "fcntl", None),
+        mock.patch.object(lib.state_lib, "msvcrt", busy_msvcrt),
     ):
       with self.assertRaises(RuntimeError):
         with pm.lock():
@@ -502,6 +502,7 @@ stages:
     self.assertIn("Polled job status via dry_run: status=READY", dry_run_out)
     self.assertIn("Fetched 3 Hacker News stories", dry_run_out)
     self.assertIn("PyPI audit found 3 upgrade(s)", dry_run_out)
+    self.assertIn("Fetched 2 M4.5+ seismic event(s) via dry_run", dry_run_out)
     self.assertIn("USGS reported 2 M4.5+ event(s)", dry_run_out)
     self.assertIn(
         "Output Namespace: payload.outputs.editorial_gate", dry_run_out
@@ -1272,7 +1273,7 @@ stages:
         time.sleep(0.05)
 
     # A generous window keeps the test deterministic on a loaded machine.
-    retry = mock.patch.object(lib, "_LOCK_RETRY_SECONDS", 5.0)
+    retry = mock.patch.object(lib.state_lib, "_LOCK_RETRY_SECONDS", 5.0)
     retry.start()
     self.addCleanup(retry.stop)
     holder = threading.Thread(target=hold_briefly)
@@ -1296,7 +1297,7 @@ stages:
         LOCK_EX=2, LOCK_SH=1, LOCK_NB=4, LOCK_UN=8, flock=no_locks_flock
     )
 
-    with mock.patch.object(lib, "fcntl", no_locks_fcntl):
+    with mock.patch.object(lib.state_lib, "fcntl", no_locks_fcntl):
       with self.assertRaises(OSError) as ctx:
         with pm.lock():
           pass
