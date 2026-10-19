@@ -130,12 +130,30 @@
     .bg-emerald-500\/80 { background-color: rgba(16, 185, 129, 0.8); }
     .bg-amber-500\/80 { background-color: rgba(245, 158, 11, 0.8); }
     .bg-sky-500\/80 { background-color: rgba(14, 165, 233, 0.8); }
-    .bg-emerald-500 { background-color: #10b981; }
-    .bg-amber-500 { background-color: #f59e0b; }
-    .bg-rose-500 { background-color: #f43f5e; }
-    .bg-slate-500 { background-color: #64748b; }
-    .animate-pulse { animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+    .inspector-open #view-timeline, .inspector-open #view-payload, .inspector-open #view-raw { padding-right: 1.5rem; }
+    @media (min-width: 640px) { .inspector-open #view-timeline, .inspector-open #view-payload, .inspector-open #view-raw { padding-right: calc(380px + 1.5rem); } }
+    @media (min-width: 768px) { .inspector-open #view-timeline, .inspector-open #view-payload, .inspector-open #view-raw { padding-right: calc(420px + 1.5rem); } }
     @keyframes pulse { 50% { opacity: 0.5; } }
+    /* Run status, rendered from data-status: one block owns every colour.
+       Layout stays in utilities; status never arrives as a class string. */
+    .status-dot { background-color: #64748b; }
+    .status-dot[data-status="COMPLETED"] { background-color: #10b981; }
+    .status-dot[data-status="PENDING"] { background-color: #0ea5e9; }
+    .status-dot[data-status="PAUSED"] { background-color: #f59e0b; animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+    .status-dot[data-status="FAILED"] { background-color: #f43f5e; }
+    .status-badge { background-color: #1e293b; color: #94a3b8; border: 1px solid transparent; }
+    .status-badge[data-status="COMPLETED"] { background-color: #022c22; color: #6ee7b7; border-color: #065f46; font-weight: 600; }
+    .status-badge[data-status="PENDING"] { background-color: #082f49; color: #7dd3fc; border-color: #075985; }
+    .status-badge[data-status="PAUSED"] { background-color: #451a03; color: #fcd34d; border-color: #92400e; font-weight: 600; animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+    .status-badge[data-status="FAILED"] { background-color: #4c0519; color: #fda4af; border-color: #9f1239; font-weight: 600; }
+    .status-badge[data-status="SKIPPED"] { background-color: #0f172a; color: #64748b; }
+    .stage-card { outline: 2px solid transparent; outline-offset: 0; } /* outline, not ring: combines with box-shadow */
+    .stage-card[data-status="COMPLETED"] { outline-color: rgba(16, 185, 129, 0.5); border-color: rgba(16, 185, 129, 0.6); }
+    .stage-card[data-status="PAUSED"] { outline-color: rgba(245, 158, 11, 0.6); border-color: #f59e0b; animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+    .stage-card[data-status="PAUSED"] .status-badge { animation: none; }
+    .stage-card[data-status="FAILED"] { outline-color: #f43f5e; border-color: #e11d48; }
+    .stage-card[data-status="SKIPPED"] { border-style: dashed; border-color: #334155; opacity: 0.6; }
+    .stage-card.selected { outline-color: #38bdf8; box-shadow: 0 10px 15px -3px rgba(14, 165, 233, 0.2); }
     .border-slate-700 { border-color: #334155; }
     .border-slate-800 { border-color: #1e293b; }
     /* Utilities the status rendering depends on (github.com/google/lightflow/issues/19). */
@@ -155,10 +173,8 @@
     .italic { font-style: italic; }
     .antialiased { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
     .whitespace-pre-wrap { white-space: pre-wrap; }
-    .opacity-60 { opacity: 0.6; }
     .rounded-md { border-radius: 0.375rem; }
     .border-t { border-top-width: 1px; }
-    .border-dashed { border-style: dashed; }
     .outline-none { outline: 2px solid transparent; outline-offset: 2px; }
     .backdrop-blur { -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); }
     .shadow-inner { box-shadow: inset 0 2px 4px 0 rgba(0, 0, 0, 0.3); }
@@ -167,22 +183,11 @@
     .duration-150 { transition-duration: 150ms; }
     .duration-300 { transition-duration: 300ms; }
     .font-\[var\(--vscode-font-family\,system-ui\,-apple-system\,sans-serif\)\] { font-family: var(--vscode-font-family, system-ui, -apple-system, sans-serif); }
-    .bg-amber-950 { background-color: #451a03; }
-    .bg-emerald-950 { background-color: #022c22; }
-    .bg-rose-950 { background-color: #4c0519; }
-    .border-amber-500 { border-color: #f59e0b; }
     .border-amber-500\/40 { border-color: rgba(245, 158, 11, 0.4); }
-    .border-amber-800 { border-color: #92400e; }
-    .border-emerald-500\/60 { border-color: rgba(16, 185, 129, 0.6); }
-    .border-emerald-800 { border-color: #065f46; }
-    .border-rose-600 { border-color: #e11d48; }
-    .border-rose-800 { border-color: #9f1239; }
     .border-sky-500\/40 { border-color: rgba(14, 165, 233, 0.4); }
     .text-amber-200 { color: #fde68a; }
     .text-amber-300 { color: #fcd34d; }
-    .text-emerald-300 { color: #6ee7b7; }
     .text-indigo-400 { color: #818cf8; }
-    .text-rose-300 { color: #fda4af; }
     .text-sky-200 { color: #bae6fd; }
     .text-slate-400 { color: #94a3b8; }
     .text-slate-500 { color: #64748b; }
@@ -192,12 +197,6 @@
     .border-emerald-500\/30 { border-color: rgba(16, 185, 129, 0.3); }
     .border-amber-500\/30 { border-color: rgba(245, 158, 11, 0.3); }
     .border-sky-500\/30 { border-color: rgba(14, 165, 233, 0.3); }
-    /* Rings as outlines so they combine with the cards' box-shadows. */
-    .ring-2 { outline: 2px solid transparent; outline-offset: 0; }
-    .ring-emerald-500\/50 { outline-color: rgba(16, 185, 129, 0.5); }
-    .ring-amber-500\/60 { outline-color: rgba(245, 158, 11, 0.6); }
-    .ring-rose-500 { outline-color: #f43f5e; }
-    .ring-sky-400 { outline-color: #38bdf8; }
     .focus\:ring-0:focus { outline: none; }
     .hover\:shadow-2xl:hover { box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.6); }
     .hover\:scale-\[1\.03\]:hover { transform: scale(1.03); }
@@ -559,13 +558,8 @@
       if (PASSPORT_DATA && PASSPORT_DATA.stamps && PASSPORT_DATA.stamps.length > 0) {
         const lastStamp = PASSPORT_DATA.stamps[PASSPORT_DATA.stamps.length - 1];
         badge.textContent = lastStamp.status;
-        if (lastStamp.status === "COMPLETED") {
-          badge.className = "text-[10px] px-2 py-0.5 rounded-full font-medium bg-emerald-950 text-emerald-300 border border-emerald-800";
-        } else if (lastStamp.status === "PAUSED") {
-          badge.className = "text-[10px] px-2 py-0.5 rounded-full font-medium bg-amber-950 text-amber-300 border border-amber-800 animate-pulse";
-        } else if (lastStamp.status === "FAILED") {
-          badge.className = "text-[10px] px-2 py-0.5 rounded-full font-medium bg-rose-950 text-rose-300 border border-rose-800";
-        }
+        badge.className = "status-badge text-[10px] px-2 py-0.5 rounded-full font-medium";
+        badge.dataset.status = lastStamp.status;
       }
     }
 
@@ -602,14 +596,14 @@
       setTimeout(() => focusStart(), 40);
     }
 
+    function setInspector(visible) {
+      inspectorVisible = visible;
+      document.getElementById("inspector-drawer").classList.toggle("hidden", !visible);
+      document.body.classList.toggle("inspector-open", visible);
+    }
+
     function toggleInspector() {
-      const drawer = document.getElementById("inspector-drawer");
-      inspectorVisible = !inspectorVisible;
-      if (inspectorVisible) {
-        drawer.classList.remove("hidden");
-      } else {
-        drawer.classList.add("hidden");
-      }
+      setInspector(!inspectorVisible);
     }
 
     function computeLevels(stages) {
@@ -639,11 +633,12 @@
       return levels;
     }
 
+    // Returns the latest stamp status, or "" when the stage has not run yet.
     function getStageStatus(stageName) {
-      if (!PASSPORT_DATA || !PASSPORT_DATA.stamps) return "PENDING";
+      if (!PASSPORT_DATA || !PASSPORT_DATA.stamps) return "";
       const stamps = PASSPORT_DATA.stamps.filter(st => st.stage_name === stageName);
-      if (stamps.length === 0) return "PENDING";
-      return stamps[stamps.length - 1].status;
+      if (stamps.length === 0) return "";
+      return stamps[stamps.length - 1].status || "";
     }
 
     function renderDag() {
@@ -806,24 +801,10 @@
           borderColor = "border-sky-500/40";
         }
 
-        let statusBorder = "";
-        let statusBadge = `<span class="text-[9px] px-1.5 py-0.5 rounded font-mono bg-slate-800 text-slate-400">PENDING</span>`;
-        if (status === "COMPLETED") {
-          statusBorder = "ring-2 ring-emerald-500/50 border-emerald-500/60";
-          statusBadge = `<span class="text-[9px] px-1.5 py-0.5 rounded font-mono bg-emerald-950 text-emerald-300 border border-emerald-800 font-semibold">DONE</span>`;
-        } else if (status === "PAUSED") {
-          statusBorder = "ring-2 ring-amber-500/60 border-amber-500 animate-pulse";
-          statusBadge = `<span class="text-[9px] px-1.5 py-0.5 rounded font-mono bg-amber-950 text-amber-300 border border-amber-800 font-semibold">PAUSED</span>`;
-        } else if (status === "FAILED") {
-          statusBorder = "ring-2 ring-rose-500 border-rose-600";
-          statusBadge = `<span class="text-[9px] px-1.5 py-0.5 rounded font-mono bg-rose-950 text-rose-300 border border-rose-800 font-semibold">FAILED</span>`;
-        } else if (status === "SKIPPED") {
-          statusBorder = "border-dashed border-slate-700 opacity-60";
-          statusBadge = `<span class="text-[9px] px-1.5 py-0.5 rounded font-mono bg-slate-900 text-slate-500">SKIPPED</span>`;
-        }
-
+        const safeStatus = escapeHtml(status);
+        const badgeLabel = { COMPLETED: "DONE", PENDING: "STARTED" }[status] || safeStatus || "PENDING";
+        const statusBadge = `<span class="status-badge text-[9px] px-1.5 py-0.5 rounded font-mono" data-status="${safeStatus}">${badgeLabel}</span>`;
         const isSelected = selectedStageName === stageName;
-        const selectRing = isSelected ? "ring-2 ring-sky-400 shadow-sky-500/20" : "";
 
         const card = document.createElement("div");
         card.id = `node-${stageName}`;
@@ -837,7 +818,7 @@
         const safeAction = escapeHtml(stage.python_action ? stage.python_action.action_id : kindLabel);
 
         card.innerHTML = `
-          <div class="w-full h-full bg-[var(--app-card,#131b2e)] border ${borderColor} ${statusBorder} ${selectRing} rounded-2xl p-3 shadow-lg hover:shadow-2xl flex flex-col justify-between">
+          <div data-status="${safeStatus}" class="stage-card w-full h-full bg-[var(--app-card,#131b2e)] border ${borderColor} rounded-2xl p-3 shadow-lg hover:shadow-2xl flex flex-col justify-between">
             <div class="flex items-start justify-between gap-1.5">
               <div class="flex items-center gap-1.5 min-w-0">
                 <span class="text-sm shrink-0">${icon}</span>
@@ -854,6 +835,7 @@
           </div>
         `;
         if (card.firstElementChild) {
+          card.firstElementChild.classList.toggle("selected", isSelected);
           card.firstElementChild.addEventListener("click", () => selectStage(stage.name));
         }
         nodesContainer.appendChild(card);
@@ -865,22 +847,16 @@
       const stage = (WORKFLOW_DATA.stages || []).find(s => s.name === stageName);
       if (!stage) return;
 
-      // Open inspector drawer
-      const drawer = document.getElementById("inspector-drawer");
-      drawer.classList.remove("hidden");
-      inspectorVisible = true;
+      setInspector(true);
 
       // Update node active ring
       document.querySelectorAll("[id^='node-'] > div").forEach(el => {
-        el.classList.remove("ring-sky-400", "shadow-sky-500/20");
-        if (![...el.classList].some(c => /^ring-(emerald|amber|rose)-/.test(c))) {
-          el.classList.remove("ring-2");
-        }
+        el.classList.remove("selected");
       });
       const nodeEl = document.getElementById(`node-${stageName}`);
       const activeCard = nodeEl ? nodeEl.firstElementChild : null;
       if (activeCard) {
-        activeCard.classList.add("ring-2", "ring-sky-400", "shadow-sky-500/20");
+        activeCard.classList.add("selected");
       }
 
       document.getElementById("inspector-empty").classList.add("hidden");
@@ -891,8 +867,10 @@
 
       const status = getStageStatus(stageName);
       const statusBadge = document.getElementById("inspect-status-badge");
-      statusBadge.textContent = status;
-      document.getElementById("inspect-status").textContent = status;
+      statusBadge.textContent = status || "PENDING";
+      statusBadge.className = "status-badge text-[10px] px-2 py-0.5 rounded-full font-medium";
+      statusBadge.dataset.status = status;
+      document.getElementById("inspect-status").textContent = status || "PENDING";
 
       let kind = "Python Action";
       let icon = "⚡";
@@ -983,14 +961,19 @@
       PASSPORT_DATA.stamps.forEach((stamp, index) => {
         const item = document.createElement("div");
         item.className = "flex gap-3 items-start";
-        let dotColor = "bg-emerald-500";
-        if (stamp.status === "PAUSED") dotColor = "bg-amber-500 animate-pulse";
-        if (stamp.status === "FAILED") dotColor = "bg-rose-500";
-        if (stamp.status === "SKIPPED") dotColor = "bg-slate-500";
+        const fallback = {
+          COMPLETED: "Executed successfully.",
+          PENDING: "Started.",
+          PAUSED: "Paused.",
+          FAILED: "Failed.",
+          SKIPPED: "Skipped.",
+        }[stamp.status] || stamp.status || "";
+        // First line only; the inspector shows the full message with breaks.
+        const firstLine = (stamp.message || fallback).split("\n")[0];
 
         item.innerHTML = `
           <div class="flex flex-col items-center">
-            <span class="w-3 h-3 rounded-full ${dotColor} mt-1"></span>
+            <span class="status-dot w-3 h-3 rounded-full mt-1" data-status="${escapeHtml(stamp.status || "")}"></span>
             ${index < PASSPORT_DATA.stamps.length - 1 ? '<span class="w-0.5 h-12 bg-slate-800"></span>' : ''}
           </div>
           <div class="flex-1 bg-[var(--app-card,#131b2e)] border border-[var(--app-border,#334155)] rounded-2xl p-3.5 shadow-sm">
@@ -998,7 +981,7 @@
               <span class="font-bold text-xs text-[var(--app-foreground,#f1f5f9)] font-mono">${escapeHtml(stamp.stage_name)}</span>
               <span class="text-[10px] font-mono text-[var(--app-muted-foreground,#94a3b8)]">${escapeHtml(stamp.timestamp || "")}</span>
             </div>
-            <div class="text-xs text-slate-300 mt-1 leading-relaxed">${escapeHtml(stamp.message || "Executed successfully.")}</div>
+            <div class="text-xs text-slate-300 mt-1 leading-relaxed">${escapeHtml(firstLine)}</div>
           </div>
         `;
         list.appendChild(item);

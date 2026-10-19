@@ -43,7 +43,7 @@ except ImportError:
   from lightflow import lib  # pyrefly: ignore[missing-import]
 # pylint: enable=g-import-not-at-top,g-bad-import-order
 
-_VERSION = "0.5.2"
+_VERSION = "0.6.0"
 
 
 def _parse_arg(val: Any) -> Any:
@@ -78,11 +78,9 @@ def _json_default(obj: Any) -> Any:
   return str(obj)
 
 
-def _format_result(res: Any, as_json: bool = False) -> str:
-  if (
-      as_json
-      or isinstance(res, (dict, list, set, frozenset))
-      or dataclasses.is_dataclass(res)
+def _format_result(res: Any) -> str:
+  if isinstance(res, (dict, list, set, frozenset)) or dataclasses.is_dataclass(
+      res
   ):
     try:
       return json.dumps(res, indent=2, default=_json_default)
@@ -128,25 +126,11 @@ class CliWrapper:
 
       @functools.wraps(attr)
       def wrapper(*args: Any, **kwargs: Any) -> Any:
-        as_json = False
-        if sig is not None:
-          if "json" not in sig.parameters and "json" in kwargs:
-            as_json = bool(kwargs.pop("json"))
-          if "format" not in sig.parameters and kwargs.get("format") == "json":
-            kwargs.pop("format")
-            as_json = True
-        else:
-          if "json" in kwargs:
-            as_json = bool(kwargs.pop("json"))
-          if kwargs.get("format") == "json":
-            kwargs.pop("format")
-            as_json = True
-
         parsed_args = [_parse_arg(arg) for arg in args]
         parsed_kwargs = {k: _parse_arg(v) for k, v in kwargs.items()}
         res = attr(*parsed_args, **parsed_kwargs)
         if res is not None:
-          print(_format_result(res, as_json=as_json))
+          print(_format_result(res))
         return None
 
       if sig is not None:

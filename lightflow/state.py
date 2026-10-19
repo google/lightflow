@@ -579,11 +579,12 @@ def _rearm_yielded_polls(
       s for s in ordered_stages if _latest_stamp_is_poll_yield(passport, s)
   ]
   for stage_name in rearmed:
-    stamp = passport.stamps.add()
-    stamp.stage_name = stage_name
-    stamp.status = schema.StampStatus.PENDING
-    stamp.timestamp.CopyFrom(engine.get_timestamp())
-    stamp.message = f"Re-armed by {operator}: polling again."
+    engine.add_stamp(
+        passport,
+        stage_name,
+        schema.StampStatus.PENDING,
+        f"Re-armed by {operator}: polling again.",
+    )
     print(f"↻ {stage_name} re-armed: polling again.")
   return rearmed
 

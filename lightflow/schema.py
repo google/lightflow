@@ -609,6 +609,7 @@ class Lightflow:
   metadata: dict[str, str] = field(default_factory=dict)
   runner_target: str = ""
   strict_expressions: bool = False
+  secret_keys: list[str] = field(default_factory=list)
 
   def to_dict(self) -> dict[str, Any]:
     res: dict[str, Any] = {"name": self.name}
@@ -624,6 +625,8 @@ class Lightflow:
       res["runner_target"] = self.runner_target
     if self.strict_expressions:
       res["strict_expressions"] = True
+    if self.secret_keys:
+      res["secret_keys"] = list(self.secret_keys)
     return res
 
   @classmethod
@@ -640,6 +643,7 @@ class Lightflow:
             "metadata",
             "runner_target",
             "strict_expressions",
+            "secret_keys",
         },
         "Lightflow",
     )
@@ -688,6 +692,7 @@ class Lightflow:
         },
         runner_target=str(data.get("runner_target", "")),
         strict_expressions=bool(data.get("strict_expressions", False)),
+        secret_keys=[str(k) for k in data.get("secret_keys") or []],
     )
 
 

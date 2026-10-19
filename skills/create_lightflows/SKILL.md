@@ -45,6 +45,62 @@ is not on `PATH`.)
     `payload.outputs.<stage>` reference points to an upstream dependency in
     `run_after`, runs `dry_run`, and emits `visualizer.html`.
 
+## 1b. Starting From an Existing `SKILL.md`
+
+Most procedures worth moving into Lightflow already exist as a skill: a numbered
+list of steps an agent follows by hand. The translation is mechanical once each
+step is classified:
+
+A step that…                                                                             | becomes                                                               | because
+---------------------------------------------------------------------------------------- | --------------------------------------------------------------------- | -------
+runs a command, calls an API, transforms data, writes a file                             | `python_action`                                                       | deterministic, testable, retryable; the agent never re-derives it
+needs judgment but no outside decision (triage findings, draft text, pick a remediation) | `operator_action` whose `instructions` tell the agent what to produce | the gate pauses the run, the agent does the work, then resumes with the result as payload
+needs a decision from a person (approve spend, confirm a destructive change)             | `operator_action` whose `instructions` say who must decide            | the resume stamp records who decided and from which session
+
+Worked example. A skill that reads:
+
+```
+1. Query last week's incidents from the tracker.
+2. Group them by service and draft a summary.
+3. Get the on-call lead to confirm the summary.
+4. Post it to the channel.
+```
+
+maps to:
+
+```yaml
+name: weekly_incident_digest
+actions:
+  - {id: fetch,  python_import: digest.actions.fetch_incidents}
+  - {id: group,  python_import: digest.actions.group_by_service}
+  - {id: post,   python_import: digest.actions.post_to_channel}
+stages:
+  - name: fetch_incidents                       # step 1: mechanical
+    python_action: {action_id: fetch}
+    retry_policy: {max_attempts: 3, initial_backoff_seconds: 5}
+  - name: group_by_service                      # step 2a: mechanical
+    run_after: [fetch_incidents]
+    python_action: {action_id: group}
+  - name: draft_summary                         # step 2b: agent judgment
+    run_after: [group_by_service]
+    operator_action:
+      instructions: "'Draft a 5-line summary of ' + string(payload.outputs.group_by_service.count) + ' incidents grouped by service; resume with summary_md.'"
+      json_schema: '{"type": "object", "required": ["summary_md"], "properties": {"summary_md": {"type": "string"}}}'
+  - name: lead_confirms                         # step 3: a person decides
+    run_after: [draft_summary]
+    operator_action:
+      instructions: "'Ask the on-call lead to confirm this summary before it is posted: ' + payload.outputs.draft_summary.summary_md"
+  - name: post_to_channel                       # step 4: mechanical
+    run_after: [lead_confirms]
+    python_action: {action_id: post}
+```
+
+Keep the skill: replace its step list with `lightflow start --lightflow=<dir>`
+and the gate-handling rules from `skills/run_lightflows/SKILL.md`. The judgment
+and the decision stay where they were; only the mechanical steps and the
+ordering move into code. Run the `create_lightflow` meta-workflow above to
+scaffold and prove the result.
+
 ## 2. Workflow Manifest Reference (`lightflow.yaml`)
 
 Define actions and stages in `lightflow.yaml` (or `.json`). `python_import`
@@ -54,6 +110,9 @@ resolves relative to the workflow's directory (e.g. `actions.fetch_metrics` for
 ```yaml
 name: release_verification_pipeline
 description: Fetch metrics, pause for operator review, and publish report.
+# Optional: payload keys (any depth) shown as <redacted> in the visualizer,
+# status --verbose and dry-run output. passport.json keeps the real values.
+secret_keys: [api_token]
 
 actions:
   - id: fetch_metrics

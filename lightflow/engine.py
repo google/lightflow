@@ -119,6 +119,40 @@ UPSTREAM_FAILED_MESSAGE = "Failed: Upstream dependency failed."
 POLL_YIELD_MARKER = "Yielding control back to operator/agent"
 
 
+REDACTED = "<redacted>"
+
+
+def redact_payload(
+    payload_dict: dict[str, Any], secret_keys: Collection[str]
+) -> dict[str, Any]:
+  """Returns a copy with every value under a secret key replaced.
+
+  Keys match at any depth, so the `outputs.<stage>.<key>` mirror of a stage
+  result is covered as well as the top level.
+
+  Args:
+    payload_dict: The payload as a plain dict.
+    secret_keys: Key names whose values must not be shown.
+
+  Returns:
+    `payload_dict` itself when there are no secret keys, else a redacted copy.
+  """
+  secrets = set(secret_keys)
+  if not secrets:
+    return payload_dict
+
+  def walk(value: Any) -> Any:
+    if isinstance(value, dict):
+      return {
+          k: REDACTED if k in secrets else walk(v) for k, v in value.items()
+      }
+    if isinstance(value, list):
+      return [walk(v) for v in value]
+    return value
+
+  return walk(payload_dict)
+
+
 def _announce_failure(stage_name: str, message: str) -> None:
   """Prints a stage failure when it happens; the footer summarises it later."""
   lines = (message or "").strip().splitlines()
@@ -133,6 +167,33 @@ _TRIGGER_NOTIFICATION_ICONS = {
     schema.StampStatus.FAILED: "❌",
     schema.StampStatus.SKIPPED: "⏭️",
 }
+
+
+def add_stamp(
+    passport: schema.Passport,
+    stage_name: str,
+    status: schema.StampStatus,
+    message: str = "",
+    *,
+    reason: Optional[schema.Stamp.Reason] = None,
+) -> schema.Stamp:
+  """Appends a timestamped stamp to the passport and returns it."""
+  stamp = passport.stamps.add()
+  stamp.stage_name = stage_name
+  stamp.status = status
+  stamp.timestamp.CopyFrom(get_timestamp())
+  stamp.message = message
+  if reason is not None:
+    stamp.reason = reason
+  return stamp
+
+
+# Short names for the stamp statuses, so a stamp site reads on one line.
+_PENDING = schema.StampStatus.PENDING
+_COMPLETED = schema.StampStatus.COMPLETED
+_SKIPPED = schema.StampStatus.SKIPPED
+_FAILED = schema.StampStatus.FAILED
+_PAUSED = schema.StampStatus.PAUSED
 
 
 def record_stage_outputs(
@@ -1479,11 +1540,7 @@ class LightflowEngine:
         stage, passport
     )
     if not should_run:
-      stamp = passport.stamps.add()
-      stamp.stage_name = stage_name
-      stamp.status = target_status
-      stamp.timestamp.CopyFrom(get_timestamp())
-      stamp.message = reason
+      stamp = add_stamp(passport, stage_name, target_status, reason)
       if reason == UPSTREAM_FAILED_MESSAGE:
         stamp.reason = schema.Stamp.UPSTREAM_FAILED
 
@@ -1522,10 +1579,7 @@ class LightflowEngine:
             stage.run_if, payload_dict, strict=self._strict_expressions
         )
       except Exception as e:  # pylint: disable=broad-exception-caught
-        failed_stamp = passport.stamps.add()
-        failed_stamp.stage_name = stage_name
-        failed_stamp.status = schema.StampStatus.FAILED
-        failed_stamp.timestamp.CopyFrom(get_timestamp())
+        failed_stamp = add_stamp(passport, stage_name, _FAILED)
         failed_stamp.message = (
             f"Condition evaluation failed: {e}\n{traceback.format_exc()}"
         )
@@ -1533,11 +1587,12 @@ class LightflowEngine:
         return passport
 
       if not should_run:
-        skipped_stamp = passport.stamps.add()
-        skipped_stamp.stage_name = stage_name
-        skipped_stamp.status = schema.StampStatus.SKIPPED
-        skipped_stamp.timestamp.CopyFrom(get_timestamp())
-        skipped_stamp.message = f"Skipped via condition: {stage.run_if}"
+        add_stamp(
+            passport,
+            stage_name,
+            _SKIPPED,
+            f"Skipped via condition: {stage.run_if}",
+        )
         print(
             f"  ⏭️ [{stage_name}] skipped: run_if is false ({stage.run_if})",
             flush=True,
@@ -1549,10 +1604,7 @@ class LightflowEngine:
         return passport
 
     # 2. Append PENDING stamp to register started state
-    pending_stamp = passport.stamps.add()
-    pending_stamp.stage_name = stage_name
-    pending_stamp.status = schema.StampStatus.PENDING
-    pending_stamp.timestamp.CopyFrom(get_timestamp())
+    pending_stamp = add_stamp(passport, stage_name, _PENDING)
     if save_callback:
       save_callback(passport)
 
@@ -1593,11 +1645,7 @@ class LightflowEngine:
             f"Stage '{stage_name}' has a polling policy but defines no"
             " execution actions."
         )
-        failed_stamp = passport.stamps.add()
-        failed_stamp.stage_name = stage_name
-        failed_stamp.status = schema.StampStatus.FAILED
-        failed_stamp.timestamp.CopyFrom(get_timestamp())
-        failed_stamp.message = err_msg
+        failed_stamp = add_stamp(passport, stage_name, _FAILED, err_msg)
         raise EngineError(err_msg)
 
       start_time = time.monotonic()
@@ -1620,10 +1668,7 @@ class LightflowEngine:
           if save_callback:
             save_callback(passport)
         except Exception as e:  # pylint: disable=broad-exception-caught
-          failed_stamp = passport.stamps.add()
-          failed_stamp.stage_name = stage_name
-          failed_stamp.status = schema.StampStatus.FAILED
-          failed_stamp.timestamp.CopyFrom(get_timestamp())
+          failed_stamp = add_stamp(passport, stage_name, _FAILED)
           failed_stamp.message = (
               f"Polling tick failed: {e}\n{traceback.format_exc()}"
           )
@@ -1644,10 +1689,7 @@ class LightflowEngine:
               policy.condition, payload_dict, strict=self._strict_expressions
           )
         except Exception as e:  # pylint: disable=broad-exception-caught
-          failed_stamp = passport.stamps.add()
-          failed_stamp.stage_name = stage_name
-          failed_stamp.status = schema.StampStatus.FAILED
-          failed_stamp.timestamp.CopyFrom(get_timestamp())
+          failed_stamp = add_stamp(passport, stage_name, _FAILED)
           failed_stamp.message = (
               f"Condition evaluation failed: {e}\n{traceback.format_exc()}"
           )
@@ -1659,10 +1701,7 @@ class LightflowEngine:
 
         if condition_passed:
           set_payload(passport.payload, payload_dict)
-          completed_stamp = passport.stamps.add()
-          completed_stamp.stage_name = stage_name
-          completed_stamp.status = schema.StampStatus.COMPLETED
-          completed_stamp.timestamp.CopyFrom(get_timestamp())
+          completed_stamp = add_stamp(passport, stage_name, _COMPLETED)
           completed_stamp.message = (
               f"Polling condition met after {attempts} attempts: {message}"
               if message
@@ -1703,12 +1742,13 @@ class LightflowEngine:
                 " operator/agent. State is preserved."
             )
 
-          failed_stamp = passport.stamps.add()
-          failed_stamp.stage_name = stage_name
-          failed_stamp.status = schema.StampStatus.FAILED
-          failed_stamp.timestamp.CopyFrom(get_timestamp())
-          failed_stamp.message = err_msg
-          failed_stamp.reason = schema.Stamp.POLL_YIELD
+          add_stamp(
+              passport,
+              stage_name,
+              _FAILED,
+              err_msg,
+              reason=schema.Stamp.POLL_YIELD,
+          )
 
           print(f"  ⏳ [{stage_name}] {err_msg}", flush=True)
           send_notification(
@@ -1753,10 +1793,7 @@ class LightflowEngine:
           )
           set_payload(passport.payload, payload_dict)
 
-          completed_stamp = passport.stamps.add()
-          completed_stamp.stage_name = stage_name
-          completed_stamp.status = schema.StampStatus.COMPLETED
-          completed_stamp.timestamp.CopyFrom(get_timestamp())
+          completed_stamp = add_stamp(passport, stage_name, _COMPLETED)
           if attempts > 1:
             completed_stamp.message = (
                 f"{message} (completed after {attempts} attempts)"
@@ -1794,10 +1831,7 @@ class LightflowEngine:
               current_backoff = min(current_backoff * backoff_multiplier, 300.0)
               continue
 
-          failed_stamp = passport.stamps.add()
-          failed_stamp.stage_name = stage_name
-          failed_stamp.status = schema.StampStatus.FAILED
-          failed_stamp.timestamp.CopyFrom(get_timestamp())
+          failed_stamp = add_stamp(passport, stage_name, _FAILED)
           failed_stamp.message = (
               str(e)
               if isinstance(e, StageTimeoutError)
@@ -1821,10 +1855,7 @@ class LightflowEngine:
           raise
         except Exception as e:  # pylint: disable=broad-exception-caught
           if attempts >= max_attempts:
-            failed_stamp = passport.stamps.add()
-            failed_stamp.stage_name = stage_name
-            failed_stamp.status = schema.StampStatus.FAILED
-            failed_stamp.timestamp.CopyFrom(get_timestamp())
+            failed_stamp = add_stamp(passport, stage_name, _FAILED)
             failed_stamp.message = (
                 f"Failed after {attempts}"
                 f" attempt{'s' if attempts != 1 else ''}. Last error:"
@@ -1866,10 +1897,7 @@ class LightflowEngine:
               " whitespace-only string."
           )
       except Exception as e:  # pylint: disable=broad-exception-caught
-        failed_stamp = passport.stamps.add()
-        failed_stamp.stage_name = stage_name
-        failed_stamp.status = schema.StampStatus.FAILED
-        failed_stamp.timestamp.CopyFrom(get_timestamp())
+        failed_stamp = add_stamp(passport, stage_name, _FAILED)
         failed_stamp.message = (
             "Operator action instructions evaluation failed:"
             f" {e}\n{traceback.format_exc()}"
@@ -1880,10 +1908,7 @@ class LightflowEngine:
 
       resume_command = self.build_resume_command(stage_name, operator_action)
 
-      paused_stamp = passport.stamps.add()
-      paused_stamp.stage_name = stage_name
-      paused_stamp.status = schema.StampStatus.PAUSED
-      paused_stamp.timestamp.CopyFrom(get_timestamp())
+      paused_stamp = add_stamp(passport, stage_name, _PAUSED)
       summary = summarise(instructions)
       paused_stamp.message = f"Suspended waiting for operator action: {summary}"
       paused_stamp.instructions = instructions
@@ -1901,11 +1926,7 @@ class LightflowEngine:
 
     else:
       err_msg = f"Stage '{stage_name}' has no defined action rule."
-      failed_stamp = passport.stamps.add()
-      failed_stamp.stage_name = stage_name
-      failed_stamp.status = schema.StampStatus.FAILED
-      failed_stamp.timestamp.CopyFrom(get_timestamp())
-      failed_stamp.message = err_msg
+      failed_stamp = add_stamp(passport, stage_name, _FAILED, err_msg)
 
       _announce_failure(stage_name, failed_stamp.message)
       raise EngineError(err_msg)

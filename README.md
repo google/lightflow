@@ -180,6 +180,11 @@ payloads from a file or stdin via `--payload=@payload.json`, `--payload=@-`, or
 
 ## Authoring Your Own Workflow
 
+Already have the procedure as a `SKILL.md`? See
+[Starting From an Existing `SKILL.md`](./skills/create_lightflows/SKILL.md#1b-starting-from-an-existing-skillmd)
+for the step-by-step mapping (mechanical steps become `python_action`s,
+judgment and decisions stay as gates), then continue below.
+
 ### 1. Write Python Actions (`my_pkg/actions.py`)
 
 Each `python_action` is a regular Python function that receives a copy of the
@@ -258,6 +263,7 @@ stages:
 | `retry_policy` | Opt-in retry (`max_attempts`, `initial_backoff_seconds`, `backoff_multiplier`) with ±10% jitter for exceptions and timeouts. |
 | `polling_policy` | Polls `poll_tick_action` (mutually exclusive with `python_action`) until `condition` evaluates to `true` (`interval_seconds`, `timeout_seconds`, `max_attempts`); each tick's dict is merged into `payload.outputs.<stage>` before `condition` runs, and tick messages are persisted to `passport.json`. |
 | `rollback_action` | Compensating `python_action` invoked automatically after a stage exhausts its retries; its output delta is merged into `payload`. |
+| `secret_keys` (top-level) | Payload keys, matched at any depth (so `outputs.<stage>.<key>` is covered), whose values are shown as `<redacted>` in output made to be read or shared: the visualizer HTML, `status --verbose`, and the dry-run payload echo. `passport.json` keeps the real values because later stages need them on resume; the state directory is created mode `0700`. Stamp messages are not filtered, so do not echo secrets from actions. |
 
 -   **Stage Output Namespacing & Collision Detection**: Stage outputs land both
     under `payload.outputs.<stage>` and at the top level of `payload` (last

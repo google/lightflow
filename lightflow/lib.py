@@ -404,11 +404,12 @@ class LightflowRunnerCLI:
           if decided:
             # Re-open in place and fall through to the normal resolution path
             # below, so the caller's --resolution/--payload are applied now.
-            reopened = passport.stamps.add()
-            reopened.stage_name = stage
-            reopened.status = schema.StampStatus.PAUSED
-            reopened.timestamp.CopyFrom(engine.get_timestamp())
-            reopened.message = f"Re-opened after rejection by {actor}."
+            reopened = engine.add_stamp(
+                passport,
+                stage,
+                schema.StampStatus.PAUSED,
+                f"Re-opened after rejection by {actor}.",
+            )
             for prior in reversed(list(passport.stamps)):
               if (
                   prior.stage_name == stage
@@ -441,10 +442,9 @@ class LightflowRunnerCLI:
                   schema.StampStatus.FAILED,
                   schema.StampStatus.SKIPPED,
               ):
-                rearmed = passport.stamps.add()
-                rearmed.stage_name = dep
-                rearmed.status = schema.StampStatus.PENDING
-                rearmed.timestamp.CopyFrom(engine.get_timestamp())
+                rearmed = engine.add_stamp(
+                    passport, dep, schema.StampStatus.PENDING
+                )
                 rearmed.message = (
                     f"Re-armed by {actor} after gate '{stage}' was re-opened."
                 )
@@ -526,10 +526,9 @@ class LightflowRunnerCLI:
         _replace_stage_outputs(payload_dict, stage, stage_output)
         engine.set_payload(passport.payload, payload_dict)
 
-        failed_stamp = passport.stamps.add()
-        failed_stamp.stage_name = stage
-        failed_stamp.status = schema.StampStatus.FAILED
-        failed_stamp.timestamp.CopyFrom(engine.get_timestamp())
+        failed_stamp = engine.add_stamp(
+            passport, stage, schema.StampStatus.FAILED
+        )
         reject_msg = f"{_REJECTED_PREFIX}{actor}."
         if comment:
           reject_msg += f" Reason: {comment}"
@@ -633,10 +632,7 @@ class LightflowRunnerCLI:
 
       engine.set_payload(passport.payload, payload_dict)
 
-      stamp = passport.stamps.add()
-      stamp.stage_name = stage
-      stamp.status = schema.StampStatus.COMPLETED
-      stamp.timestamp.CopyFrom(engine.get_timestamp())
+      stamp = engine.add_stamp(passport, stage, schema.StampStatus.COMPLETED)
       stamp_msg = f"Resumed and approved by {actor}."
       if comment:
         stamp_msg += f" Note: {comment}"
@@ -830,10 +826,7 @@ class LightflowRunnerCLI:
       if stage_name not in rearm:
         continue
       previous = schema.StampStatus.Name(latest_status[stage_name]).title()
-      stamp = passport.stamps.add()
-      stamp.stage_name = stage_name
-      stamp.status = schema.StampStatus.PENDING
-      stamp.timestamp.CopyFrom(engine.get_timestamp())
+      stamp = engine.add_stamp(passport, stage_name, schema.StampStatus.PENDING)
       stamp.message = (
           f"Re-armed for retry by {operator} (previous status: {previous})."
       )
@@ -1037,7 +1030,12 @@ class LightflowRunnerCLI:
       print("\nPASSPORT PAYLOAD (JSON):")
       print(
           json.dumps(
-              engine.payload_to_dict(passport.payload), indent=2, default=str
+              engine.redact_payload(
+                  engine.payload_to_dict(passport.payload),
+                  lightflow_proto.secret_keys,
+              ),
+              indent=2,
+              default=str,
           )
       )
 
@@ -1302,11 +1300,9 @@ class LightflowRunnerCLI:
             or passport.stamps[-1].stage_name != stage_name
             or passport.stamps[-1].status != schema.StampStatus.FAILED
         ):
-          failed_stamp = passport.stamps.add()
-          failed_stamp.stage_name = stage_name
-          failed_stamp.status = schema.StampStatus.FAILED
-          failed_stamp.timestamp.CopyFrom(engine.get_timestamp())
-          failed_stamp.message = str(err)
+          engine.add_stamp(
+              passport, stage_name, schema.StampStatus.FAILED, str(err)
+          )
         # Stage failure or timeout has already been stamped as FAILED (and
         # rolled back if configured) inside execute_stage. Persist the passport
         # and continue walking the DAG so independent branches and ALL_DONE

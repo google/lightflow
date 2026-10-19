@@ -29,8 +29,10 @@ from typing import Any, Optional
 
 # pylint: disable=g-import-not-at-top,g-bad-import-order
 try:
+  from . import engine
   from . import schema
 except ImportError:
+  from lightflow import engine  # pyrefly: ignore[missing-import]
   from lightflow import schema  # pyrefly: ignore[missing-import]
 # pylint: enable=g-import-not-at-top,g-bad-import-order
 
@@ -96,6 +98,11 @@ def generate_visualizer_html(
     raise ValueError("A Lightflow manifest must be provided.")
   wf_data = lightflow_to_dict(target_lf)
   pp_data = passport_to_dict(passport)
+  # The standalone HTML is made to be shared: hide secret payload values.
+  secrets = wf_data.get("secret_keys") or []
+  if secrets and pp_data and isinstance(pp_data.get("payload"), dict):
+    pp_data = dict(pp_data)  # never mutate a caller-supplied dict
+    pp_data["payload"] = engine.redact_payload(pp_data["payload"], secrets)
 
   wf_json = json.dumps(wf_data).replace("<", "\\u003c")
   pp_json = json.dumps(pp_data).replace("<", "\\u003c")

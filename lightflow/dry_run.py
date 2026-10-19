@@ -325,7 +325,8 @@ def run_dry_run(
   current_payload = engine.normalize_struct_numbers(dict(initial_payload))
 
   print(f"=== DRY RUN: {workflow_proto.name} ===")
-  print(f"Initial Payload: {json.dumps(current_payload, default=str)}\n")
+  shown = engine.redact_payload(current_payload, workflow_proto.secret_keys)
+  print(f"Initial Payload: {json.dumps(shown, default=str)}\n")
 
   preview_log_id = str(log_id).strip() if log_id else "<log_id>"
   runner = engine.LightflowEngine(

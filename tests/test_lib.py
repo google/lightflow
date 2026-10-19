@@ -357,6 +357,12 @@ stages:
         r" 'lightflow status --help' for details\.",
     ):
       runner_mod._dispatch_argv(wrapper, ["status", "--logid=x"])  # pylint: disable=protected-access
+    # github.com/google/lightflow/issues/21: `--json` used to be swallowed
+    # silently by the wrapper although no command honours it.
+    with self.assertRaisesRegex(
+        ValueError, r"Unknown flag '--json' for 'status'"
+    ):
+      runner_mod._dispatch_argv(wrapper, ["status", "--log_id=x", "--json"])  # pylint: disable=protected-access
 
   def test_payload_file_missing_is_reported_with_flag_context(self) -> None:
     with self.assertRaisesRegex(
@@ -3297,6 +3303,9 @@ stages:
     for pattern in sites:
       for m in re.finditer(pattern, html):
         literal = re.sub(r"\$\{[^}]*\}", " ", m.group(1))
+        if pattern.startswith("classList"):
+          # Only the quoted arguments; `toggle("x", flag)` also has a flag.
+          literal = " ".join(re.findall(r'"([^"]*)"', literal))
         used.update(re.findall(r"[A-Za-z][\w:\[\]()/.,#%-]*", literal))
     # JS hooks (no styling), substituted placeholders, and gradient stops that
     # are baked into .bg-gradient-to-tr.

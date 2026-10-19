@@ -30,7 +30,7 @@ and `cleanup` need only `--log_id`; if the manifest file moved, pass
 lightflow start --lightflow=<dir_or_manifest> --log_id=<run_id> [--payload='{...}' | --payload=@file.json]
 lightflow start ... --dry_run      # only when asked to preview; ends with a Summary: line and a 💡 --payload seed hint
 
-# Resolve a paused gate (only after the human decided; APPROVE sets approved=true itself)
+# Resolve a paused gate once its Instructions are satisfied (APPROVE sets approved=true itself)
 lightflow resume --log_id=<id> --stage=<gate_stage> --resolution=APPROVE --payload='{...}'
 lightflow resume --log_id=<id> --stage=<gate_stage> --resolution=REJECT --comment="..."   # runs rollback_action; dependents are blocked
 

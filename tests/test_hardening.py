@@ -99,6 +99,10 @@ def act_boom(payload: dict[str, Any], **_: Any) -> None:
   raise RuntimeError("real failure")
 
 
+def act_mint_token(payload: dict[str, Any], **_: Any) -> dict[str, Any]:
+  return {"api_token": "tok-SECRET-123", "rows": 3}
+
+
 def act_slow_rollback(
     payload: dict[str, Any], **_: Any
 ) -> tuple[dict[str, Any], str]:
@@ -469,6 +473,48 @@ stages:
     latest = {st.stage_name: st.status for st in passport.stamps}
     self.assertEqual(latest["after_a"], schema.StampStatus.COMPLETED)
     self.assertEqual(latest["gate_b"], schema.StampStatus.PAUSED)
+
+  # --- secret_keys: never in shared output, always in passport.json ------
+
+  def test_secret_keys_are_redacted_in_shared_output_only(self) -> None:
+    # github.com/google/lightflow/issues/21 (item 6).
+    manifest = self._write(
+        "secrets.yaml",
+        f"""
+name: secrets_wf
+secret_keys: [db_password, api_token]
+actions:
+  - id: mint
+    python_import: {__name__}.act_mint_token
+stages:
+  - name: mint
+    python_action: {{action_id: mint}}
+""",
+    )
+    cli = lib.LightflowRunnerCLI()
+    seed = {"db_password": "hunter2", "region": "eu"}
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+      cli.dry_run(lightflow=manifest, payload=seed)
+      cli.start(lightflow=manifest, log_id="secrets_run", payload=seed)
+      cli.status(log_id="secrets_run", verbose=True)
+      html_path = cli.visualize(
+          log_id="secrets_run", output=os.path.join(self.temp_dir, "v.html")
+      )
+    text = out.getvalue()
+    with open(html_path, encoding="utf-8") as f:
+      html = f.read()
+    pm = lib.PassportManager("secrets_run")
+    with open(pm.passport_file, encoding="utf-8") as f:
+      passport_json = f.read()
+
+    for secret in ("hunter2", "tok-SECRET-123"):
+      self.assertNotIn(secret, text)  # dry_run echo, status --verbose
+      self.assertNotIn(secret, html)  # visualizer, incl. outputs.mint mirror
+      self.assertIn(secret, passport_json)  # resume still has the values
+    self.assertIn('"db_password": "<redacted>"', text)
+    self.assertIn("eu", html)  # non-secret keys untouched
+    self.assertEqual(oct(os.stat(pm.resolved_path).st_mode & 0o777), "0o700")
 
   # --- engine: import-time errors are configuration errors, not transient ---
 
