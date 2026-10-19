@@ -621,12 +621,26 @@ def effective_status_name(stamp: schema.Stamp) -> str:
   name = schema.StampStatus.Name(stamp.status)
   if name != "FAILED":
     return name
+  by_reason = {
+      schema.Stamp.REJECTED: "REJECTED",
+      schema.Stamp.UPSTREAM_FAILED: "BLOCKED",
+      schema.Stamp.POLL_YIELD: "WAITING",
+  }
+  if stamp.reason in by_reason:
+    return by_reason[stamp.reason]
+  # Passports written before `reason` existed: fall back to the message text.
+  # The yield check is anchored on the engine's own message prefix so an
+  # action's exception text that merely contains the marker is not mistaken
+  # for a yield (github.com/google/lightflow/issues/14).
   message = stamp.message or ""
   if message.startswith(_REJECTED_PREFIX):
     return "REJECTED"
   if message == engine.UPSTREAM_FAILED_MESSAGE:
     return "BLOCKED"
-  if engine.POLL_YIELD_MARKER in message:
+  if (
+      message.startswith(f"Stage '{stamp.stage_name}' polling")
+      and engine.POLL_YIELD_MARKER in message
+  ):
     return "WAITING"
   return "FAILED"
 
@@ -714,8 +728,8 @@ def _raise_for_run_state(
     )
   if state == "PAUSED":
     raise LightflowAlreadyPausedError(
-        f"Lightflow is paused at operator action '{paused[0]}'. Present the"
-        " gate to the operator, then run 'resume' with their decision."
+        f"Lightflow is paused at operator action(s) {', '.join(paused)}."
+        " Follow the gate's instructions, then run 'resume'."
     )
   if state == "FAILED":
     suffix = f" Rejected gates: {', '.join(rejected)}." if rejected else ""
@@ -1161,12 +1175,12 @@ def _summarise_run(
   states = {effective_status_name(st) for st in latest.values()}
   if running:
     state = "RUNNING"
-  elif "PAUSED" in states:
-    state = "PAUSED"
   elif "FAILED" in states:
     state = "FAILED"
   elif "REJECTED" in states:
     state = "REJECTED"
+  elif "PAUSED" in states:
+    state = "PAUSED"
   elif "WAITING" in states:
     state = "WAITING"
   elif "PENDING" in states or not states:

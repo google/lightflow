@@ -65,9 +65,12 @@ def audit_pypi_versions(
     if not is_dry:
       try:
         latest_ver = _fetch_latest_pypi_version(pkg)
-      except (urllib.error.URLError, TimeoutError, OSError, ValueError):
-        latest_ver = _FALLBACK_LATEST.get(pkg, current_ver)
-        source = "offline_fallback"
+      except (urllib.error.URLError, TimeoutError, OSError, ValueError) as e:
+        raise RuntimeError(
+            f"Live fetch failed: {e}. Fix connectivity (retry_policy"
+            " applies), or pass --payload='{\"offline\": true}' to use the"
+            " bundled fixture."
+        ) from e
     else:
       latest_ver = _FALLBACK_LATEST.get(pkg, current_ver)
       source = (
@@ -91,6 +94,9 @@ def audit_pypi_versions(
           "upgrade_count": len(upgrades),
           "summary": summary,
           "source": source,
+          "source_note": (
+              "" if source == "live_pypi_api" else "[OFFLINE FIXTURE] "
+          ),
       },
       f"Audited {len(pinned)} packages via {source}: {summary}.",
   )

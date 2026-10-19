@@ -18,10 +18,13 @@ from __future__ import annotations
 
 # pylint: disable=missing-function-docstring,protected-access,unused-argument
 
+import contextlib
+import io
 import os
 import shutil
 import sys
 import tempfile
+import threading
 import time
 from typing import Any
 import unittest
@@ -70,6 +73,30 @@ def act_clobber_outputs(
     payload: dict[str, Any], **_: Any
 ) -> tuple[dict[str, Any], str]:
   return {"outputs": "corrupted", "real_val": 42}, "tried to clobber outputs"
+
+
+def act_raise_with_marker(payload: dict[str, Any], **_: Any) -> None:
+  raise RuntimeError(f"upstream said: {engine.POLL_YIELD_MARKER}")
+
+
+_EVENTS: list[str] = []
+_RELEASE = threading.Event()  # tests set it once they have asserted
+
+
+def act_slow_deploy(payload: dict[str, Any], **_: Any) -> dict[str, Any]:
+  _EVENTS.append("deploy:start")
+  _RELEASE.wait(timeout=30)  # outlives any timeout/backoff the test configures
+  _EVENTS.append("deploy:side_effect")
+  return {"deployed": True}
+
+
+def act_undo(payload: dict[str, Any], **_: Any) -> dict[str, Any]:
+  _EVENTS.append("rollback")
+  return {"rolled_back": True}
+
+
+def act_boom(payload: dict[str, Any], **_: Any) -> None:
+  raise RuntimeError("real failure")
 
 
 def act_slow_rollback(
@@ -193,6 +220,307 @@ stages:
         resolution="APPROVE",
     )
     self.assertEqual(_CALLS, ["ok", "ok"])
+
+  def test_explicit_operator_keeps_session_provenance_in_stamps(self) -> None:
+    # Issue #17: `--operator` names who decided; the stamp must still show
+    # which session made the call. The payload keeps the plain operator.
+    manifest = self._gate_manifest()
+    cli = lib.LightflowRunnerCLI()
+    os.environ["LIGHTFLOW_OPERATOR"] = "agent-session"
+    try:
+      with self.assertRaises(engine.OperatorActionSuspended):
+        cli.start(lightflow=manifest, log_id="prov_run")
+      cli.resume(
+          lightflow=manifest,
+          log_id="prov_run",
+          stage="human_gate",
+          resolution="APPROVE",
+          operator="cfo@example.com",
+      )
+    finally:
+      os.environ.pop("LIGHTFLOW_OPERATOR", None)
+    passport = lib.PassportManager("prov_run").load_passport()
+    assert passport is not None
+    gate = [s for s in passport.stamps if s.stage_name == "human_gate"][-1]
+    self.assertIn(
+        "approved by cfo@example.com (via agent-session)", gate.message
+    )
+    self.assertEqual(passport.payload.to_dict()["operator"], "cfo@example.com")
+
+  def test_failure_message_containing_yield_marker_is_still_a_failure(
+      self,
+  ) -> None:
+    # Issue #14: status comes from `Stamp.reason`, not from message text.
+    manifest = self._write(
+        "marker.yaml",
+        f"""
+name: marker_wf
+actions:
+  - id: boom
+    python_import: {__name__}.act_raise_with_marker
+stages:
+  - name: a
+    python_action:
+      action_id: boom
+""",
+    )
+    with self.assertRaises(lib.LightflowRunFailedError):
+      lib.LightflowRunnerCLI().start(lightflow=manifest, log_id="marker_run")
+    passport = lib.PassportManager("marker_run").load_passport()
+    assert passport is not None
+    self.assertEqual(lib.effective_status_name(passport.stamps[-1]), "FAILED")
+
+  def test_effective_status_prefers_reason_and_anchors_legacy_fallback(
+      self,
+  ) -> None:
+    def stamp(message: str, reason=schema.StampReason.REASON_UNSPECIFIED):
+      return schema.Stamp(
+          stage_name="s",
+          status=schema.StampStatus.FAILED,
+          message=message,
+          reason=reason,
+      )
+
+    marker = engine.POLL_YIELD_MARKER
+    self.assertEqual(
+        lib.effective_status_name(stamp("x", schema.StampReason.POLL_YIELD)),
+        "WAITING",
+    )
+    self.assertEqual(
+        lib.effective_status_name(stamp("x", schema.StampReason.REJECTED)),
+        "REJECTED",
+    )
+    # Legacy passports (no reason): the engine's own yield message still
+    # reads as WAITING; an action error quoting the marker does not.
+    self.assertEqual(
+        lib.effective_status_name(stamp(f"Stage 's' polling ... {marker}")),
+        "WAITING",
+    )
+    self.assertEqual(
+        lib.effective_status_name(stamp(f"Failed after 1 attempt: {marker}")),
+        "FAILED",
+    )
+    # Round-trips through passport.json; absent when unset.
+    self.assertNotIn("reason", stamp("x").to_dict())
+    self.assertEqual(
+        schema.Stamp.from_dict(
+            stamp("x", schema.StampReason.POLL_YIELD).to_dict()
+        ).reason,
+        schema.StampReason.POLL_YIELD,
+    )
+
+  # --- engine/lib: failures are announced; gates park like polls (#15) -----
+
+  def test_failure_is_printed_and_gate_does_not_halt_independent_stages(
+      self,
+  ) -> None:
+    manifest = self._write(
+        "probe.yaml",
+        f"""
+name: probe
+actions:
+  - id: boom
+    python_import: {__name__}.act_boom
+  - id: ok
+    python_import: {__name__}.act_ok
+stages:
+  - name: a
+    python_action: {{action_id: boom}}
+  - name: gate
+    operator_action:
+      instructions: "'approve?'"
+  - name: independent
+    python_action: {{action_id: ok}}
+""",
+    )
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+      with self.assertRaises(lib.LightflowRunFailedError):
+        lib.LightflowRunnerCLI().start(lightflow=manifest, log_id="probe")
+    text = out.getvalue()
+    self.assertIn(
+        "❌ [a] Failed after 1 attempt. Last error: real failure", text
+    )
+    self.assertIn("Open gate(s), still awaiting a decision: gate", text)
+    self.assertEqual(_CALLS, ["ok"])  # `independent` ran despite the gate
+    passport = lib.PassportManager("probe").load_passport()
+    assert passport is not None
+    latest = {st.stage_name: st.status for st in passport.stamps}
+    self.assertEqual(latest["gate"], schema.StampStatus.PAUSED)
+    self.assertEqual(latest["independent"], schema.StampStatus.COMPLETED)
+    # The parked gate does not block re-arming the failed sibling.
+    with self.assertRaises(lib.LightflowRunFailedError):
+      lib.LightflowRunnerCLI().resume(lightflow=manifest, log_id="probe")
+
+  # --- engine: a timed-out attempt is never overlapped (#11) ---------------
+
+  def test_timed_out_attempt_is_not_retried_or_rolled_back_while_alive(
+      self,
+  ) -> None:
+    _EVENTS.clear()
+    _RELEASE.clear()
+    self.addCleanup(_RELEASE.set)
+    manifest = self._write(
+        "race.yaml",
+        f"""
+name: race
+actions:
+  - id: deploy
+    python_import: {__name__}.act_slow_deploy
+  - id: undo
+    python_import: {__name__}.act_undo
+stages:
+  - name: deploy
+    python_action: {{action_id: deploy}}
+    rollback_action: {{action_id: undo}}
+    timeout_seconds: 1
+    retry_policy: {{max_attempts: 2, initial_backoff_seconds: 1}}
+""",
+    )
+    with self.assertRaises(lib.LightflowRunFailedError):
+      lib.LightflowRunnerCLI().start(lightflow=manifest, log_id="race")
+    passport = lib.PassportManager("race").load_passport()
+    assert passport is not None
+    msg = passport.stamps[-1].message
+    self.assertIn("Not retried", msg)
+    self.assertIn("Rollback 'undo' skipped", msg)
+    self.assertEqual(_EVENTS, ["deploy:start"])  # one attempt, no rollback
+    _RELEASE.set()
+
+  def test_polling_tick_timeout_does_not_race_rollback(self) -> None:
+    # Issue #11 also applies to poll ticks: a tick that times out keeps
+    # running; rollback must not overlap it.
+    _EVENTS.clear()
+    _RELEASE.clear()
+    self.addCleanup(_RELEASE.set)
+    manifest = self._write(
+        "tick.yaml",
+        f"""
+name: tick_race
+actions:
+  - id: tick
+    python_import: {__name__}.act_slow_deploy
+  - id: undo
+    python_import: {__name__}.act_undo
+stages:
+  - name: watch
+    timeout_seconds: 1
+    rollback_action: {{action_id: undo}}
+    polling_policy:
+      poll_tick_action: {{action_id: tick}}
+      condition: "payload.outputs.watch.deployed == true"
+      interval_seconds: 1
+      max_attempts: 2
+""",
+    )
+    with self.assertRaises(lib.LightflowRunFailedError):
+      lib.LightflowRunnerCLI().start(lightflow=manifest, log_id="tick_race")
+    passport = lib.PassportManager("tick_race").load_passport()
+    assert passport is not None
+    self.assertIn("Rollback 'undo' skipped", passport.stamps[-1].message)
+    self.assertNotIn("rollback", _EVENTS)
+    _RELEASE.set()
+
+  def test_two_gates_park_independently_and_list_agrees_with_status(
+      self,
+  ) -> None:
+    manifest = self._write(
+        "two_gates.yaml",
+        f"""
+name: two_gates
+actions:
+  - id: ok
+    python_import: {__name__}.act_ok
+  - id: boom
+    python_import: {__name__}.act_boom
+stages:
+  - name: gate_a
+    operator_action: {{instructions: "'a?'"}}
+  - name: gate_b
+    operator_action: {{instructions: "'b?'"}}
+  - name: after_a
+    run_after: [gate_a]
+    python_action: {{action_id: ok}}
+  - name: boom
+    python_action: {{action_id: boom}}
+""",
+    )
+    cli = lib.LightflowRunnerCLI()
+    # Failure outranks both open gates: exit 1, footer names the gates.
+    with self.assertRaises(lib.LightflowRunFailedError):
+      cli.start(lightflow=manifest, log_id="two_gates")
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+      with self.assertRaises(lib.LightflowRunFailedError):
+        cli.status(log_id="two_gates")
+    self.assertIn("(log ID: two_gates): FAILED", out.getvalue())
+    self.assertIn("Paused at operator action 'gate_a'", out.getvalue())
+    self.assertIn("Paused at operator action 'gate_b'", out.getvalue())
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+      cli.list()
+    self.assertIn("FAILED", out.getvalue())  # `list` agrees with `status`
+    # Answering one gate runs its dependents and leaves the other parked;
+    # with the failure still there the run stays exit 1.
+    with self.assertRaises(lib.LightflowRunFailedError):
+      cli.resume(log_id="two_gates", stage="gate_a", resolution="APPROVE")
+    passport = lib.PassportManager("two_gates").load_passport()
+    assert passport is not None
+    latest = {st.stage_name: st.status for st in passport.stamps}
+    self.assertEqual(latest["after_a"], schema.StampStatus.COMPLETED)
+    self.assertEqual(latest["gate_b"], schema.StampStatus.PAUSED)
+
+  # --- engine: import-time errors are configuration errors, not transient ---
+
+  def _import_error_manifest(self, module_text: str) -> str:
+    self._write("broken_acts.py", module_text)
+    return self._write(
+        "broken.yaml",
+        """
+name: broken_wf
+actions:
+  - id: go
+    python_import: broken_acts.go
+stages:
+  - name: only
+    python_action:
+      action_id: go
+    retry_policy: {max_attempts: 3, initial_backoff_seconds: 1}
+""",
+    )
+
+  def test_syntax_error_in_action_module_fails_without_retry(self) -> None:
+    # Issue #18a: a SyntaxError can never succeed on retry; with 3 attempts
+    # and 1s backoff a retry would take >= 2s.
+    manifest = self._import_error_manifest("def go(payload)\n  return {}\n")
+    cli = lib.LightflowRunnerCLI()
+    sys.modules.pop("broken_acts", None)
+    t0 = time.monotonic()
+    with self.assertRaises(lib.LightflowRunFailedError):
+      cli.start(lightflow=manifest, log_id="syntax_run")
+    self.assertLess(time.monotonic() - t0, 1.5)
+    passport = lib.PassportManager("syntax_run").load_passport()
+    assert passport is not None
+    stamp = passport.stamps[-1]
+    self.assertIn("SyntaxError", stamp.message)
+    self.assertIn("not retried", stamp.message)
+
+  def test_missing_dependency_is_named_not_blamed_on_manifest_path(
+      self,
+  ) -> None:
+    # Issue #18b: the action module exists but imports an uninstalled package.
+    manifest = self._import_error_manifest(
+        "import requestz_not_installed\ndef go(payload):\n  return {}\n"
+    )
+    cli = lib.LightflowRunnerCLI()
+    sys.modules.pop("broken_acts", None)
+    with self.assertRaises(lib.LightflowRunFailedError):
+      cli.start(lightflow=manifest, log_id="dep_run")
+    passport = lib.PassportManager("dep_run").load_passport()
+    assert passport is not None
+    msg = passport.stamps[-1].message
+    self.assertIn("imports 'requestz_not_installed'", msg)
+    self.assertNotIn("if the manifest moved", msg)
 
   def test_cascade_false_rearms_only_target_while_default_cascades(
       self,
@@ -709,9 +1037,7 @@ stages:
     runner_eng = engine.LightflowEngine(wf)
     p_timeout = runner_eng.execute_stage("build-api", schema.Passport())
     self.assertIn("exceeded timeout_seconds=1", p_timeout.stamps[-1].message)
-    self.assertIn(
-        "worker thread may keep running", p_timeout.stamps[-1].message
-    )
+    self.assertIn("worker thread keeps running", p_timeout.stamps[-1].message)
 
 
 if __name__ == "__main__":

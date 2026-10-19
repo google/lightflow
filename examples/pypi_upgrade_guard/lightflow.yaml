@@ -27,7 +27,7 @@ stages:
       - audit_pypi_versions
     operator_action:
       instructions: >-
-        'PyPI audit found ' + string(payload.outputs.audit_pypi_versions.upgrade_count) + ' upgrade(s): ' + payload.outputs.audit_pypi_versions.summary + '. Approve applying upgrades?'
+        payload.outputs.audit_pypi_versions.source_note + 'PyPI audit found ' + string(payload.outputs.audit_pypi_versions.upgrade_count) + ' upgrade(s): ' + payload.outputs.audit_pypi_versions.summary + '. Approve applying upgrades?'
       json_schema:
         type: object
         properties:

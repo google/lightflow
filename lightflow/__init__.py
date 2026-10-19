@@ -29,7 +29,7 @@ except ImportError:
   from lightflow import visualizer  # pyrefly: ignore[missing-import]
 # pylint: enable=g-import-not-at-top,g-bad-import-order
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 EngineError = engine.EngineError
 MissingFieldError = engine.MissingFieldError
@@ -63,6 +63,7 @@ ActionDefinition = schema.ActionDefinition
 Passport = schema.Passport
 Stamp = schema.Stamp
 TriggerRule = schema.TriggerRule
+StampReason = schema.StampReason
 StampStatus = schema.StampStatus
 Resolution = schema.Resolution
 load_lightflow = schema.load_lightflow
@@ -101,6 +102,7 @@ __all__ = [
     "Stage",
     "StageTimeoutError",
     "Stamp",
+    "StampReason",
     "StampStatus",
     "TriggerRule",
     "evaluate_cel",

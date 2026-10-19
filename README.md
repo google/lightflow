@@ -254,7 +254,7 @@ stages:
 | `run_after` | Upstream stage names that must finish before this stage evaluates. |
 | `run_if` | CEL-like expression evaluated against `payload`; stage is stamped `SKIPPED` if `false`. With top-level `strict_expressions: true`, selecting an absent key fails the stage instead of yielding `null`, naming the key and the closest match (guard optional keys with `has()`). |
 | `trigger_rule` | `ALL_SUCCESS` (default), `NONE_FAILED` (runs once upstreams finished and none failed — the join after complementary `run_if` branches), or `ALL_DONE` (runs even after an upstream failure; cleanup stages). |
-| `timeout_seconds` | Bounds each attempt (`0`–`86400`s; `0` disables the bound) using a background worker thread (shown in `dry_run`). |
+| `timeout_seconds` | Bounds how long the engine waits for each attempt (`0`–`86400`s; `0` disables the bound). A timeout does not cancel the action: it keeps running in a background thread, so pass explicit timeouts to the action's own I/O clients. A retry is started only if the timed-out attempt finishes during the backoff, and `rollback_action` waits up to one more `timeout_seconds` for it before running; otherwise the stage fails with an explicit "not retried" / "rollback skipped" note. |
 | `retry_policy` | Opt-in retry (`max_attempts`, `initial_backoff_seconds`, `backoff_multiplier`) with ±10% jitter for exceptions and timeouts. |
 | `polling_policy` | Polls `poll_tick_action` (mutually exclusive with `python_action`) until `condition` evaluates to `true` (`interval_seconds`, `timeout_seconds`, `max_attempts`); each tick's dict is merged into `payload.outputs.<stage>` before `condition` runs, and tick messages are persisted to `passport.json`. |
 | `rollback_action` | Compensating `python_action` invoked automatically after a stage exhausts its retries; its output delta is merged into `payload`. |
@@ -344,7 +344,7 @@ When a stage fails:
 |:--------|:-----------------------------|:------------------------------|
 | `0` | Workflow completed (or was already completed). | Done. |
 | `1` | Stage failure, compile error, or a payload that fails the gate schema. | Inspect `lightflow status`, fix the cause, and run `lightflow resume`. |
-| `2` | Suspended at an `operator_action` gate awaiting human/agent input. | Run `lightflow resume --stage=<name> --resolution=APPROVE --payload='{...}'`. |
+| `2` | Suspended at an `operator_action` gate awaiting human/agent input. | Run `lightflow resume --stage=<name> --resolution=APPROVE --payload='{...}'`. A paused gate parks only its own dependents: independent branches keep running first, several gates can be open at once, and the briefing (and `status`) lists each with its resume command. A decided failure in the same run exits `1` instead and names the open gates. |
 | `3` | No saved state for the log ID (`status`, `resume`). | Check the log ID (`lightflow list`), or `start`. |
 | `4` | Another process holds the run's lock (`start`, `resume`, `cleanup`, `status`). | Wait, then check `status` again. |
 | `5` | Waiting: a `polling_policy` stage yielded (timeout / max attempts) before its condition was met. Nothing is broken; downstream stages are not touched. | Once the external condition holds, run `lightflow resume`. |

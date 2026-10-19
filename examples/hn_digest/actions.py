@@ -91,9 +91,12 @@ def fetch_top_stories(
               "score": int(item.get("score") or 0),
               "by": str(item.get("by") or "unknown"),
           })
-    except (urllib.error.URLError, TimeoutError, OSError, ValueError):
-      stories = list(_FALLBACK_STORIES[:max_items])
-      source = "offline_fallback"
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError) as e:
+      raise RuntimeError(
+          f"Live fetch failed: {e}. Fix connectivity (retry_policy"
+          " applies), or pass --payload='{\"offline\": true}' to use the"
+          " bundled fixture."
+      ) from e
   else:
     stories = list(_FALLBACK_STORIES[:max_items])
     source = (
@@ -101,8 +104,7 @@ def fetch_top_stories(
     )
 
   if not stories:
-    stories = list(_FALLBACK_STORIES[:max_items])
-    source = "offline_fallback"
+    raise RuntimeError("Hacker News returned no stories.")
 
   top = stories[0]
   return (
@@ -112,6 +114,7 @@ def fetch_top_stories(
           "top_title": top["title"],
           "top_score": top["score"],
           "source": source,
+          "source_note": "" if source == "live_api" else "[OFFLINE FIXTURE] ",
       },
       (
           f"Fetched {len(stories)} HN stories via {source}"

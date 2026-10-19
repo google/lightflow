@@ -610,13 +610,28 @@ stages:
     digest_out = os.path.join(self.temp_dir, "hn_digest.md")
     hn_buf = io.StringIO()
     with contextlib.redirect_stdout(hn_buf):
-      with self.assertRaises(engine.OperatorActionSuspended):
+      with self.assertRaises(engine.OperatorActionSuspended) as gate:
         cli.start(
             lightflow=hn_wf,
             log_id="hn_test_run",
             payload={"offline": True, "limit": 2},
         )
     self.assertIn("via offline_fixture", hn_buf.getvalue())
+    # Issue #16: the approver is told the numbers come from a fixture, and
+    # without `offline` a dead network is a failure, not silent sample data.
+    self.assertIn(
+        "[OFFLINE FIXTURE] Fetched 2 Hacker News", str(gate.exception)
+    )
+    with mock.patch(
+        "urllib.request.urlopen", side_effect=OSError("network down")
+    ):
+      with self.assertRaises(lib.LightflowRunFailedError):
+        cli.start(lightflow=hn_wf, log_id="hn_live_fail", payload={"limit": 2})
+    failed = lib.PassportManager("hn_live_fail").load_passport()
+    assert failed is not None
+    fetch = [s for s in failed.stamps if s.stage_name == "fetch_top_stories"]
+    self.assertIn("Live fetch failed", fetch[-1].message)
+    self.assertIn('"offline": true', fetch[-1].message)
     cli.resume(
         lightflow=hn_wf,
         log_id="hn_test_run",
@@ -2702,7 +2717,7 @@ stages:
     msg = pp.stamps[-1].message
     self.assertEqual(pp.stamps[-1].status, schema.StampStatus.FAILED)
     self.assertIn("exceeded timeout_seconds=1", msg)
-    self.assertIn("worker thread may keep running", msg)
+    self.assertIn("worker thread keeps running", msg)
     self.assertNotIn("Engine error:", msg)
 
 

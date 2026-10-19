@@ -28,7 +28,7 @@ stages:
     run_if: "payload.outputs.fetch_usgs_feed.event_count > 0"
     operator_action:
       instructions: >-
-        'USGS reported ' + string(payload.outputs.fetch_usgs_feed.event_count) + ' M4.5+ event(s). Strongest: M' + string(payload.outputs.fetch_usgs_feed.max_magnitude) + ' at ' + payload.outputs.fetch_usgs_feed.strongest_place + '. Approve bulletin dispatch?'
+        payload.outputs.fetch_usgs_feed.source_note + 'USGS reported ' + string(payload.outputs.fetch_usgs_feed.event_count) + ' M4.5+ event(s). Strongest: M' + string(payload.outputs.fetch_usgs_feed.max_magnitude) + ' at ' + payload.outputs.fetch_usgs_feed.strongest_place + '. Approve bulletin dispatch?'
       json_schema:
         type: object
         required:

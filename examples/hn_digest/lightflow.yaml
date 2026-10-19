@@ -28,7 +28,7 @@ stages:
       - fetch_top_stories
     operator_action:
       instructions: >-
-        'Fetched ' + string(payload.outputs.fetch_top_stories.count) + ' Hacker News stories (Top: "' + payload.outputs.fetch_top_stories.top_title + '" [' + string(payload.outputs.fetch_top_stories.top_score) + ' pts]). Approve publishing digest and attach an optional editor_note:'
+        payload.outputs.fetch_top_stories.source_note + 'Fetched ' + string(payload.outputs.fetch_top_stories.count) + ' Hacker News stories (Top: "' + payload.outputs.fetch_top_stories.top_title + '" [' + string(payload.outputs.fetch_top_stories.top_score) + ' pts]). Approve publishing digest and attach an optional editor_note:'
       json_schema:
         type: object
         properties:

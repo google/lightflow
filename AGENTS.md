@@ -40,9 +40,10 @@ lightflow resume --log_id=my_run \
     `examples/create_lightflow` in your clone: `lightflow start
     --lightflow=/path/to/lightflow/examples/create_lightflow
     --log_id=scaffold_<name>`.
--   **Never bypass an `operator_action` gate**: If a workflow exits with code
-    `2` (`SUSPENDED`), always surface the stage's `instructions` to the human
-    operator and await their decision before invoking `resume`.
+-   **Follow `operator_action` gates**: If a workflow exits with code `2`
+    (`SUSPENDED`), follow the stage's `instructions`, then `resume` with a
+    payload matching its `json_schema`. The resume stamp records who decided and
+    from which session.
 -   **Prefer `resume` over `start --force` after failures**: Lightflow's
     append-only `Passport` preserves completed stages so side effects are never
     duplicated. Fix the failing action and call `resume`.

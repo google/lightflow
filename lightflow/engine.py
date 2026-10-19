@@ -118,6 +118,14 @@ UPSTREAM_FAILED_MESSAGE = "Failed: Upstream dependency failed."
 # it as WAITING rather than as a failure to fix.
 POLL_YIELD_MARKER = "Yielding control back to operator/agent"
 
+
+def _announce_failure(stage_name: str, message: str) -> None:
+  """Prints a stage failure when it happens; the footer summarises it later."""
+  lines = (message or "").strip().splitlines()
+  print(f"  ❌ [{stage_name}] {lines[0] if lines else 'failed'}", flush=True)
+  send_notification(f"Stage Failed: {stage_name}", f"❌ {stage_name}: failed")
+
+
 # Terminal statuses a trigger rule can assign without running the stage, and the
 # icon announced for each. Any other status (e.g. STATUS_UNSPECIFIED while
 # parents are still running) is not a lifecycle transition and is not announced.
@@ -1122,6 +1130,22 @@ class LightflowEngine:
     try:
       module = importlib.import_module(module_path)
     except ModuleNotFoundError as e:
+      missing = e.name or ""
+      # The action module itself (or one of its parent packages) is missing
+      # vs. the action module imports something that is not installed. The
+      # two have different fixes, so name the right one.
+      is_action_module = (
+          not missing
+          or missing == module_path
+          or module_path.startswith(missing + ".")
+      )
+      if not is_action_module:
+        raise EngineError(
+            f"Action module '{module_path}' (action '{action_id}') imports"
+            f" '{missing}', which is not installed in this Python environment"
+            f" ({sys.executable}). Install it, or guard the import. Import"
+            " errors are not retried."
+        ) from e
       looked = (
           os.path.dirname(os.path.abspath(self.lightflow_path))
           if self.lightflow_path
@@ -1133,15 +1157,29 @@ class LightflowEngine:
           f" directory ({looked}) and sys.path; if the manifest moved, move"
           " its actions module with it (or set PYTHONPATH)."
       ) from e
+    except Exception as e:  # pylint: disable=broad-exception-caught
+      # SyntaxError, ImportError ("cannot import name"), or any exception the
+      # module raises at import time. None of these can succeed on retry.
+      raise EngineError(
+          f"Cannot import '{python_import}' for action '{action_id}':"
+          f" {type(e).__name__}: {e}. Import errors are not retried."
+      ) from e
     mod_file = getattr(module, "__file__", None)
     if mod_file and os.path.isfile(mod_file):
       real_mod_file = os.path.realpath(mod_file)
       fp = _file_fingerprint(real_mod_file)
       if fp is not None:
         _LOADED_MODULE_HASHES[real_mod_file] = fp
-    func = getattr(module, func_name)
+    func = getattr(module, func_name, None)
+    if func is None:
+      raise EngineError(
+          f"Module '{module_path}' has no attribute '{func_name}' (action"
+          f" '{action_id}')."
+      )
     if not callable(func):
-      raise TypeError(f"Object '{func_name}' is not callable.")
+      raise EngineError(
+          f"'{python_import}' for action '{action_id}' is not a callable."
+      )
     return func
 
   def _execute_action(
@@ -1244,12 +1282,13 @@ class LightflowEngine:
     worker.start()
     worker.join(timeout=timeout)
     if worker.is_alive():
-      raise StageTimeoutError(
+      err = StageTimeoutError(
           f"Stage '{stage_name}' exceeded timeout_seconds={timeout}. ⚠️ Its"
-          " worker thread may keep running until the process exits and its"
-          " side effects are not rolled back automatically; make the action"
-          " idempotent before retrying."
+          " worker thread keeps running until the process exits; a retry or"
+          " rollback is only attempted once it has finished."
       )
+      err.worker = worker
+      raise err
     try:
       success, res = result_queue.get_nowait()
     except queue.Empty as e:
@@ -1267,12 +1306,32 @@ class LightflowEngine:
       passport: schema.Passport,
       payload_dict: dict[str, Any],
       failed_stamp: schema.Stamp,
+      live_workers: Collection[Any] = (),
   ) -> None:
     """Runs rollback_action if defined on the stage configuration."""
     if not stage.HasField("rollback_action") or not stage.rollback_action:
       return
 
     action_id = stage.rollback_action.action_id
+    # A timed-out attempt may still be finishing; give it the same budget it
+    # had before rolling back, rather than racing it or waiting forever.
+    grace = (
+        stage.timeout_seconds if stage.HasField("timeout_seconds") else None
+    ) or 0
+    deadline = time.monotonic() + grace
+    for w in live_workers:
+      w.join(timeout=max(0.0, deadline - time.monotonic()))
+    if any(w.is_alive() for w in live_workers):
+      note = (
+          f"Rollback '{action_id}' skipped: a timed-out attempt is still"
+          " running and rolling back now could race it. Verify by hand."
+      )
+      failed_stamp.message += f"\n{note}"
+      print(f"  ⚠️ {note}")
+      send_notification(
+          f"Rollback Skipped: {stage_name}", f"⚠️ {stage_name}: {note}"
+      )
+      return
     print(
         f"  Stage '{stage_name}' failed. Executing rollback action"
         f" '{action_id}'..."
@@ -1425,6 +1484,8 @@ class LightflowEngine:
       stamp.status = target_status
       stamp.timestamp.CopyFrom(get_timestamp())
       stamp.message = reason
+      if reason == UPSTREAM_FAILED_MESSAGE:
+        stamp.reason = schema.Stamp.UPSTREAM_FAILED
 
       if target_status == schema.StampStatus.PAUSED:
         raise OperatorActionSuspended(reason)
@@ -1468,10 +1529,7 @@ class LightflowEngine:
         failed_stamp.message = (
             f"Condition evaluation failed: {e}\n{traceback.format_exc()}"
         )
-        send_notification(
-            f"Stage Failed: {stage_name}",
-            f"❌ {stage_name}: failed",
-        )
+        _announce_failure(stage_name, failed_stamp.message)
         return passport
 
       if not should_run:
@@ -1569,12 +1627,15 @@ class LightflowEngine:
           failed_stamp.message = (
               f"Polling tick failed: {e}\n{traceback.format_exc()}"
           )
-          send_notification(
-              f"Stage Failed: {stage_name}",
-              f"❌ {stage_name}: failed",
-          )
+          _announce_failure(stage_name, failed_stamp.message)
+          tick_worker = getattr(e, "worker", None)
           self.run_rollback_if_defined(
-              stage_name, stage, passport, payload_dict, failed_stamp
+              stage_name,
+              stage,
+              passport,
+              payload_dict,
+              failed_stamp,
+              live_workers=[tick_worker] if tick_worker else [],
           )
           return passport
 
@@ -1590,10 +1651,7 @@ class LightflowEngine:
           failed_stamp.message = (
               f"Condition evaluation failed: {e}\n{traceback.format_exc()}"
           )
-          send_notification(
-              f"Stage Failed: {stage_name}",
-              f"❌ {stage_name}: failed",
-          )
+          _announce_failure(stage_name, failed_stamp.message)
           self.run_rollback_if_defined(
               stage_name, stage, passport, payload_dict, failed_stamp
           )
@@ -1650,6 +1708,7 @@ class LightflowEngine:
           failed_stamp.status = schema.StampStatus.FAILED
           failed_stamp.timestamp.CopyFrom(get_timestamp())
           failed_stamp.message = err_msg
+          failed_stamp.reason = schema.Stamp.POLL_YIELD
 
           print(f"  ⏳ [{stage_name}] {err_msg}", flush=True)
           send_notification(
@@ -1678,6 +1737,7 @@ class LightflowEngine:
       )
       current_backoff = float(initial_backoff)
       attempts = 0
+      live_workers: list[Any] = []
 
       while True:
         attempts += 1
@@ -1713,19 +1773,26 @@ class LightflowEngine:
           )
           return passport
         except EngineError as e:
+          if isinstance(e, StageTimeoutError) and e.worker is not None:
+            live_workers.append(e.worker)
           if attempts < max_attempts and isinstance(e, StageTimeoutError):
             sleep_time = min(current_backoff, 300.0)
             jitter = random.uniform(0.9, 1.1)
             actual_sleep = sleep_time * jitter
-            print(
-                f"  Attempt {attempts} timed out for stage '{stage_name}': {e}."
-                f" Retrying in {actual_sleep:.1f}s (capped backoff:"
-                f" {sleep_time:.1f}s, backoff multiplier"
-                f" {backoff_multiplier})..."
-            )
-            time.sleep(actual_sleep)
-            current_backoff = min(current_backoff * backoff_multiplier, 300.0)
-            continue
+            # Spend the backoff letting the timed-out attempt finish; a new
+            # attempt never overlaps one that is still running.
+            deadline = time.monotonic() + actual_sleep
+            for w in live_workers:
+              w.join(timeout=max(0.0, deadline - time.monotonic()))
+            if not any(w.is_alive() for w in live_workers):
+              print(
+                  f"  Attempt {attempts} timed out for stage '{stage_name}':"
+                  f" {e}. Retrying (capped backoff: {sleep_time:.1f}s, backoff"
+                  f" multiplier {backoff_multiplier})..."
+              )
+              time.sleep(max(0.0, deadline - time.monotonic()))
+              current_backoff = min(current_backoff * backoff_multiplier, 300.0)
+              continue
 
           failed_stamp = passport.stamps.add()
           failed_stamp.stage_name = stage_name
@@ -1736,13 +1803,20 @@ class LightflowEngine:
               if isinstance(e, StageTimeoutError)
               else f"Engine error: {e}"
           )
+          if attempts < max_attempts and isinstance(e, StageTimeoutError):
+            failed_stamp.message += (
+                " Not retried: that attempt was still running when the"
+                " backoff ended, and a second one would overlap it."
+            )
 
-          send_notification(
-              f"Stage Failed: {stage_name}",
-              f"❌ {stage_name}: failed",
-          )
+          _announce_failure(stage_name, failed_stamp.message)
           self.run_rollback_if_defined(
-              stage_name, stage, passport, payload_dict, failed_stamp
+              stage_name,
+              stage,
+              passport,
+              payload_dict,
+              failed_stamp,
+              live_workers=live_workers,
           )
           raise
         except Exception as e:  # pylint: disable=broad-exception-caught
@@ -1757,10 +1831,7 @@ class LightflowEngine:
                 f" {e}\n{traceback.format_exc()}"
             )
 
-            send_notification(
-                f"Stage Failed: {stage_name}",
-                f"❌ {stage_name}: failed",
-            )
+            _announce_failure(stage_name, failed_stamp.message)
             self.run_rollback_if_defined(
                 stage_name, stage, passport, payload_dict, failed_stamp
             )
@@ -1804,10 +1875,7 @@ class LightflowEngine:
             f" {e}\n{traceback.format_exc()}"
         )
 
-        send_notification(
-            f"Stage Failed: {stage_name}",
-            f"❌ {stage_name}: failed",
-        )
+        _announce_failure(stage_name, failed_stamp.message)
         return passport
 
       resume_command = self.build_resume_command(stage_name, operator_action)
@@ -1821,27 +1889,14 @@ class LightflowEngine:
       paused_stamp.instructions = instructions
       paused_stamp.resume_command = resume_command
 
-      briefing = ""
-      if operator_action.json_schema:
-        briefing += f"\n\nPayload Schema:\n{operator_action.json_schema}"
-      if resume_command:
-        briefing += f"\n\nResume with:\n{resume_command}"
-        briefing += f"\n  {resume_note(operator_action.json_schema)}"
-      briefing += (
-          "\n\nOperator Action Required:\n"
-          "STOP and present the Instructions and Payload Schema above to the"
-          " human operator/user. Do NOT self-approve or run 'resume' until the"
-          " operator provides their explicit decision."
-      )
-
       send_notification(
           f"Operator Action Suspended: {stage_name}",
           f"⏸️ {stage_name}: suspended",
       )
 
       raise OperatorActionSuspended(
-          f"Lightflow execution suspended at operator action '{stage_name}'."
-          f"\n\nInstructions: {instructions}{briefing}"
+          self.gate_briefing(stage_name, instructions, resume_command)
+          + GATE_FOOTER
       )
 
     else:
@@ -1852,8 +1907,29 @@ class LightflowEngine:
       failed_stamp.timestamp.CopyFrom(get_timestamp())
       failed_stamp.message = err_msg
 
-      send_notification(
-          f"Stage Failed: {stage_name}",
-          f"❌ {stage_name}: failed",
-      )
+      _announce_failure(stage_name, failed_stamp.message)
       raise EngineError(err_msg)
+
+  def gate_briefing(
+      self, stage_name: str, instructions: str, resume_command: str
+  ) -> str:
+    """Renders what an operator needs to resolve a paused gate."""
+    stage = self.get_stage(stage_name)
+    action = stage.operator_action if stage else None
+    json_schema = action.json_schema if action else ""
+    briefing = (
+        f"Lightflow execution suspended at operator action '{stage_name}'."
+        f"\n\nInstructions: {instructions}"
+    )
+    if json_schema:
+      briefing += f"\n\nPayload Schema:\n{json_schema}"
+    if resume_command:
+      briefing += f"\n\nResume with:\n{resume_command}"
+      briefing += f"\n  {resume_note(json_schema)}"
+    return briefing
+
+
+GATE_FOOTER = (
+    "\n\nOperator action: follow the Instructions above, then resume with a"
+    " payload matching the Payload Schema."
+)

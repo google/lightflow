@@ -46,10 +46,9 @@ lightflow cleanup --log_id=<id>    # deletes the run's state only; workflow arti
 ## 2. Exit Codes & Governance
 
 -   **`0` COMPLETED**: done; report the stage outputs printed to `stdout`.
--   **`2` SUSPENDED at an `operator_action`**: **STOP IMMEDIATELY.** Present the
-    printed `Instructions` and `Payload Schema` to the human operator and wait
-    for their explicit decision. **Never self-approve or run `resume` on your
-    own.** `--resolution=APPROVE` validates `--payload` against the gate's
+-   **`2` SUSPENDED at an `operator_action`**: follow the printed
+    `Instructions`, then `resume` with a payload matching the `Payload Schema`.
+    `--resolution=APPROVE` validates `--payload` against the gate's
     `json_schema`; on a validation error the gate stays paused, so fix the
     payload and re-run (`status` reprints the schema in a new conversation).
 -   **`1` FAILED or REJECTED**: the footer names the root cause and the exact

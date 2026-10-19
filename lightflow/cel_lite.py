@@ -38,7 +38,13 @@ class EngineError(Exception):
 
 
 class StageTimeoutError(EngineError):
-  """Raised when a stage execution exceeds its configured timeout."""
+  """Raised when a stage execution exceeds its configured timeout.
+
+  `worker` is the abandoned thread (threads cannot be cancelled); the engine
+  consults it so a retry or rollback never overlaps an attempt still running.
+  """
+
+  worker: Any = None
 
 
 class MissingFieldError(EngineError):

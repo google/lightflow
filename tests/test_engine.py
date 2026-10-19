@@ -426,8 +426,9 @@ stages:
     with self.assertRaises(engine.OperatorActionSuspended) as ctx:
       eng.execute_stage("review_gate", passport)
     self.assertIn("Please approve 42 rows", str(ctx.exception))
-    self.assertIn("Operator Action Required:", str(ctx.exception))
-    self.assertIn("Do NOT self-approve", str(ctx.exception))
+    self.assertIn(
+        "Operator action: follow the Instructions", str(ctx.exception)
+    )
     self.assertEqual(passport.stamps[-1].status, schema.StampStatus.PAUSED)
     self.assertIn("resume", passport.stamps[-1].resume_command)
     # The schema lists `approved` under `required` but the resume command

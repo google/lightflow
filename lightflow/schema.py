@@ -163,6 +163,35 @@ class StampStatus(enum.IntEnum):
     return cls.STATUS_UNSPECIFIED
 
 
+class StampReason(enum.IntEnum):
+  """Why a FAILED stamp was written when the stage's own action did not fail."""
+
+  REASON_UNSPECIFIED = 0
+  REJECTED = 1  # An operator declined the gate
+  UPSTREAM_FAILED = 2  # Never ran: a dependency failed or was rejected
+  POLL_YIELD = 3  # A polling stage gave control back; not broken
+
+  @classmethod
+  def Name(cls, val: int | str) -> str:  # pylint: disable=invalid-name
+    if isinstance(val, str):
+      return val.upper()
+    return cls(val).name
+
+  @classmethod
+  def from_value(cls, val: Any) -> StampReason:
+    if isinstance(val, StampReason):
+      return val
+    if isinstance(val, int) and not isinstance(val, bool):
+      return cls(val)
+    if isinstance(val, str):
+      norm = val.strip().upper()
+      if norm in cls.__members__:
+        return cls[norm]
+      if norm.isdigit():
+        return cls(int(norm))
+    return cls.REASON_UNSPECIFIED
+
+
 class Resolution(enum.IntEnum):
   """Operator action resolution outcome."""
 
@@ -673,6 +702,11 @@ class Stamp:
   SKIPPED = StampStatus.SKIPPED
   FAILED = StampStatus.FAILED
   PAUSED = StampStatus.PAUSED
+  Reason = StampReason  # Class-level alias for Protobuf compatibility
+  REASON_UNSPECIFIED = StampReason.REASON_UNSPECIFIED
+  REJECTED = StampReason.REJECTED
+  UPSTREAM_FAILED = StampReason.UPSTREAM_FAILED
+  POLL_YIELD = StampReason.POLL_YIELD
 
   stage_name: str = ""
   status: StampStatus = StampStatus.STATUS_UNSPECIFIED
@@ -680,6 +714,7 @@ class Stamp:
   message: str = ""
   instructions: str = ""
   resume_command: str = ""
+  reason: StampReason = StampReason.REASON_UNSPECIFIED
 
   def to_dict(self) -> dict[str, Any]:
     res: dict[str, Any] = {
@@ -693,6 +728,8 @@ class Stamp:
       res["instructions"] = self.instructions
     if self.resume_command:
       res["resume_command"] = self.resume_command
+    if self.reason:
+      res["reason"] = StampReason.Name(self.reason)
     return res
 
   @classmethod
@@ -706,6 +743,9 @@ class Stamp:
         message=str(data.get("message", "")),
         instructions=str(data.get("instructions", "")),
         resume_command=str(data.get("resume_command", "")),
+        reason=StampReason.from_value(
+            data.get("reason", StampReason.REASON_UNSPECIFIED)
+        ),
     )
 
 

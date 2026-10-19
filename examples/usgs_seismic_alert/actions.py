@@ -74,9 +74,12 @@ def fetch_usgs_feed(
         })
       events.sort(key=lambda e: e["magnitude"], reverse=True)
       events = events[:max_items]
-    except (urllib.error.URLError, TimeoutError, OSError, ValueError):
-      events = list(_FALLBACK_EVENTS[:max_items])
-      source = "offline_fallback"
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError) as e:
+      raise RuntimeError(
+          f"Live fetch failed: {e}. Fix connectivity (retry_policy"
+          " applies), or pass --payload='{\"offline\": true}' to use the"
+          " bundled fixture."
+      ) from e
   else:
     events = list(_FALLBACK_EVENTS[:max_items])
     source = (
@@ -99,6 +102,9 @@ def fetch_usgs_feed(
           "max_magnitude": strongest["magnitude"],
           "strongest_place": strongest["place"],
           "source": source,
+          "source_note": (
+              "" if source == "live_usgs_geojson" else "[OFFLINE FIXTURE] "
+          ),
       },
       (
           f"Fetched {len(events)} M4.5+ seismic event(s) via {source}"

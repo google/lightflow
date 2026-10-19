@@ -111,10 +111,9 @@ class LightflowRunnerCLI:
       --payload=@file.json | --payload_file=<file.json>] [--dry_run]:
       Starts a new run (or previews the DAG trace with --dry_run).
       * Exit 0: Completed all stages.
-      * Exit 2 (SUSPENDED): Paused at an `operator_action` human-in-the-loop
-        checkpoint. STOP and present the printed Instructions and Payload Schema
-        to the human operator/user. Do NOT self-approve or run `resume` until
-        the operator provides their explicit decision.
+      * Exit 2 (SUSPENDED): Paused at an `operator_action` checkpoint. Follow
+        the printed Instructions, then `resume` with a payload matching the
+        Payload Schema.
       * Exit 5 (WAITING): A polling stage yielded before its external
         condition was met. Nothing to fix; run `resume` once it is.
       * Exit 1 (FAILED): A stage failed. Fix the root cause and run `resume`
@@ -338,8 +337,17 @@ class LightflowRunnerCLI:
       raise ValueError("Missing required '--log_id' run identifier.")
     pm = PassportManager(log_id)
 
+    # `operator` is who decided (recorded in the payload); `actor` is the full
+    # audit identity for stamp messages, keeping the session that made the
+    # call visible when an operator is supplied explicitly.
+    session = _current_operator()
+    actor = (
+        f"{operator} (via {session})"
+        if operator and operator != session
+        else session
+    )
     if not operator:
-      operator = _current_operator()
+      operator = session
 
     resolution_given = resolution is not None and bool(str(resolution).strip())
     norm_resolution = (
@@ -384,9 +392,10 @@ class LightflowRunnerCLI:
         for stamp in passport.stamps:
           latest_stamp_for[stamp.stage_name] = stamp
         rejected_stamp = latest_stamp_for.get(stage)
-        if rejected_stamp is not None and (
-            rejected_stamp.message or ""
-        ).startswith(_REJECTED_PREFIX):
+        if (
+            rejected_stamp is not None
+            and effective_status_name(rejected_stamp) == "REJECTED"
+        ):
           decided = (
               bool(effective_payload and effective_payload not in ("{}", ""))
               or resolution_given
@@ -399,7 +408,7 @@ class LightflowRunnerCLI:
             reopened.stage_name = stage
             reopened.status = schema.StampStatus.PAUSED
             reopened.timestamp.CopyFrom(engine.get_timestamp())
-            reopened.message = f"Re-opened after rejection by {operator}."
+            reopened.message = f"Re-opened after rejection by {actor}."
             for prior in reversed(list(passport.stamps)):
               if (
                   prior.stage_name == stage
@@ -437,8 +446,7 @@ class LightflowRunnerCLI:
                 rearmed.status = schema.StampStatus.PENDING
                 rearmed.timestamp.CopyFrom(engine.get_timestamp())
                 rearmed.message = (
-                    f"Re-armed by {operator} after gate '{stage}' was"
-                    " re-opened."
+                    f"Re-armed by {actor} after gate '{stage}' was re-opened."
                 )
                 latest_status[dep] = schema.StampStatus.PENDING
             print(
@@ -464,6 +472,7 @@ class LightflowRunnerCLI:
             cascade,
             operator,
             payload=effective_payload,
+            actor=actor,
         )
         return
 
@@ -521,10 +530,11 @@ class LightflowRunnerCLI:
         failed_stamp.stage_name = stage
         failed_stamp.status = schema.StampStatus.FAILED
         failed_stamp.timestamp.CopyFrom(engine.get_timestamp())
-        reject_msg = f"{_REJECTED_PREFIX}{operator}."
+        reject_msg = f"{_REJECTED_PREFIX}{actor}."
         if comment:
           reject_msg += f" Reason: {comment}"
         failed_stamp.message = reject_msg
+        failed_stamp.reason = schema.Stamp.REJECTED
 
         stage_proto = runner.get_stage(stage)
         if stage_proto:
@@ -627,7 +637,7 @@ class LightflowRunnerCLI:
       stamp.stage_name = stage
       stamp.status = schema.StampStatus.COMPLETED
       stamp.timestamp.CopyFrom(engine.get_timestamp())
-      stamp_msg = f"Resumed and approved by {operator}."
+      stamp_msg = f"Resumed and approved by {actor}."
       if comment:
         stamp_msg += f" Note: {comment}"
       stamp.message = stamp_msg
@@ -639,7 +649,7 @@ class LightflowRunnerCLI:
 
       print(f"Resuming execution of lightflow starting at stage '{stage}'...")
       print(f"Passport: {pm.passport_file}")
-      _rearm_yielded_polls(ordered_stages, passport, operator)
+      _rearm_yielded_polls(ordered_stages, passport, actor)
       self._execute_engine_loop(runner, ordered_stages, passport, pm)
 
   def _resume_execution(
@@ -654,6 +664,8 @@ class LightflowRunnerCLI:
       cascade: bool,
       operator: str,
       payload: str | dict[str, Any] = "{}",
+      *,
+      actor: str = "",
   ) -> None:
     """Re-arms failed stages, then runs whatever is left of the graph."""
     del log_id
@@ -678,10 +690,13 @@ class LightflowRunnerCLI:
         for name, status in latest_status.items()
         if status == schema.StampStatus.PAUSED
     )
-    if paused:
+    if paused and not any(
+        status == schema.StampStatus.FAILED for status in latest_status.values()
+    ):
       raise LightflowAlreadyPausedError(
-          f"Lightflow is paused at operator action '{paused[0]}'. Answer it"
-          f" with 'resume --stage={paused[0]} --resolution=APPROVE|REJECT'."
+          f"Lightflow is paused at operator action(s) {', '.join(paused)}."
+          f" Answer with 'resume --stage={paused[0]}"
+          " --resolution=APPROVE|REJECT'."
       )
 
     if ordered_stages and all(
@@ -704,7 +719,7 @@ class LightflowRunnerCLI:
       )
 
     rearmed = self._rearm_failed_stages(
-        runner, ordered_stages, passport, stage, cascade, operator
+        runner, ordered_stages, passport, stage, cascade, actor or operator
     )
     if rearmed or extra_payload:
       payload_dict = engine.payload_to_dict(passport.payload)
@@ -783,9 +798,9 @@ class LightflowRunnerCLI:
       targets = [
           name
           for name in failed_stages
-          if not (latest_stamp[name].message or "").startswith(_REJECTED_PREFIX)
+          if effective_status_name(latest_stamp[name]) != "REJECTED"
           and (
-              latest_stamp[name].message != engine.UPSTREAM_FAILED_MESSAGE
+              effective_status_name(latest_stamp[name]) != "BLOCKED"
               or name not in blocked_by_failed_upstream
           )
       ]
@@ -951,14 +966,16 @@ class LightflowRunnerCLI:
         for s in ordered_stages
         if effective[s] not in ("COMPLETED", "SKIPPED")
     ]
+    # Same precedence as the run footer: a decided failure outranks an open
+    # gate, and an open gate outranks a polling yield.
     if running:
       state = "RUNNING"
-    elif paused:
-      state = "PAUSED"
     elif failed:
       state = "FAILED"
     elif rejected:
       state = "REJECTED"
+    elif paused:
+      state = "PAUSED"
     elif waiting:
       state = "WAITING"
     elif unfinished:
@@ -1242,12 +1259,18 @@ class LightflowRunnerCLI:
       LightflowRunFailedError: A stage failed or a gate was rejected (exit 1);
         the footer has already been printed (`already_reported`).
     """
+    # A gate that pauses is parked exactly like a polling yield: its
+    # dependents are shadowed and independent branches keep running, so one
+    # run surfaces every failure and every open gate, not just the first.
     waiting_shadow: set[str] = set()
-    for stamp in passport.stamps:
-      if _latest_stamp_is_poll_yield(passport, stamp.stage_name):
-        waiting_shadow.update(
-            runner.get_downstream_dependents(stamp.stage_name)
-        )
+    latest_status = {
+        stamp.stage_name: stamp.status for stamp in passport.stamps
+    }
+    for name, status in latest_status.items():
+      if status == schema.StampStatus.PAUSED or _latest_stamp_is_poll_yield(
+          passport, name
+      ):
+        waiting_shadow.update(runner.get_downstream_dependents(name))
     for stage_name in ordered_stages:
       latest_status = {
           stamp.stage_name: stamp.status for stamp in passport.stamps
@@ -1257,6 +1280,7 @@ class LightflowRunnerCLI:
           schema.StampStatus.COMPLETED,
           schema.StampStatus.SKIPPED,
           schema.StampStatus.FAILED,
+          schema.StampStatus.PAUSED,
       ):
         continue
 
@@ -1269,7 +1293,7 @@ class LightflowRunnerCLI:
           waiting_shadow.update(runner.get_downstream_dependents(stage_name))
       except engine.OperatorActionSuspended:
         pm.save_passport(passport)
-        raise
+        waiting_shadow.update(runner.get_downstream_dependents(stage_name))
       except (engine.StageTimeoutError, engine.EngineError) as err:
         # The engine stamps FAILED before raising; make sure of it, so the
         # footer and `status` never see an unfinished stage after an error.
@@ -1305,24 +1329,46 @@ class LightflowRunnerCLI:
     for s_name in ordered_stages:
       if latest_status.get(s_name) == schema.StampStatus.FAILED:
         failed_stages.append(s_name)
+    latest_stamp_by_stage = {
+        stamp.stage_name: stamp for stamp in passport.stamps
+    }
+
+    # Open gates win over polling yields, but a genuine failure or rejection
+    # wins over an open gate: the footer below then lists the gate too.
+    paused = [
+        s
+        for s in ordered_stages
+        if latest_status.get(s) == schema.StampStatus.PAUSED
+    ]
+    kinds = {
+        n: effective_status_name(latest_stamp_by_stage[n])
+        for n in failed_stages
+    }
+    yielded = [n for n in failed_stages if kinds[n] == "WAITING"]
+    rejected = [n for n in failed_stages if kinds[n] == "REJECTED"]
+    blocked = [n for n in failed_stages if kinds[n] == "BLOCKED"]
+    roots = [n for n in failed_stages if kinds[n] == "FAILED"]
+    if paused and not (roots or rejected):
+      briefing = "\n\n".join(
+          runner.gate_briefing(
+              n,
+              latest_stamp_by_stage[n].instructions,
+              latest_stamp_by_stage[n].resume_command,
+          )
+          for n in paused
+      )
+      if yielded:
+        briefing += (
+            "\n\n⏳ Also waiting on external condition(s):"
+            f" {', '.join(yielded)} (re-polled on resume)."
+        )
+      raise engine.OperatorActionSuspended(briefing + engine.GATE_FOOTER)
 
     if failed_stages:
-      latest_stamp_by_stage = {
-          stamp.stage_name: stamp for stamp in passport.stamps
-      }
-
       def _msg(name: str) -> str:
         stamp = latest_stamp_by_stage.get(name)
         return (stamp.message or "") if stamp else ""
 
-      kinds = {
-          n: effective_status_name(latest_stamp_by_stage[n])
-          for n in failed_stages
-      }
-      yielded = [n for n in failed_stages if kinds[n] == "WAITING"]
-      rejected = [n for n in failed_stages if kinds[n] == "REJECTED"]
-      blocked = [n for n in failed_stages if kinds[n] == "BLOCKED"]
-      roots = [n for n in failed_stages if kinds[n] == "FAILED"]
       resume_cmd = _continue_command(
           runner,
           pm.workflow_id,
@@ -1357,6 +1403,10 @@ class LightflowRunnerCLI:
             runner, passport, headline, is_failed=True
         )
         print(f"\n{headline}")
+        if paused:
+          print(
+              f"⏸️ Open gate(s), still awaiting a decision: {', '.join(paused)}"
+          )
         print(
             "Nothing to fix. To re-open the gate and decide again in one"
             f" call:\n  {resume_cmd} --stage={gate} --resolution=APPROVE"
@@ -1394,6 +1444,10 @@ class LightflowRunnerCLI:
         print(f"⏳ Waiting on external condition: {', '.join(yielded)}")
       if blocked:
         print(f"⛔ Blocked downstream (not run): {', '.join(blocked)}")
+      if paused:
+        print(
+            f"⏸️ Open gate(s), still awaiting a decision: {', '.join(paused)}"
+        )
       # A failure on an absent *top-level* key is usually a missing --payload
       # value rather than a code bug: say so, and put the key on the command.
       missing_seed_keys = _missing_top_level_keys_from_failures(
