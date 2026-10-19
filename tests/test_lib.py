@@ -44,11 +44,13 @@ try:
   from ..lightflow import lib
   from ..lightflow import runner as runner_mod
   from ..lightflow import schema
+  from ..lightflow import visualizer
 except (ImportError, ValueError):
   from lightflow import engine  # pyrefly: ignore[missing-import]
   from lightflow import lib  # pyrefly: ignore[missing-import]
   from lightflow import runner as runner_mod  # pyrefly: ignore[missing-import]
   from lightflow import schema  # pyrefly: ignore[missing-import]
+  from lightflow import visualizer  # pyrefly: ignore[missing-import]
 
 
 _EXEC_TRACE: list[str] = []
@@ -3269,6 +3271,49 @@ stages:
       lib.LightflowRunnerCLI().start(lightflow="nope.yaml", log_id="x")
     with self.assertRaisesRegex(ValueError, r"No such manifest: 'nope\.yaml'"):
       lib.LightflowRunnerCLI().dry_run(lightflow="nope.yaml")
+
+  def test_visualizer_defines_every_utility_class_it_uses(self):
+    # github.com/google/lightflow/issues/19: visualizer.html ships its own
+    # utility CSS subset; a class the markup uses but the subset lacks fails
+    # silently (invisible status dots, no stage rings). Keep them in sync.
+    html = visualizer._load_template()  # pylint: disable=protected-access
+    style_match = re.search(r"<style>(.*?)</style>", html, re.S)
+    assert style_match is not None
+    style = style_match.group(1)
+    defined = {
+        m.group(1).replace("\\", "")
+        for m in re.finditer(r"\.((?:\\.|[^\s,{:>.])+)", style)
+    }
+    utility = re.compile(
+        r"^(?:hover:|focus:|active:)?(?:bg|text|border|ring|p[xytblr]?|m[xytblr]?"
+        r"|w|h|min-w|max-w|min-h|max-h|gap|space-[xy]|rounded|shadow|font"
+        r"|leading|tracking|opacity|transition|duration|z-\d+|inset|whitespace"
+        r"|cursor|select|pointer-events|italic|antialiased|backdrop-blur"
+        r"|outline-none|animate|inline-block|truncate|uppercase|underline"
+        r"|placeholder|scale|translate)(?:-|$)"
+    )
+    # Every double-quoted string (HTML class attributes and JS class-name
+    # literals alike), filtered down to utility-shaped tokens.
+    used = set()
+    for m in re.finditer(r'"([^"\n]*)"', html):
+      used.update(t for t in m.group(1).split() if utility.match(t))
+    # Gradient stops are baked into .bg-gradient-to-tr; template placeholders
+    # are substituted at render time.
+    skip = {"from-sky-500", "to-indigo-500"}
+    svg_attrs = {"font-family", "font-size", "text", "text-anchor"}
+    missing = sorted(
+        t
+        for t in used
+        if utility.match(t)
+        and t not in defined
+        and t not in skip
+        and t not in svg_attrs
+        and "${" not in t
+        and "__" not in t
+    )
+    self.assertEqual(
+        missing, [], f"visualizer.html uses undefined CSS: {missing}"
+    )
 
   def test_visualize_infers_manifest_from_log_id(self):
     manifest = self._write(
