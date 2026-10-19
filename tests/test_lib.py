@@ -3279,36 +3279,38 @@ stages:
     html = visualizer._load_template()  # pylint: disable=protected-access
     style_match = re.search(r"<style>(.*?)</style>", html, re.S)
     assert style_match is not None
-    style = style_match.group(1)
     defined = {
         m.group(1).replace("\\", "")
-        for m in re.finditer(r"\.((?:\\.|[^\s,{:>.])+)", style)
+        for m in re.finditer(
+            r"\.([A-Za-z](?:\\.|[^\s,{:>.])*)", style_match.group(1)
+        )
     }
-    utility = re.compile(
-        r"^(?:hover:|focus:|active:)?(?:bg|text|border|ring|p[xytblr]?|m[xytblr]?"
-        r"|w|h|min-w|max-w|min-h|max-h|gap|space-[xy]|rounded|shadow|font"
-        r"|leading|tracking|opacity|transition|duration|z-\d+|inset|whitespace"
-        r"|cursor|select|pointer-events|italic|antialiased|backdrop-blur"
-        r"|outline-none|animate|inline-block|truncate|uppercase|underline"
-        r"|placeholder|scale|translate)(?:-|$)"
+    # Every place a class name is spelled: class attributes (HTML and
+    # template literals), className assignments, classList calls, and the
+    # class-string variables the renderer composes (`dotColor = "..."`).
+    sites = (
+        r'class(?:Name)?\s*=\s*"([^"]*)"',
+        r"classList\.(?:add|remove|toggle)\(([^)]*)\)",
+        r'\w*(?:Color|Border|Ring|Badge|Bg)\s*=\s*"([^"]*)"',
     )
-    # Every double-quoted string (HTML class attributes and JS class-name
-    # literals alike), filtered down to utility-shaped tokens.
     used = set()
-    for m in re.finditer(r'"([^"\n]*)"', html):
-      used.update(t for t in m.group(1).split() if utility.match(t))
-    # Gradient stops are baked into .bg-gradient-to-tr; template placeholders
-    # are substituted at render time.
-    skip = {"from-sky-500", "to-indigo-500"}
-    svg_attrs = {"font-family", "font-size", "text", "text-anchor"}
+    for pattern in sites:
+      for m in re.finditer(pattern, html):
+        literal = re.sub(r"\$\{[^}]*\}", " ", m.group(1))
+        used.update(re.findall(r"[A-Za-z][\w:\[\]()/.,#%-]*", literal))
+    # JS hooks (no styling), substituted placeholders, and gradient stops that
+    # are baked into .bg-gradient-to-tr.
+    hooks = re.compile(
+        r"^(?:tab|view|inspect|inspector|dag|wf|timeline|payload|raw|search"
+        r"|toggle|type|zoom|edges|stage|orient|arrow|auto|marker|custom)[-\w]*$"
+    )
+    skip = {"from-sky-500", "to-indigo-500", "lightflow"}
     missing = sorted(
         t
         for t in used
-        if utility.match(t)
-        and t not in defined
+        if t not in defined
         and t not in skip
-        and t not in svg_attrs
-        and "${" not in t
+        and not hooks.match(t)
         and "__" not in t
     )
     self.assertEqual(
