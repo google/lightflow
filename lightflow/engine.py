@@ -678,14 +678,6 @@ class LightflowEngine:
       workflow: Optional[schema.Lightflow] = None,
       workflow_path: Optional[str] = None,
   ):
-    resolved_lightflow = lightflow if lightflow is not None else workflow
-    if resolved_lightflow is None:
-      raise ValueError("LightflowEngine requires a `lightflow` definition.")
-    self.lightflow = resolved_lightflow
-    self.lightflow_path = (
-        lightflow_path if lightflow_path is not None else workflow_path
-    )
-    self.log_id = log_id
     if allowed_import_prefixes is not None:
       self.allowed_import_prefixes: Optional[tuple[str, ...]] = tuple(
           p.strip() for p in allowed_import_prefixes if p.strip()
@@ -698,10 +690,31 @@ class LightflowEngine:
         )
       else:
         self.allowed_import_prefixes = None
+    self._init_common(
+        lightflow, lightflow_path, log_id, workflow, workflow_path
+    )
 
+  def _init_common(
+      self,
+      lightflow: Optional[schema.Lightflow],
+      lightflow_path: Optional[str],
+      log_id: Optional[str],
+      workflow: Optional[schema.Lightflow],
+      workflow_path: Optional[str],
+  ) -> None:
+    """Binds the manifest and builds the per-run indexes (both editions)."""
+    resolved_lightflow = lightflow if lightflow is not None else workflow
+    if resolved_lightflow is None:
+      raise ValueError("LightflowEngine requires a `lightflow` definition.")
+    self.lightflow = resolved_lightflow
+    self.lightflow_path = (
+        lightflow_path if lightflow_path is not None else workflow_path
+    )
+    self.log_id = log_id
     self._action_imports: dict[str, str] = {
         action.id: action.python_import for action in self.lightflow.actions
     }
+    # Index stages by name
     self._stages_by_name: dict[str, schema.Stage] = {
         stage.name: stage for stage in self.lightflow.stages
     }
@@ -1135,14 +1148,10 @@ class LightflowEngine:
                 " upstream dependency in `run_after`."
             )
 
-  def _resolve_action_callable(self, action_id: str) -> Callable[..., Any]:
-    """Resolves and validates a registered Python action callable."""
-    python_import = self._action_imports.get(action_id)
-    if not python_import:
-      raise EngineError(
-          f"Action ID '{action_id}' is not defined under workflow.actions."
-      )
-
+  def validate_import_path(
+      self, action_id: str, python_import: str
+  ) -> tuple[str, str]:
+    """Validates `python_import` and returns `(module_path, func_name)`."""
     if "." not in python_import:
       raise EngineError(
           f"Action ID '{action_id}' has an invalid fully-qualified function"
@@ -1150,42 +1159,71 @@ class LightflowEngine:
           " 'package.module.function_name'."
       )
     module_path, func_name = python_import.rsplit(".", 1)
-    parts = module_path.split(".")
-    if not func_name or not all(parts):
+    if (
+        not module_path
+        or not func_name
+        or any(not p for p in module_path.split("."))
+    ):
       raise EngineError(
-          f"Action ID '{action_id}' has an invalid import path:"
-          f" '{python_import}'."
+          f"Action ID '{action_id}' has an invalid fully-qualified function"
+          f" import path: '{python_import}'. Must be of the form"
+          " 'package.module.function_name'."
       )
-
     if func_name.startswith("_"):
       raise EngineError(
-          f"Dynamic import of private callable '{func_name}' is blocked for"
+          f"Execution of private function '{func_name}' is blocked for"
           " security reasons."
       )
-
+    parts = module_path.split(".")
     if any(part.startswith("_") and part != "__main__" for part in parts):
       raise EngineError(
           f"Dynamic import of private module '{module_path}' is blocked for"
           " security reasons."
       )
+    self._check_import_prefix(module_path)
+    return module_path, func_name
 
-    if self.allowed_import_prefixes is not None:
+  # --- Platform hooks for action imports. ---------------------------------
+  # Action modules are resolved relative to the manifest and checked against
+  # `allowed_import_prefixes`. Everything else about resolving an action is
+  # shared across editions, so only these four hooks differ.
 
-      def _matches_prefix(mod: str, raw_prefix: str) -> bool:
-        clean_p = raw_prefix.strip().rstrip(".")
-        if not clean_p:
-          return False
-        return mod == clean_p or mod.startswith(clean_p + ".")
+  def _check_import_prefix(self, module_path: str) -> None:
+    """Enforces `allowed_import_prefixes` when the caller configured any."""
+    if self.allowed_import_prefixes is None:
+      return
 
-      if not any(
-          _matches_prefix(module_path, prefix)
-          for prefix in self.allowed_import_prefixes
-      ):
-        raise EngineError(
-            f"Dynamic import of module '{module_path}' is blocked for security"
-            f" reasons. Allowed prefixes: {self.allowed_import_prefixes}."
-        )
+    def _matches_prefix(mod: str, raw_prefix: str) -> bool:
+      clean_p = raw_prefix.strip().rstrip(".")
+      if not clean_p:
+        return False
+      return mod == clean_p or mod.startswith(clean_p + ".")
 
+    if not any(
+        _matches_prefix(module_path, prefix)
+        for prefix in self.allowed_import_prefixes
+    ):
+      raise EngineError(
+          f"Dynamic import of module '{module_path}' is blocked for security"
+          f" reasons. Allowed prefixes: {self.allowed_import_prefixes}."
+      )
+
+  def _import_action_module(self, module_path: str) -> Any:
+    """Imports an action module, resolving it relative to the manifest.
+
+    Without `allowed_import_prefixes`, the manifest's directory (and the
+    package root enclosing it) are put on `sys.path`, and a module already
+    loaded from elsewhere -- or whose source changed on disk since it was
+    loaded -- is evicted so the manifest-local edition wins. The loaded
+    file's fingerprint is recorded for that staleness check.
+
+    Args:
+      module_path: Dotted module path already vetted by `validate_import_path`.
+
+    Returns:
+      The imported module.
+    """
+    parts = module_path.split(".")
     if self.allowed_import_prefixes is None:
       candidate_dirs = [os.getcwd()]
       local_roots: list[str] = []
@@ -1267,8 +1305,45 @@ class LightflowEngine:
               importlib.invalidate_caches()
           break
 
+    module = importlib.import_module(module_path)
+    mod_file = getattr(module, "__file__", None)
+    if mod_file and os.path.isfile(mod_file):
+      real_mod_file = os.path.realpath(mod_file)
+      fp = _file_fingerprint(real_mod_file)
+      if fp is not None:
+        _LOADED_MODULE_HASHES[real_mod_file] = fp
+    return module
+
+  def _missing_dependency_hint(self) -> str:
+    """Completes "imports 'x', which ..." when an action's import is missing."""
+    return (
+        f"is not installed in this Python environment ({sys.executable})."
+        " Install it, or guard the import"
+    )
+
+  def _missing_action_module_hint(self) -> str:
+    """Trailing advice when the action module itself cannot be found."""
+    looked = (
+        os.path.dirname(os.path.abspath(self.lightflow_path))
+        if self.lightflow_path
+        else "the current directory"
+    )
+    return (
+        "Lightflow resolves python_import relative to the manifest's"
+        f" directory ({looked}) and sys.path; if the manifest moved, move its"
+        " actions module with it (or set PYTHONPATH)."
+    )
+
+  def _resolve_action_callable(self, action_id: str) -> Callable[..., Any]:
+    """Validates and dynamically imports a registered action callable."""
+    python_import = self._action_imports.get(action_id)
+    if not python_import:
+      raise EngineError(
+          f"Action ID '{action_id}' is not defined under workflow.actions."
+      )
+    module_path, func_name = self.validate_import_path(action_id, python_import)
     try:
-      module = importlib.import_module(module_path)
+      module = self._import_action_module(module_path)
     except ModuleNotFoundError as e:
       missing = e.name or ""
       # The action module itself (or one of its parent packages) is missing
@@ -1282,20 +1357,12 @@ class LightflowEngine:
       if not is_action_module:
         raise EngineError(
             f"Action module '{module_path}' (action '{action_id}') imports"
-            f" '{missing}', which is not installed in this Python environment"
-            f" ({sys.executable}). Install it, or guard the import. Import"
+            f" '{missing}', which {self._missing_dependency_hint()}. Import"
             " errors are not retried."
         ) from e
-      looked = (
-          os.path.dirname(os.path.abspath(self.lightflow_path))
-          if self.lightflow_path
-          else "the current directory"
-      )
       raise EngineError(
-          f"Cannot import '{python_import}' for action '{action_id}':"
-          f" {e}. Lightflow resolves python_import relative to the manifest's"
-          f" directory ({looked}) and sys.path; if the manifest moved, move"
-          " its actions module with it (or set PYTHONPATH)."
+          f"Cannot import '{python_import}' for action '{action_id}': {e}."
+          f" {self._missing_action_module_hint()}"
       ) from e
     except Exception as e:  # pylint: disable=broad-exception-caught
       # SyntaxError, ImportError ("cannot import name"), or any exception the
@@ -1304,12 +1371,6 @@ class LightflowEngine:
           f"Cannot import '{python_import}' for action '{action_id}':"
           f" {type(e).__name__}: {e}. Import errors are not retried."
       ) from e
-    mod_file = getattr(module, "__file__", None)
-    if mod_file and os.path.isfile(mod_file):
-      real_mod_file = os.path.realpath(mod_file)
-      fp = _file_fingerprint(real_mod_file)
-      if fp is not None:
-        _LOADED_MODULE_HASHES[real_mod_file] = fp
     func = getattr(module, func_name, None)
     if func is None:
       raise EngineError(

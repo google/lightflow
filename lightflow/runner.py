@@ -43,7 +43,7 @@ except ImportError:
   from lightflow import lib  # pyrefly: ignore[missing-import]
 # pylint: enable=g-import-not-at-top,g-bad-import-order
 
-_VERSION = "0.6.7"
+_VERSION = "0.6.8"
 
 
 def _parse_arg(val: Any) -> Any:

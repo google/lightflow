@@ -927,6 +927,11 @@ def default_state_root() -> str:
   env_state_dir = os.environ.get("LIGHTFLOW_STATE_DIR")
   if env_state_dir:
     return os.path.expanduser(env_state_dir)
+  return _platform_state_root()
+
+
+def _platform_state_root() -> str:
+  """Returns this edition's state root when `LIGHTFLOW_STATE_DIR` is unset."""
   return os.path.expanduser("~/.lightflow")
 
 
