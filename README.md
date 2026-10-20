@@ -104,6 +104,19 @@ Look elsewhere when:
 
 ## Installation
 
+Install the `lightflow` CLI and Python package directly from GitHub:
+
+```bash
+# Latest on main
+pip install "git+https://github.com/google/lightflow.git"
+
+# Pinned to a specific release tag
+pip install "git+https://github.com/google/lightflow.git@v0.6.6"
+```
+
+Or clone the repository to run the bundled `examples/`, `benchmarks/`, and
+`create_lightflow` scaffolding workflow locally:
+
 ```bash
 git clone https://github.com/google/lightflow.git
 cd lightflow
@@ -115,7 +128,8 @@ pip install -e .
 
 > **Note (Pre-1.0):** Lightflow is pre-1.0 (`0.x`): the CLI, manifest fields,
 > and `passport.json` format (`passport_version: 1`) may still change between
-> minor versions. Pin a release tag or version (`lightflow-dag==0.6.6`) if you
+> minor versions. Pin a release tag
+> (`pip install "git+https://github.com/google/lightflow.git@v0.6.6"`) if you
 > depend on it.
 
 ### Where state lives

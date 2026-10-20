@@ -785,7 +785,8 @@ class LightflowEngine:
       # user typed so the hint is copy-pasteable from their cwd.
       return f"python3 {_quote_cli_arg(argv0)}"
     if os.path.basename(normalized) == "lightflow":
-      # Installed console script (``pip install lightflow-dag``).
+      # Installed console script
+      # (``pip install "git+https://github.com/google/lightflow.git"``).
       return "lightflow"
     return ""
 
