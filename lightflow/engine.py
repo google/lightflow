@@ -412,14 +412,45 @@ def set_payload(
   payload.CopyFrom(payload_dict)
 
 
+PASSPORT_FORMAT_VERSION = 1
+
+
+def _check_passport_version(raw: Any) -> int:
+  """Validates `passport_version` in a parsed passport JSON object."""
+  if not isinstance(raw, dict):
+    raise ValueError("Passport JSON must be a JSON object.")
+  ver = raw.get("passport_version")
+  if ver is None:
+    ver = raw.get("passportVersion")
+  if ver is None or ver == 0:
+    return PASSPORT_FORMAT_VERSION
+  if isinstance(ver, bool) or not isinstance(ver, int) or ver < 1:
+    raise ValueError(
+        f"Invalid passport_version={ver!r} (expected positive integer)."
+    )
+  if ver > PASSPORT_FORMAT_VERSION:
+    raise ValueError(
+        f"Passport format version {ver} is newer than this Lightflow version"
+        f" supports (max: {PASSPORT_FORMAT_VERSION}); upgrade Lightflow to"
+        " read this passport."
+    )
+  return ver
+
+
 def passport_to_json(passport: schema.Passport) -> str:
   """Serialises a Passport for `passport.json`."""
+  if not passport.passport_version:
+    passport.passport_version = PASSPORT_FORMAT_VERSION
   return json.dumps(passport.to_dict(), indent=2)
 
 
 def passport_from_json(text: str) -> schema.Passport:
   """Parses `passport.json` text, tolerating unknown fields."""
-  return schema.Passport.from_dict(json.loads(text))
+  raw = json.loads(text)
+  ver = _check_passport_version(raw)
+  passport = schema.Passport.from_dict(raw)
+  passport.passport_version = ver
+  return passport
 
 
 def static_kwargs_dict(action: schema.PythonAction) -> dict[str, Any]:

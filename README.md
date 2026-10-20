@@ -35,10 +35,10 @@ agent drives Lightflow through its CLI:
     `lightflow status --verbose` or `lightflow visualize`.
 -   **Reliable in scheduled agent automations**: When an agent runs unattended
     on a schedule (e.g., `/automation`, `claude -p`, or CI), nobody is watching
-    the turn-by-turn chat to catch skipped steps. Driving the run through a
-    Lightflow manifest guarantees the scheduled agent executes every Python and
-    `operator_action` stage in order, validates its own intermediate outputs
-    against JSON Schema, and only halts when a checkpoint requires human
+    the turn-by-turn chat to catch skipped steps. When an agent drives the run
+    through a Lightflow manifest, the engine, not the agent, decides what runs
+    next: stages execute in order, intermediate outputs are validated against
+    JSON Schema, and the run halts only when a checkpoint needs human
     sign-off.
 
 Lightflow is a pure-Python package (`PyYAML` and `jsonschema`, with stdlib
@@ -112,6 +112,11 @@ pip install -e .
 
 *(Or run directly from a checkout without installing dependencies using
 `PYTHONPATH=. python3 -m lightflow ...`)*
+
+> **Note (Pre-1.0):** Lightflow is pre-1.0 (`0.x`): the CLI, manifest fields,
+> and `passport.json` format (`passport_version: 1`) may still change between
+> minor versions. Pin a release tag or version (`lightflow-dag==0.6.6`) if you
+> depend on it.
 
 ### Where state lives
 

@@ -1182,6 +1182,44 @@ stages:
     self.assertIn("exceeded timeout_seconds=1", p_timeout.stamps[-1].message)
     self.assertIn("worker thread keeps running", p_timeout.stamps[-1].message)
 
+  def test_passport_version_written_legacy_defaulted_and_future_rejected(
+      self,
+  ) -> None:
+    pm = lib.PassportManager("ver_run")
+    pm.save_passport(schema.Passport())
+    with open(pm.passport_file, "r", encoding="utf-8") as f:
+      raw_text = f.read()
+    self.assertIn('"passport_version": 1', raw_text)
+    loaded = pm.load_passport()
+    assert loaded is not None
+    self.assertEqual(loaded.passport_version, 1)
+
+    # Legacy passport without passport_version loads as version 1.
+    with open(pm.passport_file, "w", encoding="utf-8") as f:
+      f.write('{"payload": {"legacy": true}}')
+    legacy = pm.load_passport()
+    assert legacy is not None
+    self.assertEqual(legacy.passport_version, 1)
+    self.assertTrue(legacy.payload.to_dict().get("legacy"))
+
+    # Newer passport format version fails with a clear upgrade error.
+    with open(pm.passport_file, "w", encoding="utf-8") as f:
+      f.write('{"passport_version": 2, "payload": {}}')
+    with self.assertRaisesRegex(
+        lib.StateCorruptedError,
+        r"Passport format version 2 is newer than this Lightflow version"
+        r" supports \(max: 1\)",
+    ):
+      pm.load_passport()
+
+    # Invalid passport_version type/value is rejected.
+    with open(pm.passport_file, "w", encoding="utf-8") as f:
+      f.write('{"passport_version": "two", "payload": {}}')
+    with self.assertRaisesRegex(
+        lib.StateCorruptedError, r"Invalid passport_version='two'"
+    ):
+      pm.load_passport()
+
 
 if __name__ == "__main__":
   unittest.main()

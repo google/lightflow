@@ -763,6 +763,9 @@ class StampList(list):
     return stamp
 
 
+PASSPORT_FORMAT_VERSION = 1
+
+
 @dataclass
 class Passport:
   """The state ledger passed between stages as payload carrier and stamp log."""
@@ -774,6 +777,7 @@ class Passport:
   # Recorded on first `start` so `list`/`status` can label and locate runs.
   lightflow_name: str = ""
   lightflow_path: str = ""
+  passport_version: int = PASSPORT_FORMAT_VERSION
 
   def __post_init__(self) -> None:
     if not isinstance(self.payload, StructDict):
@@ -785,7 +789,9 @@ class Passport:
       )
 
   def to_dict(self) -> dict[str, Any]:
-    res: dict[str, Any] = {}
+    res: dict[str, Any] = {
+        "passport_version": self.passport_version or PASSPORT_FORMAT_VERSION
+    }
     if self.payload:
       res["payload"] = dict(self.payload)
     if self.stamps:
@@ -802,6 +808,11 @@ class Passport:
       return cls()
     payload_data = data.get("payload", {})
     stamps_data = data.get("stamps", [])
+    ver = data.get("passport_version")
+    if ver is None:
+      ver = data.get("passportVersion")
+    if ver is None or ver == 0:
+      ver = PASSPORT_FORMAT_VERSION
     return cls(
         payload=StructDict(copy.deepcopy(payload_data)),
         stamps=StampList(
@@ -810,6 +821,7 @@ class Passport:
         ),
         lightflow_name=str(data.get("lightflow_name", "") or ""),
         lightflow_path=str(data.get("lightflow_path", "") or ""),
+        passport_version=int(ver),
     )
 
 
