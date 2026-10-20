@@ -691,6 +691,31 @@ def run_state(
   return "COMPLETED"
 
 
+def _interrupted_stages(ordered_stages: list[str], stamps: Any) -> list[str]:
+  """Lists stages whose latest stamp is an in-flight PENDING stamp."""
+  latest: dict[str, Any] = {}
+  for stamp in stamps:
+    name = (
+        stamp.get("stage_name", "")
+        if isinstance(stamp, dict)
+        else stamp.stage_name
+    )
+    latest[name] = stamp
+  interrupted: list[str] = []
+  for stage_name in ordered_stages:
+    stamp = latest.get(stage_name)
+    if stamp is None or effective_status_name(stamp) != "PENDING":
+      continue
+    message = (
+        stamp.get("message") or ""
+        if isinstance(stamp, dict)
+        else stamp.message or ""
+    )
+    if not message.startswith("Re-armed "):
+      interrupted.append(stage_name)
+  return interrupted
+
+
 def _missing_top_level_keys_from_failures(
     messages_by_stage: dict[str, str], failed_stages: list[str]
 ) -> list[str]:

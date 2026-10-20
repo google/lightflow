@@ -111,7 +111,7 @@ Install the `lightflow` CLI and Python package directly from GitHub:
 pip install "git+https://github.com/google/lightflow.git"
 
 # Pinned to a specific release tag
-pip install "git+https://github.com/google/lightflow.git@v0.6.6"
+pip install "git+https://github.com/google/lightflow.git@v0.6.7"
 ```
 
 Or clone the repository to run the bundled `examples/`, `benchmarks/`, and
@@ -129,7 +129,7 @@ pip install -e .
 > **Note (Pre-1.0):** Lightflow is pre-1.0 (`0.x`): the CLI, manifest fields,
 > and `passport.json` format (`passport_version: 1`) may still change between
 > minor versions. Pin a release tag
-> (`pip install "git+https://github.com/google/lightflow.git@v0.6.6"`) if you
+> (`pip install "git+https://github.com/google/lightflow.git@v0.6.7"`) if you
 > depend on it.
 
 ### Where state lives
@@ -367,6 +367,14 @@ When a stage fails:
     stage and its collateral dependents—re-running only the broken subgraph
     while preserving completed upstream work and keeping the earlier `FAILED`
     stamp in history.
+4.  **Interrupted in-flight stages (at-least-once semantics):** Completed stages
+    are never re-run on `resume`, but if the process crashes or is killed while
+    a stage is actively executing (`PENDING`), `status` reports that stage as
+    `interrupted` (`INCOMPLETE`) and `resume` warns (`⚠️ Stage '<name>' was
+    interrupted mid-run and will be executed again; make sure it is
+    idempotent.`) before re-running it from the start. Actions that perform
+    external side effects should be idempotent (or check whether their effect
+    already took place).
 
 ### CLI Exit Codes
 

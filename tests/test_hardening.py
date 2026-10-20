@@ -1220,6 +1220,69 @@ stages:
     ):
       pm.load_passport()
 
+  def test_replace_prechecks_length_cap_and_interrupted_stage_warns_on_resume(
+      self,
+  ) -> None:
+    with self.assertRaisesRegex(
+        engine.EngineError, r"Expression result exceeds maximum length \(100000\)"
+    ):
+      engine.evaluate_cel(
+          "payload.s.replace('', 'x' * 9000).replace('', 'y' * 9000)",
+          {"s": "abc"},
+      )
+    self.assertEqual(
+        len(
+            engine.evaluate_cel(
+                "payload.s.replace('', 'x' * 1000, 2)", {"s": "abc"}
+            )
+        ),
+        2003,
+    )
+
+    manifest = self._write(
+        "interrupted.yaml",
+        f"""
+name: intr_wf
+actions:
+  - id: ok
+    python_import: {__name__}.act_ok
+stages:
+  - name: s1
+    python_action:
+      action_id: ok
+  - name: s2
+    run_after: [s1]
+    python_action:
+      action_id: ok
+""",
+    )
+    pm = lib.PassportManager("intr_run")
+    passport = schema.Passport(
+        lightflow_name="intr_wf",
+        lightflow_path=os.path.abspath(manifest),
+    )
+    engine.add_stamp(passport, "s1", schema.StampStatus.PENDING)
+    pm.save_passport(passport)
+
+    status_buf = io.StringIO()
+    with contextlib.redirect_stdout(status_buf):
+      with self.assertRaises(lib.LightflowRunFailedError):
+        lib.LightflowRunnerCLI().status(log_id="intr_run")
+    self.assertIn(
+        "⚠️ s1: interrupted (was in flight when the process exited; will re-run"
+        " on resume)",
+        status_buf.getvalue(),
+    )
+
+    resume_buf = io.StringIO()
+    with contextlib.redirect_stdout(resume_buf):
+      lib.LightflowRunnerCLI().resume(log_id="intr_run")
+    self.assertIn(
+        "⚠️ Stage 's1' was interrupted mid-run and will be executed again; make"
+        " sure it is idempotent.",
+        resume_buf.getvalue(),
+    )
+
 
 if __name__ == "__main__":
   unittest.main()

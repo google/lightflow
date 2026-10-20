@@ -259,10 +259,41 @@ def _safe_mul(left: Any, right: Any) -> Any:
 def _safe_add(left: Any, right: Any) -> Any:
   """Adds two values, coercing numeric/boolean primitives onto a str."""
   if isinstance(left, str) and isinstance(right, (int, float, bool)):
-    return _cap_result(left + str(right))
-  if isinstance(right, str) and isinstance(left, (int, float, bool)):
-    return _cap_result(str(left) + right)
+    right = str(right)
+  elif isinstance(right, str) and isinstance(left, (int, float, bool)):
+    left = str(left)
+  if isinstance(left, (str, bytes, list, tuple)) and isinstance(
+      right, (str, bytes, list, tuple)
+  ):
+    if len(left) + len(right) > _MAX_RESULT_CHARS:
+      raise ValueError(
+          f"Expression result exceeds maximum length ({_MAX_RESULT_CHARS})."
+      )
   return _cap_result(operator.add(left, right))
+
+
+def _safe_replace(obj: str, args: list[Any]) -> str:
+  """Calls `str.replace` after pre-checking the result length cap."""
+  if (
+      len(args) in (2, 3)
+      and isinstance(args[0], str)
+      and isinstance(args[1], str)
+  ):
+    old, new = args[0], args[1]
+    if len(new) > len(old):
+      occurrences = len(obj) + 1 if not old else obj.count(old)
+      if (
+          len(args) == 3
+          and isinstance(args[2], int)
+          and not isinstance(args[2], bool)
+          and args[2] >= 0
+      ):
+        occurrences = min(occurrences, args[2])
+      if len(obj) + occurrences * (len(new) - len(old)) > _MAX_RESULT_CHARS:
+        raise ValueError(
+            f"Expression result exceeds maximum length ({_MAX_RESULT_CHARS})."
+        )
+  return _cap_result(obj.replace(*args))
 
 
 def _safe_mod(left: Any, right: Any) -> Any:
@@ -656,8 +687,9 @@ class SafeCelEvaluator:
             return obj.endswith(args[0])
           if hasattr(obj, method_name):
             method = getattr(obj, method_name)
+            if method_name == "replace":
+              return _safe_replace(obj, args)
             if method_name in (
-                "replace",
                 "split",
                 "strip",
                 "lower",

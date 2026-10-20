@@ -72,6 +72,7 @@ _LAST_PROGRESS_RE = state_lib._LAST_PROGRESS_RE
 _MISSING_KEY_RE = state_lib._MISSING_KEY_RE
 effective_status_name = state_lib.effective_status_name
 run_state = state_lib.run_state
+_interrupted_stages = state_lib._interrupted_stages
 _missing_top_level_keys_from_failures = (
     state_lib._missing_top_level_keys_from_failures
 )
@@ -278,6 +279,13 @@ class LightflowRunnerCLI:
         pm.save_passport(passport)
         print(f"Starting execution of lightflow '{workflow_proto.name}'...")
       else:
+        for interrupted_name in _interrupted_stages(
+            ordered_stages, passport.stamps
+        ):
+          print(
+              f"⚠️ Stage '{interrupted_name}' was interrupted mid-run and will"
+              " be executed again; make sure it is idempotent."
+          )
         print(f"Resuming execution of lightflow '{workflow_proto.name}'...")
       print(f"Passport: {pm.passport_file}")
       self._execute_engine_loop(runner, ordered_stages, passport, pm)
@@ -731,6 +739,13 @@ class LightflowRunnerCLI:
       engine.set_payload(passport.payload, payload_dict)
       pm.save_passport(passport)
 
+    for interrupted_name in _interrupted_stages(
+        ordered_stages, passport.stamps
+    ):
+      print(
+          f"⚠️ Stage '{interrupted_name}' was interrupted mid-run and will be"
+          " executed again; make sure it is idempotent."
+      )
     print(f"Resuming execution of lightflow '{workflow_proto.name}'...")
     print(f"Passport: {pm.passport_file}")
     self._execute_engine_loop(runner, ordered_stages, passport, pm)
@@ -1007,6 +1022,12 @@ class LightflowRunnerCLI:
         detail = f" ({summary})" if summary else ""
       elif name == "BLOCKED":
         detail = " (upstream failed or was rejected)"
+      if name == "PENDING" and not running and not detail:
+        print(
+            f"  ⚠️ {stage_name}: interrupted (was in flight when the process"
+            " exited; will re-run on resume)"
+        )
+        continue
       icon = _STAMP_ICONS.get(name, "•")
       print(f"  {icon} {stage_name}: {name.lower()}{detail}")
 
