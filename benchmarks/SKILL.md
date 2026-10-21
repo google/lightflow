@@ -1,99 +1,108 @@
 ---
 name: benchmark_lightflow
-description: Runs the Lightflow benchmark suite (`python3 benchmarks/run_benchmark.py`) and live A/B subagent trials to measure the runtime token footprint (`cmd + stdout`), cold-start skill overhead, and off-context state (`passport.json`) across multi-stage workflows.
+description: "Runs, verifies and extends the Lightflow benchmark suites: Part I, step-adherence under operator pressure (benchmarks/reliability_benchmark.py, workflow prod_hotfix_rollout, 20 matched seeds, Arm A Lightflow vs Arm B prose runbook); Part II, deterministic context-footprint measurement (benchmarks/context_footprint.py) across the 7 bundled example workflows."
 ---
 
-# Benchmarking Lightflow Token & Context Footprint (`benchmark_lightflow`)
+# Benchmarking Lightflow (`benchmark_lightflow`)
 
-Lightflow separates **control-plane messages** (which go to `stdout` for the
-agent) from **data-plane state** (which stays on disk in `passport.json`):
+`benchmarks/README.md` is the report: question, protocol, grading rubric, the
+design-v1 pilot results and why they are not quotable, the design-v2 results,
+and the parked follow-ups. This skill is the operating manual.
 
-1.  **On-disk state bus (`passport.json`)**: Intermediate data
-    (`payload.outputs.<stage>`) flows between Python stages on disk via
-    `passport.json` rather than being printed to `stdout` and re-emitted
-    token-by-token by the LLM in subsequent tool calls.
-2.  **Direct entry (`lightflow start`)**: Because stage ordering, `run_if`
-    branching, JSON schemas, and `rollback_action` hooks live in
-    `lightflow.yaml` + `actions.py`, an agent executing an existing workflow
-    runs `lightflow start` directly and responds to each gate as it arrives.
-3.  **Single reusable runner skill**: One generic ~1,123-token runner skill
-    (`skills/run_lightflows/SKILL.md`) drives any workflow without custom
-    per-workflow `/tmp/state.json` or `--step` CLI plumbing.
+## 1. Part I — step-adherence under operator pressure
 
-## 1. Run the Reproducible Benchmark Suite
-
-From the repository root, run the deterministic, zero-dependency benchmark
-harness:
+### Verify what is checked in (no model needed)
 
 ```bash
-# Markdown summary table + step-by-step breakdown
-python3 benchmarks/run_benchmark.py
-
-# Machine-readable JSON metrics (includes all computed properties)
-python3 benchmarks/run_benchmark.py --json
+# from the repository root
+python3 -m unittest tests.test_reliability_benchmark            # harness tests: scripted agents through the real state machine
+python3 benchmarks/reliability_benchmark.py --self-test        # Arm A end to end through the Lightflow CLI, 4 seeds
+python3 benchmarks/reliability_benchmark.py --verify-results   # recompute statistics for every bundle under benchmarks/results/
 ```
 
-`run_benchmark.py` executes all 6 included example Lightflows (`hn_digest`,
-`usgs_seismic_alert`, `pypi_upgrade_guard`, `async_job_watcher`,
-`create_lightflow`, and `tenant_gitops_onboarding`) end-to-end in an isolated
-temporary directory (normalizing OS temp paths, PIDs, and timestamps for 100%
-bit-for-bit reproducibility) and measures:
+### Run live trials (needs an agent harness)
 
-1.  **Warm Runtime Context (`cmd + stdout`)**: Every CLI command string emitted
-    by the agent (`lightflow start ...`, `lightflow resume ...`, `lightflow
-    cleanup ...`), any files authored between gates in `create_lightflow`
-    (`actions.py`, `actions_test.py`, `lightflow.yaml`), and the exact
-    `stdout`/`stderr` returned to the agent's context window.
-2.  **Cold-Start Context (`N=1` and `N=6`)**: Explicitly adds
-    `skills/run_lightflows/SKILL.md` (4,489 chars / ~1,122 tokens) for execution
-    workflows (`1–4 and 6`) and both `run_lightflows/SKILL.md` +
-    `create_lightflows/SKILL.md` (+8,177 chars / ~2,044 tokens) for the
-    `create_lightflow` authoring meta-workflow.
-3.  **Multi-Turn Cumulative Tokens**: Accounts for stateful LLM conversation
-    billing where Turn $k$ re-sends the accumulated tool calls and outputs from
-    Turns $1 \dots k-1$.
-4.  **Persisted in `passport.json` (Off-Context)**: Structured stage outputs
-    (`payload.outputs.<stage>`) and audit stamps persisted on disk between
-    stages without entering the LLM conversation history.
-5.  **On-Disk Blueprint (`lightflow.yaml` + `actions.py`)**: Total byte/token
-    size of the workflow manifest and Python actions on disk.
+One trial = one stateful multi-turn agent session in a fresh sandbox. The runner
+must:
 
-## 2. Reporting & Comparison Guidelines
+1.  Create the agent with the checked-in system prompt for its arm
+    (`load_agent_system_prompt("A"|"B")`), on the model under test, with no
+    access outside `/tmp/ops_bench_*`.
+2.  Call the operator state machine and let it decide every turn:
 
-Whenever you report benchmark numbers or run a custom A/B comparison, follow
-these rules:
+    ```python
+    record = await run_multi_turn_trial_loop(
+        arm, seed,                       # "A"|"B", 1..20
+        send_turn_fn,                    # async (prompt: str) -> reply: str, same session every time
+        conversation_id=<agent conv id>, # optional but makes token metrics exact
+        model="gemini-flash",            # recorded verbatim
+        # pressure_variant defaults to pressure_variant_for_seed(seed): P1,P2,P3 round-robin
+        # rule_variant="explicit" (v2 primary) | "plain" (realistic runbook) | "none"
+    )
+    ```
 
--   **Always count both directions of tool traffic**: Include the agent's CLI
-    command string (and any file-write payloads) alongside the tool's `stdout`
-    response—never `stdout` alone.
--   **Always report both Warm (marginal) and Cold-Start (`N=1` and session `N`)
-    numbers**:
-    -   *Warm / Marginal*: The per-run cost once
-        `skills/run_lightflows/SKILL.md` is in context.
-    -   *Single-Workflow Cold Start (`N=1`)*: Add
-        `skills/run_lightflows/SKILL.md` (~1,122 tokens) to a single execution
-        run, and also add `skills/create_lightflows/SKILL.md` (~2,044 tokens)
-        when benchmarking `create_lightflow`.
-    -   *Multi-Workflow Session (`N=6`)*: Count each required `SKILL.md` once
-        across the session.
+3.  Write each `record` to `result_seed<NN>_<arm>.json` in one directory, then
+    bundle:
 
-## 3. Running a Live Subagent A/B Benchmark (Optional)
+    ```bash
+    python3 benchmarks/reliability_benchmark.py --aggregate /path/to/records --suite primary_n20 --model gemini-flash
+    ```
 
-To compare Lightflow against unstructured execution on a live LLM agent:
+    This writes `benchmarks/results/reliability_trials.json` (records +
+    recomputed statistics) and prints the summary. Use `--output` for ablations
+    (`--suite ablation_<name>`), and never mix layouts or design versions in one
+    suite — `compute_suite_statistics` refuses.
 
-1.  **Define an identical task and acceptance test** (e.g.,
-    `pypi_upgrade_guard`: audit offline packages, pause for approval, trigger a
-    simulated smoke-test failure + rollback, then recover and upgrade).
-2.  **Arm A — Lightflow Subagent**: Give a fresh zero-context subagent
-    `skills/run_lightflows/SKILL.md` and the target
-    `--lightflow=examples/pypi_upgrade_guard` path.
-3.  **Arm B — Unstructured Subagent**: Give a fresh zero-context subagent the
-    same task without the Lightflow CLI engine.
-4.  **Compare**:
-    -   Agent-generated tool-input tokens (how much JSON/code the LLM had to
-        emit to pass state and handle rollbacks),
-    -   Agent reasoning/thinking tokens and total turns,
-    -   Cumulative prompt tokens across turns ($\sum_{k=1}^{T}
-        \text{context}_k$),
-    -   Structural guarantees (deterministic `json_schema`, `rollback_action`,
-        and surgical `resume` vs. prompt compliance).
+Do not re-implement the turn logic in the runner: the loop gates checkpoint
+messages on the audit trail, bounds the nudges, records every turn sent and
+stamps the design version, layout, pressure variant and model into the record.
+Trials flagged `harness_fault` are excluded from statistics automatically;
+re-run those seeds.
+
+### Inspect materials and prompts
+
+```bash
+python3 benchmarks/reliability_benchmark.py --materialize --arm=B --seed=7 --sandbox-dir=/tmp/ops_bench_demo
+python3 benchmarks/reliability_benchmark.py --materialize --arm=A --seed=7 --sandbox-dir=/tmp/ops_bench_demo --unencapsulated   # design-v1 layout
+python3 benchmarks/reliability_benchmark.py --print-prompts --seed=7 --variant=P2
+```
+
+Both arms' `SKILL.md` files, the domain CLI, the Lightflow manifest/adapters and
+the agent system prompts are plain files under
+`benchmarks/prod_hotfix_rollout/`; diff them side by side before changing either
+arm. The checkpoint rule is one constant (`CHECKPOINT_RULE`) injected into both
+files and asserted equal on every materialisation — if you change the wording,
+bump `DESIGN_VERSION`.
+
+## 2. Part II — context footprint
+
+```bash
+python3 benchmarks/context_footprint.py                  # table + per-step breakdown
+python3 benchmarks/context_footprint.py --json           # machine-readable
+python3 benchmarks/context_footprint.py --check-readme   # exit 1 if the README table is stale
+python3 benchmarks/context_footprint.py --update-readme  # regenerate it
+```
+
+A measurement, not a comparison: there is no baseline arm. Runs all 7 example
+Lightflows in-process against an isolated state directory (temp paths, PIDs and
+timestamps normalised, so the output is bit-for-bit reproducible) and reports,
+per workflow, warm runtime context (`cmd + stdout`), cold-start cost including
+`skills/run_lightflows/SKILL.md` (and `skills/create_lightflows/SKILL.md` for
+authoring), multi-turn cumulative input, and the sizes of `passport.json` and of
+the sources. Report the last two as sizes, never as savings. The table in
+`benchmarks/README.md` sits between `<!-- context_footprint:begin/end -->`
+markers; `tests/test_context_footprint.py` fails when it is stale, and
+`--update-readme` regenerates it.
+
+## 3. Reporting rules
+
+-   Report Part I as paired statistics (McNemar exact p, Agresti–Min CI on the
+    difference) per suite; Fisher is secondary. Quote the primary endpoint (all
+    7 invariants) together with I6 so a reader sees that I1–I5/I7 are saturated.
+-   Always state design version, layout, model and pressure variants next to a
+    number; never pool v1 and v2.
+-   Token counts in Part II are a 4-chars-per-token heuristic; Part I token
+    metrics come from the agent transcripts and are exact only when the runner
+    passed `conversation_id`.
+-   Count both directions of tool traffic (the agent's command strings and the
+    tool's `stdout`); report warm and cold-start numbers separately.

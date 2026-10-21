@@ -23,7 +23,7 @@ agent drives Lightflow through its CLI:
 -   **Data stays out of model context**: Intermediate outputs pass between
     Python stages on disk (`passport.json`) rather than through tool `stdout`.
     The model sees one-line stage summaries and checkpoint prompts
-    ([~250–1,700 tokens](./benchmarks/README.md) across the benchmarked
+    ([~250–1,750 tokens](./benchmarks/README.md) across the benchmarked
     workflows).
 -   **Resumable without repeating side effects**: If a stage fails or a session
     is interrupted, `lightflow resume` continues from the stopped node and

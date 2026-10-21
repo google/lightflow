@@ -1,0 +1,208 @@
+name: prod_hotfix_rollout
+description: >-
+  12-stage (15-node) Emergency Production Hotfix & Customer Advisory Rollout DAG
+  with diamond compliance branching, automatic canary rollback, replica lag
+  drain, and schema-enforced operator checkpoints.
+secret_keys:
+  - raw_shard_dump
+
+actions:
+  - id: ingest_incident_telemetry
+    python_import: lf_actions.ingest_incident_telemetry
+  - id: verify_freeze_window
+    python_import: lf_actions.verify_freeze_window
+  - id: reserve_failover_capacity
+    python_import: lf_actions.reserve_failover_capacity
+  - id: compute_blast_radius
+    python_import: lf_actions.compute_blast_radius
+  - id: run_deep_compliance_audit
+    python_import: lf_actions.run_deep_compliance_audit
+  - id: run_standard_preflight
+    python_import: lf_actions.run_standard_preflight
+  - id: stage_canary_artifact
+    python_import: lf_actions.stage_canary_artifact
+  - id: apply_db_schema_migration
+    python_import: lf_actions.apply_db_schema_migration
+  - id: rollback_staged_artifact
+    python_import: lf_actions.rollback_staged_artifact
+  - id: deploy_canary_region
+    python_import: lf_actions.deploy_canary_region
+  - id: verify_canary_slo_metrics
+    python_import: lf_actions.verify_canary_slo_metrics
+  - id: run_replica_catchup_drain
+    python_import: lf_actions.run_replica_catchup_drain
+  - id: dispatch_global_and_notify
+    python_import: lf_actions.dispatch_global_and_notify
+  - id: finalize_postmortem_and_cleanup
+    python_import: lf_actions.finalize_postmortem_and_cleanup
+
+stages:
+  - name: ingest_incident_telemetry
+    description: Ingest live incident telemetry and shard health from SQLite
+    python_action:
+      action_id: ingest_incident_telemetry
+
+  - name: verify_freeze_window
+    description: Validate production change-freeze window and acquire freeze token
+    run_after:
+      - ingest_incident_telemetry
+    python_action:
+      action_id: verify_freeze_window
+
+  - name: reserve_failover_capacity
+    description: Reserve warm failover capacity in secondary region
+    run_after:
+      - verify_freeze_window
+    python_action:
+      action_id: reserve_failover_capacity
+
+  - name: compute_blast_radius
+    description: Compute EU regulated tenant exposure, payment-path impact, and ARR at risk
+    run_after:
+      - ingest_incident_telemetry
+    python_action:
+      action_id: compute_blast_radius
+
+  - name: run_deep_compliance_audit
+    description: Deep PCI/GDPR compliance audit for high-exposure incidents
+    run_after:
+      - compute_blast_radius
+    run_if: >-
+      payload.outputs.compute_blast_radius.eu_regulated_tenants >= 10 ||
+      (payload.outputs.compute_blast_radius.payment_path_touched == true &&
+       payload.outputs.compute_blast_radius.arr_at_risk_usd >= 250000)
+    python_action:
+      action_id: run_deep_compliance_audit
+
+  - name: run_standard_preflight
+    description: Standard preflight check when deep compliance audit criteria are not met
+    run_after:
+      - compute_blast_radius
+    run_if: >-
+      !(payload.outputs.compute_blast_radius.eu_regulated_tenants >= 10 ||
+        (payload.outputs.compute_blast_radius.payment_path_touched == true &&
+         payload.outputs.compute_blast_radius.arr_at_risk_usd >= 250000))
+    python_action:
+      action_id: run_standard_preflight
+
+  - name: stage_canary_artifact
+    description: Join capacity reservation and compliance audit to build release manifest
+    run_after:
+      - reserve_failover_capacity
+      - run_deep_compliance_audit
+      - run_standard_preflight
+    trigger_rule: NONE_FAILED
+    python_action:
+      action_id: stage_canary_artifact
+
+  - name: gate_1_rollout_plan
+    description: Operator Checkpoint 1 - Review blast radius and approve migration parameters
+    run_after:
+      - stage_canary_artifact
+    operator_action:
+      instructions: >-
+        'Checkpoint 1 (Rollout Plan Review) for incident ' +
+        payload.outputs.ingest_incident_telemetry.incident_id +
+        ' (manifest ' + payload.outputs.stage_canary_artifact.manifest_sha256 +
+        ', snapshot ' + payload.outputs.compute_blast_radius.snapshot_id +
+        '). Ask the operator to approve and supply reviewer_ticket (8-16 chars), max_batch_size (integer 10-50), and soak_window_minutes (integer 20-60).'
+      json_schema:
+        type: object
+        additionalProperties: false
+        required:
+          - approved
+          - reviewer_ticket
+          - max_batch_size
+          - soak_window_minutes
+        properties:
+          approved:
+            type: boolean
+          reviewer_ticket:
+            type: string
+            minLength: 8
+            maxLength: 16
+          max_batch_size:
+            type: integer
+            minimum: 10
+            maximum: 50
+          soak_window_minutes:
+            type: integer
+            minimum: 20
+            maximum: 60
+
+  - name: apply_db_schema_migration
+    description: Apply non-idempotent DDL schema migration to primary database
+    run_after:
+      - gate_1_rollout_plan
+    run_if: "payload.outputs.gate_1_rollout_plan.approved == true"
+    python_action:
+      action_id: apply_db_schema_migration
+
+  - name: deploy_canary_region
+    description: Deploy staged artifact to canary region with automatic rollback on failure
+    run_after:
+      - apply_db_schema_migration
+    python_action:
+      action_id: deploy_canary_region
+    rollback_action:
+      action_id: rollback_staged_artifact
+
+  - name: verify_canary_slo_metrics
+    description: Verify post-canary p99 latency, error rate, and replica lag
+    run_after:
+      - deploy_canary_region
+    python_action:
+      action_id: verify_canary_slo_metrics
+
+  - name: run_replica_catchup_drain
+    description: Drain read-replica lag when post-canary replica lag exceeds 150ms
+    run_after:
+      - verify_canary_slo_metrics
+    run_if: "payload.outputs.verify_canary_slo_metrics.post_canary_replica_lag_ms > 150"
+    python_action:
+      action_id: run_replica_catchup_drain
+
+  - name: gate_2_customer_advisory
+    description: Operator Checkpoint 2 - Final sign-off before global rollout and customer advisory
+    run_after:
+      - verify_canary_slo_metrics
+      - run_replica_catchup_drain
+    trigger_rule: NONE_FAILED
+    operator_action:
+      instructions: >-
+        'Checkpoint 2 (Global Rollout & Customer Advisory Sign-Off) for incident ' +
+        payload.outputs.ingest_incident_telemetry.incident_id +
+        ' (SLO digest ' + payload.outputs.verify_canary_slo_metrics.slo_digest +
+        '). Present post-canary SLO metrics to the operator and obtain signoff_code (14 chars, e.g. EXEC-2026-XXXX) and optional override_batch_cap (integer 10-50).'
+      json_schema:
+        type: object
+        additionalProperties: false
+        required:
+          - approved
+          - signoff_code
+        properties:
+          approved:
+            type: boolean
+          signoff_code:
+            type: string
+            minLength: 14
+            maxLength: 14
+          override_batch_cap:
+            type: integer
+            minimum: 10
+            maximum: 50
+
+  - name: dispatch_global_and_notify
+    description: Dispatch global production rollout and publish customer advisory
+    run_after:
+      - gate_2_customer_advisory
+    run_if: "payload.outputs.gate_2_customer_advisory.approved == true"
+    python_action:
+      action_id: dispatch_global_and_notify
+
+  - name: finalize_postmortem_and_cleanup
+    description: Release staging lock, remove temporary manifest, and emit completion certificate
+    run_after:
+      - dispatch_global_and_notify
+    python_action:
+      action_id: finalize_postmortem_and_cleanup
