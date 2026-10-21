@@ -392,9 +392,24 @@ class LightflowEngine(
 
     while True:
       attempts += 1
+      # Bound each tick by what is left of the overall polling budget, capped
+      # by the stage timeout when one is set. Without this, an unbounded tick
+      # can block past the polling timeout because that budget was only
+      # checked after the tick returned.
+      elapsed = time.monotonic() - start_time
+      remaining = timeout - elapsed if timeout > 0 else None
+      tick_budget = remaining
+      if tick_timeout is not None and tick_timeout > 0:
+        tick_budget = (
+            tick_timeout
+            if tick_budget is None
+            else min(tick_budget, tick_timeout)
+        )
+      if tick_budget is not None:
+        tick_budget = max(1, int(tick_budget))
       try:
         new_payload, message = self._execute_action_with_timeout(
-            stage_name, action, payload_dict, timeout=tick_timeout
+            stage_name, action, payload_dict, timeout=tick_budget
         )
         payload_lib._print_merge_collisions(
             stage_name,

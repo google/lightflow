@@ -21,6 +21,7 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
+import time
 from typing import Any
 import unittest
 
@@ -110,6 +111,15 @@ def sample_poll_tick(
   _POLL_COUNTER += 1
   status_val = "READY" if _POLL_COUNTER >= 2 else "RUNNING"
   return {"job_status": status_val}, f"Tick {_POLL_COUNTER}: {status_val}"
+
+
+def sample_slow_poll_tick(
+    payload: dict[str, Any], **static_kwargs: Any
+) -> tuple[dict[str, Any], str]:
+  del payload, static_kwargs
+  _CALL_LOG.append("sample_slow_poll_tick")
+  time.sleep(5)
+  return {"job_status": "READY"}, "Ready"
 
 
 class SchemaAndManifestParserTest(unittest.TestCase):
@@ -527,6 +537,67 @@ stages:
     self.assertEqual(latest["failing_stage"], schema.StampStatus.FAILED)
     self.assertEqual(latest["skipped_downstream"], schema.StampStatus.FAILED)
     self.assertEqual(latest["always_cleanup"], schema.StampStatus.COMPLETED)
+
+  def test_poll_tick_is_bounded_by_polling_timeout(self) -> None:
+    yaml_manifest = f"""
+name: poll_budget_wf
+actions:
+  - id: slow_tick
+    python_import: {__name__}.sample_slow_poll_tick
+stages:
+  - name: poll_stage
+    polling_policy:
+      condition: "payload.job_status == 'READY'"
+      interval_seconds: 1
+      timeout_seconds: 1
+      poll_tick_action:
+        action_id: slow_tick
+"""
+    wf = schema.parse_lightflow_text(yaml_manifest)
+    passport = schema.Passport()
+    start = time.monotonic()
+    passport = engine.LightflowEngine(wf).execute_stage(
+        "poll_stage", passport
+    )
+    elapsed = time.monotonic() - start
+
+    # The tick sleeps for 5s; the 1s polling budget must bound it.
+    self.assertLess(elapsed, 4.0)
+    latest = passport.stamps[-1]
+    self.assertEqual(latest.stage_name, "poll_stage")
+    self.assertEqual(latest.status, schema.StampStatus.FAILED)
+    self.assertIn("exceeded timeout_seconds=1", latest.message)
+
+  def test_poll_tick_is_bounded_by_stage_timeout_when_tighter(self) -> None:
+    yaml_manifest = f"""
+name: poll_stage_timeout_wf
+actions:
+  - id: slow_tick
+    python_import: {__name__}.sample_slow_poll_tick
+stages:
+  - name: poll_stage
+    timeout_seconds: 2
+    polling_policy:
+      condition: "payload.job_status == 'READY'"
+      interval_seconds: 1
+      timeout_seconds: 60
+      poll_tick_action:
+        action_id: slow_tick
+"""
+    wf = schema.parse_lightflow_text(yaml_manifest)
+    passport = schema.Passport()
+    start = time.monotonic()
+    passport = engine.LightflowEngine(wf).execute_stage(
+        "poll_stage", passport
+    )
+    elapsed = time.monotonic() - start
+
+    # The 2s stage timeout is tighter than the 60s polling budget.
+    self.assertLess(elapsed, 4.5)
+    latest = passport.stamps[-1]
+    self.assertEqual(latest.stage_name, "poll_stage")
+    self.assertEqual(latest.status, schema.StampStatus.FAILED)
+    self.assertIn("exceeded timeout_seconds=2", latest.message)
 
   def test_build_resume_command_quotes_args_with_spaces(self) -> None:
     wf = schema.Lightflow(
