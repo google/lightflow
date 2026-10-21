@@ -2667,6 +2667,56 @@ stages:
     )
     self.assertIn("⬜ after: not started", status_buf.getvalue())
 
+  def test_resume_reject_without_stage_is_rejected_without_mutation(
+      self,
+  ) -> None:
+    manifest = self._write(
+        "reject_no_stage.yaml",
+        f"""
+name: reject_no_stage_wf
+actions:
+  - id: fail
+    python_import: {__name__}.act_break_then_fail_rollback
+  - id: compute
+    python_import: {__name__}.act_emit_count_42
+stages:
+  - name: broken
+    python_action: {{"action_id": "fail"}}
+  - name: after
+    run_after: [broken]
+    python_action: {{"action_id": "compute"}}
+""",
+    )
+    cli = lib.LightflowRunnerCLI()
+    with self.assertRaises(lib.LightflowRunFailedError):
+      cli.start(lightflow=manifest, log_id="reject_no_stage_run")
+
+    pm = lib.PassportManager("reject_no_stage_run")
+    before = pm.load_passport()
+    assert before is not None
+    before_stamps = [
+        (s.stage_name, s.status, s.message) for s in before.stamps
+    ]
+    with open(pm.passport_file, "rb") as f:
+      before_bytes = f.read()
+
+    with self.assertRaisesRegex(ValueError, r"require --stage"):
+      cli.resume(log_id="reject_no_stage_run", resolution="REJECT")
+
+    after = pm.load_passport()
+    assert after is not None
+    self.assertEqual(
+        before_stamps,
+        [(s.stage_name, s.status, s.message) for s in after.stamps],
+    )
+    with open(pm.passport_file, "rb") as f:
+      self.assertEqual(before_bytes, f.read())
+    # The failed stage and its blocked dependent were not re-armed.
+    latest = self._latest("reject_no_stage_run")
+    self.assertEqual(latest["broken"], schema.StampStatus.FAILED)
+    self.assertEqual(latest["after"], schema.StampStatus.FAILED)
+    self.assertNotIn(schema.StampStatus.PENDING, latest.values())
+
   def test_rejected_gate_footer_and_one_call_reopen(self) -> None:
     manifest = self._write(
         "reject.yaml",
