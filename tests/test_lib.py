@@ -370,7 +370,9 @@ stages:
         r"--payload / --payload_file: cannot read payload file"
         r" 'nope\.json': No such file",
     ):
-      lib._parse_payload_arg("@nope.json", context_label="--payload")
+      lib.state_lib._parse_payload_arg(  # pylint: disable=protected-access
+          "@nope.json", context_label="--payload"
+      )
 
   def test_polling_gate_timeout_prints_operator_yield_notice(self) -> None:
     wf = schema.Lightflow(
@@ -2523,8 +2525,8 @@ stages:
         mock.patch.dict(
             os.environ, {"ANTIGRAVITY_CONVERSATION_ID": "conv"}, clear=False
         ),
-        mock.patch.object(engine.shutil, "which", return_value="/bin/agentapi"),
-        mock.patch.object(engine.subprocess, "run", side_effect=fake_run),
+        mock.patch("shutil.which", return_value="/bin/agentapi"),
+        mock.patch("subprocess.run", side_effect=fake_run),
     ):
       os.environ.pop("LIGHTFLOW_NOTIFY", None)
       engine.send_notification("Stage Failed: b", "❌ b: failed")
@@ -3408,7 +3410,7 @@ stages:
         )
     }
     self.assertEqual(
-        lib._missing_top_level_keys_from_failures(msgs, ["gate"]),  # pylint: disable=protected-access
+        lib.state_lib._missing_top_level_keys_from_failures(msgs, ["gate"]),  # pylint: disable=protected-access
         ["release"],
     )
 

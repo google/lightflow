@@ -36,8 +36,6 @@ except ImportError:
   from lightflow import state as state_lib  # pyrefly: ignore[missing-import]
   from lightflow import visualizer  # pyrefly: ignore[missing-import]
 # pylint: enable=g-import-not-at-top,g-bad-import-order
-_ensure_utf8_stdio = state_lib._ensure_utf8_stdio
-
 # Re-export state and dry-run symbols for backwards compatibility.
 StateCorruptedError = state_lib.StateCorruptedError
 LightflowAlreadyPausedError = state_lib.LightflowAlreadyPausedError
@@ -53,23 +51,14 @@ EXIT_RUNNING = state_lib.EXIT_RUNNING
 EXIT_WAITING = state_lib.EXIT_WAITING
 _STAMP_ICONS = state_lib._STAMP_ICONS
 _REJECTED_PREFIX = state_lib._REJECTED_PREFIX
-_LOCK_RETRY_SECONDS = state_lib._LOCK_RETRY_SECONDS
-_LOCK_RETRY_INTERVAL_SECONDS = state_lib._LOCK_RETRY_INTERVAL_SECONDS
-_try_lock = state_lib._try_lock
-_lock_with_retry = state_lib._lock_with_retry
-_unlock = state_lib._unlock
 _current_operator = state_lib._current_operator
-_SAFE_WORKFLOW_ID_RE = state_lib._SAFE_WORKFLOW_ID_RE
 PassportManager = state_lib.PassportManager
 resolve_lightflow_path = state_lib.resolve_lightflow_path
-_TRIGGER_RULE_NAMES = state_lib._TRIGGER_RULE_NAMES
-_trigger_rule_name = state_lib._trigger_rule_name
 _replace_stage_outputs = state_lib._replace_stage_outputs
 _latest_stamp_is_poll_yield = state_lib._latest_stamp_is_poll_yield
 _rearm_yielded_polls = state_lib._rearm_yielded_polls
 _ROLLBACK_FAILED_RE = state_lib._ROLLBACK_FAILED_RE
 _LAST_PROGRESS_RE = state_lib._LAST_PROGRESS_RE
-_MISSING_KEY_RE = state_lib._MISSING_KEY_RE
 effective_status_name = state_lib.effective_status_name
 run_state = state_lib.run_state
 _interrupted_stages = state_lib._interrupted_stages
@@ -91,18 +80,10 @@ _record_manifest_path = state_lib._record_manifest_path
 _describe_discarded_state = state_lib._describe_discarded_state
 _ran_because_of = state_lib._ran_because_of
 _stamp_epoch = state_lib._stamp_epoch
-_summarise_run = state_lib._summarise_run
 _manifest_cell = state_lib._manifest_cell
 _format_duration = state_lib._format_duration
 _format_age = state_lib._format_age
 generate_status_mermaid = dry_run_lib.generate_status_mermaid
-_generate_status_mermaid = dry_run_lib._generate_status_mermaid
-_synthesize_mock_gate_payload = dry_run_lib._synthesize_mock_gate_payload
-_print_stage_policies = dry_run_lib._print_stage_policies
-_is_deferrable_dry_run_eval_error = (
-    dry_run_lib._is_deferrable_dry_run_eval_error
-)
-_print_not_simulated_note = dry_run_lib._print_not_simulated_note
 
 
 class LightflowRunnerCLI:

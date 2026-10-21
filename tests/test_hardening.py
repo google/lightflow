@@ -845,12 +845,12 @@ stages:
     try:
       os.environ.pop("LIGHTFLOW_OPERATOR", None)
       os.environ["ANTIGRAVITY_CONVERSATION_ID"] = "conv-uuid-123"
-      op_with_conv = lib._current_operator()  # pylint: disable=protected-access
+      op_with_conv = lib.state_lib._current_operator()  # pylint: disable=protected-access
       self.assertIn("(agent:conv-uuid-123)", op_with_conv)
 
       os.environ["LIGHTFLOW_OPERATOR"] = "ci-bot"
       self.assertEqual(
-          lib._current_operator(), "ci-bot"  # pylint: disable=protected-access
+          lib.state_lib._current_operator(), "ci-bot"  # pylint: disable=protected-access
       )
     finally:
       if orig_op is None:
@@ -877,7 +877,7 @@ stages:
         mock.patch.object(sys, "stdout", FakeCp1252Stream()),
         mock.patch.object(sys, "stderr", FakeCp1252Stream()),
     ):
-      lib._ensure_utf8_stdio()
+      lib.state_lib._ensure_utf8_stdio()  # pylint: disable=protected-access
     self.assertEqual(reconfigured, [("utf-8", "replace"), ("utf-8", "replace")])
 
     wf = self._write(

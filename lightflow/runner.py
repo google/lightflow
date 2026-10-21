@@ -43,7 +43,7 @@ except ImportError:
   from lightflow import lib  # pyrefly: ignore[missing-import]
 # pylint: enable=g-import-not-at-top,g-bad-import-order
 
-_VERSION = "0.7.0"
+_VERSION = "0.7.1"
 
 
 def _parse_arg(val: Any) -> Any:
@@ -336,7 +336,7 @@ def _dispatch_argv(wrapper: CliWrapper, argv: list[str]) -> None:
 
 def run_cli() -> None:
   """Runs the Lightflow CLI."""
-  lib._ensure_utf8_stdio()  # pylint: disable=protected-access
+  lib.state_lib._ensure_utf8_stdio()  # pylint: disable=protected-access
   try:
     _dispatch_argv(CliWrapper(lib.LightflowRunnerCLI()), sys.argv[1:])
   except (

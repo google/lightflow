@@ -18,12 +18,8 @@ from __future__ import annotations
 
 # pylint: disable=g-long-ternary
 
-# Re-exported for tests that patch `engine.importlib` / `shutil` / `subprocess`.
-import importlib  # pylint: disable=unused-import
 import os
 import random
-import shutil  # pylint: disable=unused-import
-import subprocess  # pylint: disable=unused-import
 import sys
 import time
 import traceback
@@ -53,44 +49,27 @@ MissingFieldError = cel_lite.MissingFieldError
 OperatorActionSuspended = cel_lite.OperatorActionSuspended
 ManualGateSuspended = cel_lite.ManualGateSuspended
 
-_CEL_OPERATOR_PATTERN = cel_lite._CEL_OPERATOR_PATTERN
 parse_expression = cel_lite.parse_expression
-_is_payload_outputs_node = cel_lite._is_payload_outputs_node
 extract_payload_output_stage_refs = cel_lite.extract_payload_output_stage_refs
-_suggest_key = cel_lite._suggest_key
 extract_top_level_payload_refs = cel_lite.extract_top_level_payload_refs
-_MAX_SEQUENCE_REPEAT = cel_lite._MAX_SEQUENCE_REPEAT
-_MAX_RESULT_CHARS = cel_lite._MAX_RESULT_CHARS
-_cap_result = cel_lite._cap_result
-_safe_mul = cel_lite._safe_mul
-_safe_add = cel_lite._safe_add
-_safe_mod = cel_lite._safe_mod
 SafeCelEvaluator = cel_lite.SafeCelEvaluator
 evaluate_cel = cel_lite.evaluate_cel
 
 # ------------------- NOTIFICATIONS & UTILS -------------------
 
-_SUMMARY_MAX_CHARS = notifications._SUMMARY_MAX_CHARS
 summarise = notifications.summarise
-_NOTIFICATION_THREADS = notifications._NOTIFICATION_THREADS
-_NOTIFICATION_HANDLERS = notifications._NOTIFICATION_HANDLERS
 register_notification_handler = notifications.register_notification_handler
 clear_notification_handlers = notifications.clear_notification_handlers
-_MILESTONE_TITLE_PREFIXES = notifications._MILESTONE_TITLE_PREFIXES
-_notification_mode = notifications._notification_mode
 send_notification = notifications.send_notification
 wait_for_notifications = notifications.wait_for_notifications
 
 # ------------------- PAYLOAD & PASSPORT HELPERS -------------------
 
-_quote_cli_arg = payload_lib._quote_cli_arg
 get_timestamp = payload_lib.get_timestamp
 STAGE_OUTPUTS_KEY = payload_lib.STAGE_OUTPUTS_KEY
 UPSTREAM_FAILED_MESSAGE = payload_lib.UPSTREAM_FAILED_MESSAGE
 POLL_YIELD_MARKER = payload_lib.POLL_YIELD_MARKER
 REDACTED = payload_lib.REDACTED
-_secret_values = payload_lib._secret_values
-_scrub_secrets = payload_lib._scrub_secrets
 redact_text = payload_lib.redact_text
 redact_payload = payload_lib.redact_payload
 add_stamp = payload_lib.add_stamp
@@ -101,14 +80,11 @@ _FAILED = payload_lib._FAILED
 _PAUSED = payload_lib._PAUSED
 record_stage_outputs = payload_lib.record_stage_outputs
 merge_stage_payload = payload_lib.merge_stage_payload
-_top_level_key_owner = payload_lib._top_level_key_owner
 top_level_key_provenance = payload_lib.top_level_key_provenance
-_print_merge_collisions = payload_lib._print_merge_collisions
 normalize_struct_numbers = payload_lib.normalize_struct_numbers
 payload_to_dict = payload_lib.payload_to_dict
 set_payload = payload_lib.set_payload
 PASSPORT_FORMAT_VERSION = payload_lib.PASSPORT_FORMAT_VERSION
-_check_passport_version = payload_lib._check_passport_version
 passport_to_json = payload_lib.passport_to_json
 passport_from_json = payload_lib.passport_from_json
 static_kwargs_dict = payload_lib.static_kwargs_dict
@@ -120,9 +96,6 @@ load_lightflow = compiler_lib.load_lightflow
 resolve_lightflow_path = compiler_lib.resolve_lightflow_path
 validate_json_schema = compiler_lib.validate_json_schema
 check_json_schema = compiler_lib.check_json_schema
-_did_you_mean = compiler_lib._did_you_mean
-_payload_placeholder = compiler_lib._payload_placeholder
-_schema_required_keys = compiler_lib._schema_required_keys
 resume_note = compiler_lib.resume_note
 CompilerMixin = compiler_lib.CompilerMixin
 ActionExecutorMixin = executor_lib.ActionExecutorMixin
@@ -231,7 +204,7 @@ class LightflowEngine(
     if normalized.endswith(("lightflow/__main__.py", "lightflow/runner.py")):
       # Direct script invocation from a source checkout: echo the path the
       # user typed so the hint is copy-pasteable from their cwd.
-      return f"python3 {_quote_cli_arg(argv0)}"
+      return f"python3 {payload_lib._quote_cli_arg(argv0)}"
     if os.path.basename(normalized) == "lightflow":
       # Installed console script
       # (``pip install "git+https://github.com/google/lightflow.git"``).
@@ -259,11 +232,11 @@ class LightflowEngine(
     # works from any cwd and survives a `resume --lightflow=<moved>`.
     args = [
         "resume",
-        f"--log_id={_quote_cli_arg(self.log_id)}",
-        f"--stage={_quote_cli_arg(stage_name)}",
+        f"--log_id={payload_lib._quote_cli_arg(self.log_id)}",
+        f"--stage={payload_lib._quote_cli_arg(stage_name)}",
         "--resolution=APPROVE",
     ]
-    placeholder = _payload_placeholder(operator_action.json_schema)
+    placeholder = compiler_lib._payload_placeholder(operator_action.json_schema)
     if placeholder:
       args.append(placeholder)
 
@@ -423,7 +396,7 @@ class LightflowEngine(
         new_payload, message = self._execute_action_with_timeout(
             stage_name, action, payload_dict, timeout=tick_timeout
         )
-        _print_merge_collisions(
+        payload_lib._print_merge_collisions(
             stage_name,
             merge_stage_payload(payload_dict, stage_name, new_payload),
             self._top_level_keys_read,
@@ -568,7 +541,7 @@ class LightflowEngine(
             stage_name, python_action, payload_dict, timeout=timeout
         )
 
-        _print_merge_collisions(
+        payload_lib._print_merge_collisions(
             stage_name,
             merge_stage_payload(payload_dict, stage_name, new_payload),
             self._top_level_keys_read,
