@@ -204,11 +204,11 @@ python3 benchmarks/context_footprint.py --update-readme  # regenerate it
 | [`quarterly_revenue_brief`](../examples/quarterly_revenue_brief/) | 4 | 2,940 ch (~735 tok) | 6,897 ch (~1,725 tok) | ~2,355 tok | 9,484 ch (~2,371 tok) | 12,494 ch (~3,124 tok) |
 | [`hn_digest`](../examples/hn_digest/) | 3 | 1,714 ch (~429 tok) | 5,671 ch (~1,418 tok) | ~1,092 tok | 4,365 ch (~1,092 tok) | 7,623 ch (~1,906 tok) |
 | [`usgs_seismic_alert`](../examples/usgs_seismic_alert/) | 3 | 1,850 ch (~463 tok) | 5,807 ch (~1,452 tok) | ~1,183 tok | 3,717 ch (~930 tok) | 7,312 ch (~1,828 tok) |
-| [`pypi_upgrade_guard`](../examples/pypi_upgrade_guard/) | 4 | 2,870 ch (~718 tok) | 6,827 ch (~1,707 tok) | ~2,257 tok | 6,043 ch (~1,511 tok) | 8,822 ch (~2,206 tok) |
+| [`pypi_upgrade_guard`](../examples/pypi_upgrade_guard/) | 4 | 2,870 ch (~718 tok) | 6,827 ch (~1,707 tok) | ~2,257 tok | 5,739 ch (~1,435 tok) | 8,822 ch (~2,206 tok) |
 | [`async_job_watcher`](../examples/async_job_watcher/) | 2 | 1,009 ch (~253 tok) | 4,966 ch (~1,242 tok) | ~457 tok | 2,735 ch (~684 tok) | 10,213 ch (~2,554 tok) |
-| [`create_lightflow`](../examples/create_lightflow/) | 5 | 6,980 ch (~1,745 tok) | 22,499 ch (~5,625 tok) | ~6,328 tok | 7,184 ch (~1,796 tok) | 26,094 ch (~6,524 tok) |
+| [`create_lightflow`](../examples/create_lightflow/) | 5 | 6,980 ch (~1,745 tok) | 22,499 ch (~5,625 tok) | ~6,328 tok | 7,222 ch (~1,806 tok) | 26,094 ch (~6,524 tok) |
 | [`tenant_gitops_onboarding`](../examples/tenant_gitops_onboarding/) | 4 | 5,034 ch (~1,259 tok) | 8,991 ch (~2,248 tok) | ~3,569 tok | 15,191 ch (~3,798 tok) | 37,409 ch (~9,353 tok) |
-| **Total (7 workflows, warm)** | **25** | **22,397 ch (~5,600 tok)** | — | **~17,241 tok** | **48,719 ch (~12,180 tok)** | **109,967 ch (~27,492 tok)** |
+| **Total (7 workflows, warm)** | **25** | **22,397 ch (~5,600 tok)** | — | **~17,241 tok** | **48,453 ch (~12,114 tok)** | **109,967 ch (~27,492 tok)** |
 <!-- context_footprint:end -->
 
 Agent push notifications (`LIGHTFLOW_NOTIFY`) default to `off` and add nothing to the figures above.

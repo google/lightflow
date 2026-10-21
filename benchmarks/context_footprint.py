@@ -55,19 +55,26 @@ import warnings
 
 # pylint: disable=g-import-not-at-top,g-bad-import-order
 try:
+  from ..lightflow import engine
   from ..lightflow import runner
 except (ImportError, ValueError):
   _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
   if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
+  from lightflow import engine  # type: ignore[no-redef]  # pyrefly: ignore[missing-import]
   from lightflow import runner  # type: ignore[no-redef]  # pyrefly: ignore[missing-import]
 # pylint: enable=g-import-not-at-top,g-bad-import-order
 
-_OSS_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+_OSS_ROOT = os.path.realpath(
+    os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+)
 _README_PATH = os.path.join(_OSS_ROOT, "benchmarks", "README.md")
 _RUNNER_SKILL = os.path.join("skills", "run_lightflows", "SKILL.md")
 _AUTHOR_SKILL = os.path.join("skills", "create_lightflows", "SKILL.md")
 _CANONICAL_WORK_DIR = "/tmp/lf_work"
+_CANONICAL_PATH_RE = re.compile(
+    r"(?:/tmp/lf_work|/tmp/lf_state|/repo/lightflow)(?:(?:\\\\|\\|/)[A-Za-z0-9_.-]+)+"
+)
 _PID_RE = re.compile(r"PID \d+")
 _JSON_PID_RE = re.compile(r'"worker_pid": \d+')
 _TS_RE = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z?")
@@ -211,12 +218,42 @@ def python_subprocess_available() -> bool:
   return bool(sys.executable) and os.path.isfile(sys.executable)
 
 
+def _normalize_traceback(text: str) -> str:
+  """Strips Python 3.11+ caret and multiline frame continuations from tracebacks."""
+  if "Traceback (most recent call last):" not in text:
+    return text
+  out: list[str] = []
+  in_tb = False
+  skip_indented = False
+  for line in text.splitlines(keepends=True):
+    if line.startswith("Traceback (most recent call last):"):
+      in_tb = True
+      skip_indented = False
+      out.append(line)
+    elif in_tb and line.startswith('  File "'):
+      skip_indented = False
+      out.append(line)
+    elif in_tb and line.startswith("    "):
+      if not skip_indented:
+        out.append(line)
+        skip_indented = True
+    else:
+      in_tb = False
+      skip_indented = False
+      out.append(line)
+  return "".join(out)
+
+
 class FootprintRunner:
   """Runs each example workflow in-process against an isolated state dir."""
 
   def __init__(self) -> None:
-    self.state_dir = tempfile.mkdtemp(prefix="lightflow_fp_state_")
-    self.work_dir = tempfile.mkdtemp(prefix="lightflow_fp_work_")
+    self.state_dir = os.path.realpath(
+        tempfile.mkdtemp(prefix="lightflow_fp_state_")
+    )
+    self.work_dir = os.path.realpath(
+        tempfile.mkdtemp(prefix="lightflow_fp_work_")
+    )
 
   def close(self) -> None:
     shutil.rmtree(self.state_dir, ignore_errors=True)
@@ -230,13 +267,21 @@ class FootprintRunner:
 
   def _normalize_text(self, text: str) -> str:
     """Normalizes OS-specific temp paths, PIDs, and timestamps for determinism."""
-    norm = text.replace(self.work_dir, _CANONICAL_WORK_DIR)
-    norm = norm.replace(self.state_dir, "/tmp/lf_state")
-    norm = norm.replace(_OSS_ROOT, "/repo/lightflow")
+    norm = text
+    for raw_root, canonical in (
+        (self.work_dir, _CANONICAL_WORK_DIR),
+        (self.state_dir, "/tmp/lf_state"),
+        (_OSS_ROOT, "/repo/lightflow"),
+    ):
+      norm = norm.replace(json.dumps(raw_root)[1:-1], canonical)
+      norm = norm.replace(raw_root, canonical)
+    norm = _CANONICAL_PATH_RE.sub(
+        lambda m: m.group(0).replace("\\\\", "/").replace("\\", "/"), norm
+    )
     norm = _PID_RE.sub("PID 12345", norm)
     norm = _JSON_PID_RE.sub('"worker_pid": 12345', norm)
     norm = _TS_RE.sub("2026-01-01T00:00:00Z", norm)
-    return norm
+    return _normalize_traceback(norm)
 
   def _file_chars(self, rel_path: str) -> int:
     full = os.path.join(_OSS_ROOT, rel_path)
@@ -264,6 +309,13 @@ class FootprintRunner:
     with open(passport_path, "r", encoding="utf-8") as f:
       raw = self._normalize_text(f.read())
     data = json.loads(raw)
+    for stamp in data.get("stamps", []):
+      if stamp.get("status") == "PAUSED" and stamp.get("instructions"):
+        summary = engine.summarise(stamp["instructions"])
+        stamp["message"] = f"Suspended waiting for operator action: {summary}"
+      elif isinstance(stamp.get("message"), str):
+        stamp["message"] = _normalize_traceback(stamp["message"])
+    raw = json.dumps(data, indent=2)
     outputs = data.get("payload", {}).get("outputs", {})
     outputs_str = self._normalize_text(json.dumps(outputs, sort_keys=True))
     return len(raw), len(outputs_str)
@@ -312,8 +364,8 @@ class FootprintRunner:
       extra_input_chars: int = 0,
   ) -> StepMetric:
     """Runs one CLI call and records what was emitted and read back."""
-    raw_cmd = "lightflow " + " ".join(shlex.quote(a) for a in args)
-    norm_cmd = self._normalize_text(raw_cmd)
+    norm_args = [self._normalize_text(a) for a in args]
+    norm_cmd = "lightflow " + " ".join(shlex.quote(a) for a in norm_args)
     sink = io.StringIO()
     code = self._invoke(args, sink)
     if code != expected_exit:
@@ -365,7 +417,7 @@ class FootprintRunner:
                 "start",
                 "--lightflow=examples/quarterly_revenue_brief",
                 f"--log_id={log_id}",
-                f'--payload={{"output_path": "{out_md}"}}',
+                "--payload=" + json.dumps({"output_path": out_md}),
             ],
             expected_exit=2,
         ),
@@ -425,10 +477,8 @@ class FootprintRunner:
                 f"--log_id={log_id}",
                 "--stage=editorial_gate",
                 "--resolution=APPROVE",
-                (
-                    '--payload={"editor_note": "LGTM", "output_path":'
-                    f' "{out_md}"}}'
-                ),
+                "--payload="
+                + json.dumps({"editor_note": "LGTM", "output_path": out_md}),
             ],
             expected_exit=0,
         ),
@@ -462,10 +512,8 @@ class FootprintRunner:
                 f"--log_id={log_id}",
                 "--stage=incident_commander_gate",
                 "--resolution=APPROVE",
-                (
-                    '--payload={"severity": "ADVISORY", "output_path":'
-                    f' "{out_md}"}}'
-                ),
+                "--payload="
+                + json.dumps({"severity": "ADVISORY", "output_path": out_md}),
             ],
             expected_exit=0,
         ),
@@ -488,10 +536,8 @@ class FootprintRunner:
                 "start",
                 "--lightflow=examples/pypi_upgrade_guard",
                 f"--log_id={log_id}",
-                (
-                    '--payload={"offline": true, "requirements_path":'
-                    f' "{reqs_path}"}}'
-                ),
+                "--payload="
+                + json.dumps({"offline": True, "requirements_path": reqs_path}),
             ],
             expected_exit=2,
         ),
@@ -534,10 +580,8 @@ class FootprintRunner:
                 "start",
                 "--lightflow=examples/async_job_watcher",
                 f"--log_id={log_id}",
-                (
-                    '--payload={"delay_seconds": 1.0, "status_file":'
-                    f' "{status_file}"}}'
-                ),
+                "--payload="
+                + json.dumps({"delay_seconds": 1.0, "status_file": status_file}),
             ],
             expected_exit=0,
         ),
@@ -665,11 +709,13 @@ class FootprintRunner:
                 "start",
                 "--lightflow=examples/tenant_gitops_onboarding",
                 f"--log_id={log_id}",
-                (
-                    '--payload={"alias": "payments-eu", "compliance_tier":'
-                    f' "pci", "sandbox_dir": "{sandbox_dir}",'
-                    ' "require_manual_quota_override": true}'
-                ),
+                "--payload="
+                + json.dumps({
+                    "alias": "payments-eu",
+                    "compliance_tier": "pci",
+                    "sandbox_dir": sandbox_dir,
+                    "require_manual_quota_override": True,
+                }),
             ],
             expected_exit=2,
         ),

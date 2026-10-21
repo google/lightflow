@@ -189,6 +189,60 @@ class ContextFootprintTest(unittest.TestCase):
     for r in self.results:
       self.assertNotIn("savings_ratio", r.to_dict())
 
+  def test_normalization_strips_os_and_python_version_drift(self) -> None:
+    tb_py310 = (
+        "Traceback (most recent call last):\n"
+        '  File "/repo/lightflow/lightflow/engine.py", line 1927, in'
+        " execute_stage\n"
+        "    new_payload, message = self._execute_action_with_timeout(\n"
+        '  File "/repo/lightflow/examples/pypi_upgrade_guard/actions.py", line'
+        " 177, in apply_and_smoke_test\n"
+        "    raise RuntimeError(\n"
+        "RuntimeError: boom\n"
+    )
+    tb_py312 = (
+        "Traceback (most recent call last):\n"
+        '  File "/repo/lightflow/lightflow/engine.py", line 1927, in'
+        " execute_stage\n"
+        "    new_payload, message = self._execute_action_with_timeout(\n"
+        "                           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^\n"
+        '  File "/repo/lightflow/examples/pypi_upgrade_guard/actions.py", line'
+        " 177, in apply_and_smoke_test\n"
+        "    raise RuntimeError(\n"
+        "RuntimeError: boom\n"
+    )
+    tb_py313 = (
+        "Traceback (most recent call last):\n"
+        '  File "/repo/lightflow/lightflow/engine.py", line 1927, in'
+        " execute_stage\n"
+        "    new_payload, message = self._execute_action_with_timeout(\n"
+        "                           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^\n"
+        "        stage_name, python_action, payload_dict, timeout=timeout\n"
+        "        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n"
+        "    )\n"
+        "    ^\n"
+        '  File "/repo/lightflow/examples/pypi_upgrade_guard/actions.py", line'
+        " 177, in apply_and_smoke_test\n"
+        "    raise RuntimeError(\n"
+        "    ...<2 lines>...\n"
+        "    )\n"
+        "RuntimeError: boom\n"
+    )
+    self.assertEqual(cf._normalize_traceback(tb_py312), tb_py310)
+    self.assertEqual(cf._normalize_traceback(tb_py313), tb_py310)
+
+    with cf.FootprintRunner() as fp:
+      fp.work_dir = r"C:\Users\runneradmin\AppData\Local\Temp\lf_work_123"
+      fp.state_dir = r"C:\Users\runneradmin\AppData\Local\Temp\lf_state_123"
+      win_json = (
+          r'{"p":'
+          r' "C:\\Users\\runneradmin\\AppData\\Local\\Temp\\lf_work_123\\sub\\a.md"}'
+      )
+      self.assertEqual(
+          fp._normalize_text(win_json),
+          '{"p": "/tmp/lf_work/sub/a.md"}',
+      )
+
 
 if __name__ == "__main__":
   unittest.main()
