@@ -111,7 +111,7 @@ Install the `lightflow` CLI and Python package directly from GitHub:
 pip install "git+https://github.com/google/lightflow.git"
 
 # Pinned to a specific release tag
-pip install "git+https://github.com/google/lightflow.git@v0.6.8"
+pip install "git+https://github.com/google/lightflow.git@v0.7.0"
 ```
 
 Or clone the repository to run the bundled `examples/`, `benchmarks/`, and
@@ -129,7 +129,7 @@ pip install -e .
 > **Note (Pre-1.0):** Lightflow is pre-1.0 (`0.x`): the CLI, manifest fields,
 > and `passport.json` format (`passport_version: 1`) may still change between
 > minor versions. Pin a release tag
-> (`pip install "git+https://github.com/google/lightflow.git@v0.6.8"`) if you
+> (`pip install "git+https://github.com/google/lightflow.git@v0.7.0"`) if you
 > depend on it.
 
 ### Where state lives
