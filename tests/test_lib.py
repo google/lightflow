@@ -3573,6 +3573,14 @@ stages:
     cli.start(lightflow=manifest, log_id="viz_run")
     html = cli.visualize(log_id="viz_run")
     self.assertIn("viz_wf", html)
+    out_file = os.path.join(self.state_dir, "viz_out.html")
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+      runner_mod._dispatch_argv(  # pylint: disable=protected-access
+          runner_mod.CliWrapper(cli),
+          ["visualize", "--log_id=viz_run", f"--output={out_file}"],
+      )
+    self.assertEqual(buf.getvalue(), f"{out_file}\n")
     with self.assertRaises(lib.LightflowStateNotFoundError):
       cli.visualize(log_id="no_such_run")
 

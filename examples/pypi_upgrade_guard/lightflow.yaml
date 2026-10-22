@@ -3,6 +3,7 @@ description: >-
   Audits pinned Python dependencies against the live PyPI JSON API, pauses for
   operator approval, and upgrades requirements.txt with an automatic
   rollback_action if post-upgrade smoke verification fails.
+strict_expressions: true
 
 actions:
   - id: audit_pypi_versions

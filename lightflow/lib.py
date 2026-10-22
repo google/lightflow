@@ -119,7 +119,7 @@ class LightflowRunnerCLI:
       1 failed, rejected, or interrupted, 2 paused, 3 no saved state,
       4 running in another process, 5 waiting on a polling stage. `--verbose`
       adds the Passport payload, full stamp log, and Mermaid progress diagram.
-    - visualize --lightflow=<path> [--log_id=<id>] [--out=<file.html>]:
+    - visualize [--lightflow=<path>] [--log_id=<id>] [--output=<file.html>]:
       Generates a standalone interactive HTML5 DAG & Passport visualizer.
     - cleanup --log_id=<id> [--lightflow=<path>]:
       Deletes the saved Passport state directory for `--log_id`.
@@ -1212,7 +1212,6 @@ class LightflowRunnerCLI:
       os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
       with open(out_path, "w", encoding="utf-8") as f:
         f.write(html_content)
-      print(f"Visualizer HTML generated at: {out_path}")
       return out_path
 
     return html_content

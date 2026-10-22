@@ -3,6 +3,7 @@ description: >-
   Polls the live USGS M4.5+ global earthquake GeoJSON feed, pauses at an
   incident commander approval gate showing the strongest event, and dispatches
   a formatted Markdown bulletin.
+strict_expressions: true
 
 actions:
   - id: fetch_usgs_feed

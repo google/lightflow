@@ -240,5 +240,5 @@ expression evaluation, and gate schemas:
 ```bash
 lightflow dry_run --lightflow=lightflow.yaml
 lightflow render --lightflow=lightflow.yaml
-lightflow visualize --lightflow=lightflow.yaml --out=/tmp/visualizer.html
+lightflow visualize --lightflow=lightflow.yaml --output=/tmp/visualizer.html
 ```

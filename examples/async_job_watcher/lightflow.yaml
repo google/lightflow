@@ -4,6 +4,7 @@ description: >-
   duration, polls its status file using polling_policy until READY, verifies
   the exported artifact, and cleans up temporary files with trigger_rule:
   ALL_DONE.
+strict_expressions: true
 
 actions:
   - id: spawn_background_job
@@ -44,6 +45,6 @@ stages:
     run_after:
       - verify_exported_artifact
     trigger_rule: ALL_DONE
-    run_if: "payload.outputs.await_job_completion.job_status == 'READY'"
+    run_if: "has(payload.outputs.await_job_completion.job_status) && payload.outputs.await_job_completion.job_status == 'READY'"
     python_action:
       action_id: cleanup_job_status_file

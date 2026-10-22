@@ -33,7 +33,7 @@ Each stage defines **exactly one** execution mechanism (`python_action`, `operat
 | `trigger_rule` | `ALL_SUCCESS` (default: runs when all upstreams succeeded), `NONE_FAILED` (runs once upstreams finished and none failed — used for join stages after complementary `run_if` branches), or `ALL_DONE` (runs even after an upstream failure or rejection — used for cleanup stages). |
 | `python_action` | Calls a registered Python function (`action_id`, optional `static_kwargs` dict). |
 | `operator_action` | Suspends the process with `exit 2` (`instructions` CEL-like string expression, optional `json_schema` object). |
-| `polling_policy` | Repeatedly runs `poll_tick_action` until `condition` evaluates to `true` (`interval_seconds`, `timeout_seconds`, optional `max_attempts`). Each tick's output dict is merged into `payload` and `payload.outputs.<stage>` before `condition` is checked, and tick progress messages are saved to `passport.json`. |
+| `polling_policy` | Repeatedly runs `poll_tick_action` until `condition` evaluates to `true` (`interval_seconds`, `timeout_seconds`, optional `max_attempts`; stage-level `python_action` is also accepted as a backwards-compatible fallback for `poll_tick_action`). Each tick's output dict is merged into `payload` and `payload.outputs.<stage>` before `condition` is checked, and tick progress messages are saved to `passport.json`. |
 | `retry_policy` | Opt-in retry for `python_action` exceptions and timeouts (`max_attempts`, `initial_backoff_seconds`, `backoff_multiplier`) with ±10% random jitter. Syntax, import, and signature errors fail immediately without retry. |
 | `rollback_action` | Compensating `python_action` invoked automatically after a stage exhausts its retries or when an `operator_action` gate is rejected (`--resolution=REJECT`). Its returned dict delta is merged into `payload`. |
 | `timeout_seconds` | Bounds how long the engine waits per attempt (`0`–`86400`s; `0` disables the bound). See [Timeouts, Retries & Rollbacks](#timeouts-retries--rollbacks) below. |
@@ -143,7 +143,7 @@ lightflow status --log_id=<id> [--verbose]
 # List all saved runs under $LIGHTFLOW_STATE_DIR
 lightflow list [--state_dir=<dir>]
 
-# Generate a zero-CDN standalone HTML5 DAG & timeline inspector
+# Generate a zero-CDN standalone HTML5 DAG & timeline inspector (--out is an alias for --output)
 lightflow visualize --log_id=<id> [--output=/tmp/viz.html]
 
 # Delete saved state for a run (leaves external workflow artifacts untouched)

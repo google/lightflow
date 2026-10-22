@@ -6,6 +6,7 @@ description: >-
   parallel backing-resource provisioning (S3/Vault + compliance-tier KMS
   branching) with automatic retry/rollback, and two-phase GitOps PR + ArgoCD
   application sync polling.
+strict_expressions: true
 
 actions:
   # Phase 1: Spec Resolution, RBAC Check & Change Advisory Gate
@@ -107,12 +108,12 @@ stages:
     run_after:
       - create_ticket
     run_if: "payload.outputs.check_admin.is_admin == true"
-    python_action:
-      action_id: check_governance_approval
     polling_policy:
       condition: "payload.outputs.wait_governance_approval.governance_approved == true"
       interval_seconds: 1
       timeout_seconds: 30
+      poll_tick_action:
+        action_id: check_governance_approval
 
   # ============================================================================
   # PHASE 2: IdP Groups, SCIM 2.0 Push & Cloud IAM Workload Identity (6 stages)
@@ -129,12 +130,12 @@ stages:
     description: Poll SCIM 2.0 downstream group replication until SYNCED
     run_after:
       - provision_identity_groups
-    python_action:
-      action_id: check_scim_ready
     polling_policy:
       condition: "payload.outputs.wait_scim_sync.scim_ready == true"
       interval_seconds: 1
       timeout_seconds: 30
+      poll_tick_action:
+        action_id: check_scim_ready
 
   - name: create_workload_iam_role
     description: Create Cloud IAM role with OIDC Workload Identity trust for Kubernetes ServiceAccount
@@ -176,13 +177,13 @@ stages:
     run_after:
       - prompt_iam_quota_override
     trigger_rule: ALL_DONE
-    run_if: "payload.outputs.create_workload_iam_role.iam_status == 'SUCCESS' || (payload.outputs.create_workload_iam_role.iam_status == 'QUOTA_EXCEEDED' && payload.outputs.prompt_iam_quota_override.approved == true && payload.outputs.prompt_iam_quota_override.quota_override_approved == true)"
-    python_action:
-      action_id: check_iam_role_ready
+    run_if: "has(payload.outputs.create_workload_iam_role.iam_status) && (payload.outputs.create_workload_iam_role.iam_status == 'SUCCESS' || (payload.outputs.create_workload_iam_role.iam_status == 'QUOTA_EXCEEDED' && has(payload.outputs.prompt_iam_quota_override.approved) && payload.outputs.prompt_iam_quota_override.approved == true && has(payload.outputs.prompt_iam_quota_override.quota_override_approved) && payload.outputs.prompt_iam_quota_override.quota_override_approved == true))"
     polling_policy:
       condition: "payload.outputs.wait_iam_role_ready.iam_role_ready == true"
       interval_seconds: 1
       timeout_seconds: 30
+      poll_tick_action:
+        action_id: check_iam_role_ready
 
   # ============================================================================
   # PHASE 3: Parallel Backing-Resource Diamond + KMS Compliance Branch (4 stages)
@@ -224,7 +225,7 @@ stages:
       - provision_dedicated_kms_key
       - apply_shared_kms_policy
     trigger_rule: ALL_DONE
-    run_if: "payload.outputs.provision_external_resources.storage_provisioned == true && (payload.outputs.provision_dedicated_kms_key.kms_ready == true || payload.outputs.apply_shared_kms_policy.kms_ready == true)"
+    run_if: "has(payload.outputs.provision_external_resources.storage_provisioned) && payload.outputs.provision_external_resources.storage_provisioned == true && ((has(payload.outputs.provision_dedicated_kms_key.kms_ready) && payload.outputs.provision_dedicated_kms_key.kms_ready == true) || (has(payload.outputs.apply_shared_kms_policy.kms_ready) && payload.outputs.apply_shared_kms_policy.kms_ready == true))"
     python_action:
       action_id: checkpoint_registry
 
@@ -242,29 +243,29 @@ stages:
     description: Poll GitOps repository until Kubernetes namespace overlay PR is merged
     run_after:
       - scaffold_k8s_gitops_pr
-    python_action:
-      action_id: check_pr_merged
-      static_kwargs:
-        target_stage: scaffold_k8s_gitops_pr
-        target_pr_key: k8s_pr_id
     polling_policy:
       condition: "payload.outputs.wait_k8s_gitops_pr.pr_merged == true"
       interval_seconds: 1
       timeout_seconds: 60
+      poll_tick_action:
+        action_id: check_pr_merged
+        static_kwargs:
+          target_stage: scaffold_k8s_gitops_pr
+          target_pr_key: k8s_pr_id
 
   - name: wait_argocd_namespace_sync
     description: Poll ArgoCD until tenant-namespace Application reports Synced and Healthy
     run_after:
       - wait_k8s_gitops_pr
-    python_action:
-      action_id: check_argocd_synced
-      static_kwargs:
-        app_name: tenant-namespace
-        required_pr_stage: wait_k8s_gitops_pr
     polling_policy:
       condition: "payload.outputs.wait_argocd_namespace_sync.app_synced == true"
       interval_seconds: 1
       timeout_seconds: 30
+      poll_tick_action:
+        action_id: check_argocd_synced
+        static_kwargs:
+          app_name: tenant-namespace
+          required_pr_stage: wait_k8s_gitops_pr
 
   - name: package_mesh_and_catalog_pr
     description: Open GitOps PR for Gateway API HTTPRoute, Prometheus ServiceMonitor, and catalog entry
@@ -277,26 +278,26 @@ stages:
     description: Poll GitOps repository until mesh routing and catalog PR is merged
     run_after:
       - package_mesh_and_catalog_pr
-    python_action:
-      action_id: check_pr_merged
-      static_kwargs:
-        target_stage: package_mesh_and_catalog_pr
-        target_pr_key: catalog_pr_id
     polling_policy:
       condition: "payload.outputs.wait_mesh_and_catalog_pr.pr_merged == true"
       interval_seconds: 1
       timeout_seconds: 60
+      poll_tick_action:
+        action_id: check_pr_merged
+        static_kwargs:
+          target_stage: package_mesh_and_catalog_pr
+          target_pr_key: catalog_pr_id
 
   - name: wait_argocd_mesh_sync
     description: Poll ArgoCD until mesh-and-catalog Application reports Synced and Healthy
     run_after:
       - wait_mesh_and_catalog_pr
-    python_action:
-      action_id: check_argocd_synced
-      static_kwargs:
-        app_name: mesh-and-catalog
-        required_pr_stage: wait_mesh_and_catalog_pr
     polling_policy:
       condition: "payload.outputs.wait_argocd_mesh_sync.app_synced == true"
       interval_seconds: 1
       timeout_seconds: 30
+      poll_tick_action:
+        action_id: check_argocd_synced
+        static_kwargs:
+          app_name: mesh-and-catalog
+          required_pr_stage: wait_mesh_and_catalog_pr

@@ -3,6 +3,7 @@ description: >-
   Fetches live top stories from the public Hacker News Firebase API, pauses at
   a human/agent editorial gate with dynamic story previews, and publishes an
   idempotent Markdown briefing.
+strict_expressions: true
 
 actions:
   - id: fetch_top_stories
