@@ -227,7 +227,9 @@ def parse_expression(expr: str) -> Optional[ast.Expression]:
 
   rewritten = _rewrite_cel_ternary(expr)
   py_expr = _CEL_OPERATOR_PATTERN.sub(replace_ops, rewritten).strip()
-  tree = ast.parse(py_expr, mode="eval")
+  tree = ast.parse(
+      f"(\n{py_expr}\n)" if "\n" in py_expr else py_expr, mode="eval"
+  )
   _validate_ast(tree.body)
   return tree
 

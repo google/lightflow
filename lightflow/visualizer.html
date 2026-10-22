@@ -918,7 +918,7 @@
             <span class="text-sky-400 font-bold">↻ Polling Policy:</span>
             <div class="text-[10px] space-y-0.5 mt-1 text-slate-300">
               <div>Condition: <code class="text-amber-300 font-mono">${escapeHtml(stage.polling_policy.condition || "None")}</code></div>
-              <div>Interval: ${stage.polling_policy.interval_seconds || 10}s | Timeout: ${stage.polling_policy.timeout_seconds || 3600}s</div>
+              <div>Interval: ${stage.polling_policy.interval_seconds ?? 30}s | Timeout: ${stage.polling_policy.timeout_seconds ?? 3600}s</div>
             </div>
           </div>
         `;
@@ -929,7 +929,7 @@
           <div class="mt-2 pt-2 border-t border-slate-800">
             <span class="text-indigo-400 font-bold">🔄 Retry Policy:</span>
             <div class="text-[10px] space-y-0.5 mt-1 text-slate-300">
-              <div>Max Attempts: ${stage.retry_policy.max_attempts || 3} | Initial Backoff: ${stage.retry_policy.initial_backoff_seconds || 5}s</div>
+              <div>Max Attempts: ${stage.retry_policy.max_attempts ?? 1} | Initial Backoff: ${stage.retry_policy.initial_backoff_seconds ?? 5}s</div>
             </div>
           </div>
         `;

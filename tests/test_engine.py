@@ -792,6 +792,7 @@ stages:
         ("payload.get('missing', 'dev')", "dev"),
         ("payload.get('missing')", None),
         ("payload.null_map.get('k', 'def')", "def"),
+        ("payload.prod &&\n  payload.env == 'staging'", True),
     ):
       self.assertEqual(engine.evaluate_cel(expr, p, strict=True), expected)
     with self.assertRaisesRegex(engine.EngineError, "private key '_s'"):

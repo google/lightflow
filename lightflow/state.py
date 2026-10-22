@@ -599,7 +599,7 @@ _LAST_PROGRESS_RE = re.compile(
 )
 
 _MISSING_KEY_RE = re.compile(
-    r"no such key(?:/index)? '([^']+)'.*?\(in expression '(.*?)'\)"
+    r"no such key(?:/index)? '([^']+)'.*?\(in expression '(.*?)'\)", re.S
 )
 
 
@@ -740,7 +740,9 @@ def _missing_top_level_keys_from_failures(
       continue
     key, expr = m.group(1), m.group(2)
     if (
-        f"payload.{key}" in expr or f"payload['{key}']" in expr
+        f"payload.{key}" in expr
+        or f"payload['{key}']" in expr
+        or f'payload["{key}"]' in expr
     ) and key not in keys:
       keys.append(key)
   return keys

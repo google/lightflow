@@ -433,17 +433,26 @@ class LightflowRunnerCLI:
               reopen_runner.compile()
             except Exception as e:
               raise engine.EngineError(f"Compilation Error: {e}") from e
+            rearm_deps: set[str] = set()
             for dep in reopen_runner.get_downstream_dependents(stage):
-              consequential = _ran_because_of(reopen_runner, dep, latest_status)
-              if consequential:
+              if _ran_because_of(reopen_runner, dep, latest_status):
                 print(
                     f"↻ {dep} re-armed: its ALL_DONE rule ran it after the"
                     " rejection; it will run again at the end."
                 )
-              if consequential or latest_status.get(dep) in (
+                rearm_deps.add(dep)
+                rearm_deps.update(
+                    s
+                    for s in reopen_runner.get_downstream_dependents(dep)
+                    if latest_status.get(s) == schema.StampStatus.COMPLETED
+                )
+              elif latest_status.get(dep) in (
                   schema.StampStatus.FAILED,
                   schema.StampStatus.SKIPPED,
               ):
+                rearm_deps.add(dep)
+            for dep in reopen_runner.get_downstream_dependents(stage):
+              if dep in rearm_deps:
                 rearmed = engine.add_stamp(
                     passport, dep, schema.StampStatus.PENDING
                 )
@@ -830,6 +839,11 @@ class LightflowRunnerCLI:
           elif _ran_because_of(runner, dep, latest_status):
             rearm.add(dep)
             reran.append(dep)
+            rearm.update(
+                s
+                for s in runner.get_downstream_dependents(dep)
+                if latest_status.get(s) == schema.StampStatus.COMPLETED
+            )
     for dep in sorted(set(reran)):
       print(
           f"↻ {dep} re-armed: its ALL_DONE rule ran it on the failure path;"

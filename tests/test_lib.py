@@ -3154,6 +3154,9 @@ stages:
     run_after: [work]
     trigger_rule: ALL_DONE
     python_action: {{"action_id": "cleanup"}}
+  - name: post_cleanup
+    run_after: [cleanup]
+    python_action: {{"action_id": "cleanup"}}
 """,
     )
     cli = lib.LightflowRunnerCLI()
@@ -3169,6 +3172,7 @@ stages:
     pp = lib.PassportManager("fa").load_passport()
     assert pp is not None
     self.assertEqual(pp.payload["outputs"]["cleanup"]["runs"], 2)
+    self.assertEqual(pp.payload["outputs"]["post_cleanup"]["runs"], 3)
 
   def test_force_prints_what_it_discards(self) -> None:
     manifest = self._gate_wf()
@@ -3495,11 +3499,17 @@ stages:
         "gate": (
             "no such key/index 'release' (strict) (in expression"
             " 'payload['release'] == 1')"
-        )
+        ),
+        "ship": (
+            "no such key/index 'env' (strict) (in expression"
+            ' \'payload["env"] == "prod" &&\n  payload.ok\')'
+        ),
     }
     self.assertEqual(
-        lib.state_lib._missing_top_level_keys_from_failures(msgs, ["gate"]),  # pylint: disable=protected-access
-        ["release"],
+        lib.state_lib._missing_top_level_keys_from_failures(  # pylint: disable=protected-access
+            msgs, ["gate", "ship"]
+        ),
+        ["release", "env"],
     )
 
   def test_start_with_missing_manifest_path_is_a_clear_error(self):

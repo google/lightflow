@@ -113,11 +113,11 @@ Install the `lightflow` CLI and Python package directly from GitHub:
 
 ```bash
 # Into your current Python environment (pinned to a release tag)
-pip install "git+https://github.com/google/lightflow.git@v0.7.2"
+pip install "git+https://github.com/google/lightflow.git@v0.7.3"
 
 # Or install globally as a standalone CLI tool via uv or pipx
-uv tool install "git+https://github.com/google/lightflow.git@v0.7.2"
-pipx install "git+https://github.com/google/lightflow.git@v0.7.2"
+uv tool install "git+https://github.com/google/lightflow.git@v0.7.3"
+pipx install "git+https://github.com/google/lightflow.git@v0.7.3"
 ```
 
 Or clone the repository to run the bundled `examples/`, `benchmarks/`, and `create_lightflow` scaffolding workflow locally:
@@ -130,7 +130,7 @@ pip install -e .
 
 *(You can also run directly from a checkout without installing dependencies using `PYTHONPATH=. python3 -m lightflow ...`)*
 
-> **Note (Pre-1.0):** Lightflow is pre-1.0 (`0.x`): the CLI, manifest fields, and `passport.json` format (`passport_version: 1`) may still change between minor versions. Pin a release tag (`@v0.7.2`) if you depend on it.
+> **Note (Pre-1.0):** Lightflow is pre-1.0 (`0.x`): the CLI, manifest fields, and `passport.json` format (`passport_version: 1`) may still change between minor versions. Pin a release tag (`@v0.7.3`) if you depend on it.
 
 - **Where state lives:** `~/.lightflow/lightflow_state_<log_id>/passport.json` by default (mode `0700`); set `LIGHTFLOW_STATE_DIR=/some/dir` to relocate it. Runs remember their manifest path, so `status`, `resume`, `visualize`, and `cleanup` need only `--log_id`.
 - **Security model:** `python_import` executes arbitrary Python by design — **treat manifests as code**. For agent-authored manifests, set `LIGHTFLOW_ALLOWED_IMPORT_PREFIXES=my_pkg.actions,examples` to restrict imports to allowlisted prefixes and disable manifest-local `sys.path` shadowing. Use top-level `secret_keys: [...]` to redact sensitive values as `<redacted>` across console output, `status`, `dry_run`, and `visualizer.html`. See the **[Technical Reference (`docs/reference.md`)](./docs/reference.md)** for full details.
