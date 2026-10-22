@@ -25,7 +25,8 @@ import json
 import os
 import re
 import sys
-from typing import Any
+import types
+from typing import Any, Optional, Union, get_args, get_origin
 
 # pylint: disable=g-import-not-at-top,g-bad-import-order
 try:
@@ -89,6 +90,26 @@ def _format_result(res: Any) -> str:
   return str(res)
 
 
+def _is_str_only_param(param: Optional[inspect.Parameter]) -> bool:
+  """Returns True when `param` is annotated strictly as `str` or `Optional[str]`."""
+  ann = getattr(param, "annotation", inspect.Parameter.empty)
+  if ann is str:
+    return True
+  if isinstance(ann, str):
+    return ann.replace(" ", "").removeprefix("typing.") in (
+        "str",
+        "Optional[str]",
+        "str|None",
+        "None|str",
+    )
+  if get_origin(ann) in (Union, types.UnionType):
+    args = [
+        a for a in get_args(ann) if getattr(a, "__name__", "") != "NoneType"
+    ]
+    return args == [str]
+  return False
+
+
 class CliWrapper:
   """Wraps a CLI object to parse JSON/boolean flags and print return values."""
 
@@ -119,15 +140,35 @@ class CliWrapper:
     attr = getattr(self._client, name)
     if callable(attr):
       sig = None
+      pos_params: list[inspect.Parameter] = []
+      param_map: dict[str, inspect.Parameter] = {}
       try:
         sig = inspect.signature(attr)
+        param_map = dict(sig.parameters)
+        pos_params = [
+            p
+            for p in sig.parameters.values()
+            if p.kind
+            in (
+                inspect.Parameter.POSITIONAL_ONLY,
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            )
+        ]
       except (ValueError, TypeError):
         pass
 
       @functools.wraps(attr)
       def wrapper(*args: Any, **kwargs: Any) -> Any:
-        parsed_args = [_parse_arg(arg) for arg in args]
-        parsed_kwargs = {k: _parse_arg(v) for k, v in kwargs.items()}
+        parsed_args = [
+            arg
+            if idx < len(pos_params) and _is_str_only_param(pos_params[idx])
+            else _parse_arg(arg)
+            for idx, arg in enumerate(args)
+        ]
+        parsed_kwargs = {
+            k: v if _is_str_only_param(param_map.get(k)) else _parse_arg(v)
+            for k, v in kwargs.items()
+        }
         res = attr(*parsed_args, **parsed_kwargs)
         if res is not None:
           print(_format_result(res))

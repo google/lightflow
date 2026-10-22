@@ -70,6 +70,129 @@ _CEL_OPERATOR_PATTERN = re.compile(
     r'("(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\')|(&&|\|\||!(?!=)|~)'
 )
 
+_STRING_LITERAL_PATTERN = re.compile(r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'')
+_ALLOWED_DIRECT_FUNCTIONS = frozenset(
+    {"size", "len", "has", "string", "str", "int", "double", "float", "bool"}
+)
+_ALLOWED_AST_NODES = (
+    ast.Expression,
+    ast.Constant,
+    ast.Name,
+    ast.Load,
+    ast.Attribute,
+    ast.Subscript,
+    ast.IfExp,
+    ast.BinOp,
+    ast.UnaryOp,
+    ast.BoolOp,
+    ast.Compare,
+    ast.Call,
+    ast.List,
+    ast.Tuple,
+    ast.Set,
+    ast.Dict,
+    ast.And,
+    ast.Or,
+)
+
+
+def _rewrite_cel_ternary(expr: str) -> str:
+  """Rewrites CEL ternary syntax into Python conditional expressions.
+
+  Args:
+    expr: Raw CEL expression string.
+
+  Returns:
+    Expression string with ternary operators rewritten for `ast.parse`.
+  """
+  if "?" not in expr:
+    return expr
+  literals: list[str] = []
+
+  def _mask(m: re.Match[str]) -> str:
+    literals.append(m.group(0))
+    return f"\x00{len(literals) - 1}\x00"
+
+  def _rewrite(s: str) -> str:
+    if "?" not in s:
+      return s
+    depth = t_depth = 0
+    q_idx = c_idx = -1
+    for i, ch in enumerate(s):
+      depth += (ch in "([{") - (ch in ")]}")
+      if depth == 0 and ch == "?":
+        if q_idx == -1:
+          q_idx = i
+        t_depth += 1
+      elif depth == 0 and ch == ":" and q_idx != -1:
+        t_depth -= 1
+        if t_depth == 0:
+          c_idx = i
+          break
+    if q_idx != -1 and c_idx != -1:
+      cond = s[:q_idx].strip()
+      if_t = s[q_idx + 1 : c_idx].strip()
+      if_f = s[c_idx + 1 :].strip()
+      if cond and if_t and if_f:
+        return (
+            f"(({_rewrite(if_t)}) if ({_rewrite(cond)}) else"
+            f" ({_rewrite(if_f)}))"
+        )
+    out, start, depth = [], 0, 0
+    for i, ch in enumerate(s):
+      if ch in "([{" and depth == 0:
+        out.append(s[start : i + 1])
+        start = i + 1
+      depth += (ch in "([{") - (ch in ")]}")
+      if ch in ")]}" and depth == 0:
+        inner = s[start:i]
+        if "?" in inner and ch in ")]":
+          parts, p_start, p_depth = [], 0, 0
+          for j, c in enumerate(inner):
+            p_depth += (c in "([{") - (c in ")]}")
+            if c == "," and p_depth == 0:
+              parts.append(_rewrite(inner[p_start:j]))
+              p_start = j + 1
+          parts.append(_rewrite(inner[p_start:]))
+          inner = ", ".join(parts)
+        out.append(inner + ch)
+        start = i + 1
+    out.append(s[start:])
+    return "".join(out)
+
+  res = _rewrite(_STRING_LITERAL_PATTERN.sub(_mask, expr))
+  return re.sub(r"\x00(\d+)\x00", lambda m: literals[int(m.group(1))], res)
+
+
+def _validate_ast(node: ast.AST) -> None:
+  """Validates that `node` uses only AST constructs supported by CEL-lite."""
+  allowed = (
+      *_ALLOWED_AST_NODES,
+      *SafeCelEvaluator.OPERATOR_MAP,
+      *SafeCelEvaluator.UNARY_OP_MAP,
+  )
+  for sub in ast.walk(node):
+    if isinstance(sub, ast.Call):
+      if sub.keywords:
+        raise SyntaxError(
+            "Keyword arguments are not supported in CEL expressions"
+        )
+      if (
+          isinstance(sub.func, ast.Name)
+          and sub.func.id not in _ALLOWED_DIRECT_FUNCTIONS
+      ):
+        raise SyntaxError(
+            f"Direct function call '{sub.func.id}()' is not supported."
+        )
+      if not isinstance(sub.func, (ast.Name, ast.Attribute)):
+        raise SyntaxError("Direct function calls are not supported.")
+    if isinstance(sub, ast.Dict) and None in sub.keys:
+      raise SyntaxError(
+          "Dictionary unpacking is not supported in CEL expressions"
+      )
+    if not isinstance(sub, allowed):
+      raise SyntaxError(f"Unsupported AST node type: {type(sub).__name__}")
+
 
 def parse_expression(expr: str) -> Optional[ast.Expression]:
   """Normalises CEL-style operators and parses an expression.
@@ -102,8 +225,11 @@ def parse_expression(expr: str) -> Optional[ast.Expression]:
       raise SyntaxError("Unsupported operator '~' in CEL expression.")
     return match.group(1)
 
-  py_expr = _CEL_OPERATOR_PATTERN.sub(replace_ops, expr).strip()
-  return ast.parse(py_expr, mode="eval")
+  rewritten = _rewrite_cel_ternary(expr)
+  py_expr = _CEL_OPERATOR_PATTERN.sub(replace_ops, rewritten).strip()
+  tree = ast.parse(py_expr, mode="eval")
+  _validate_ast(tree.body)
+  return tree
 
 
 def _is_payload_outputs_node(node: ast.AST) -> bool:
@@ -155,9 +281,9 @@ def extract_payload_output_stage_refs(
     elif (
         isinstance(node, ast.Call)
         and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "has"
+        and node.func.attr in ("has", "get")
         and _is_payload_outputs_node(node.func.value)
-        and len(node.args) == 1
+        and 1 <= len(node.args) <= 2
         and isinstance(node.args[0], ast.Constant)
         and isinstance(node.args[0].value, str)
     ):
@@ -196,6 +322,10 @@ def extract_top_level_payload_refs(tree: Optional[ast.Expression]) -> list[str]:
   if tree is None:
     return refs
 
+  call_funcs = {
+      node.func for node in ast.walk(tree) if isinstance(node, ast.Call)
+  }
+
   def _is_payload(node: ast.AST) -> bool:
     return isinstance(node, ast.Name) and node.id == "payload"
 
@@ -207,7 +337,11 @@ def extract_top_level_payload_refs(tree: Optional[ast.Expression]) -> list[str]:
     ):
       return
     key: Optional[str] = None
-    if isinstance(node, ast.Attribute) and _is_payload(node.value):
+    if (
+        isinstance(node, ast.Attribute)
+        and node not in call_funcs
+        and _is_payload(node.value)
+    ):
       key = node.attr
     elif (
         isinstance(node, ast.Subscript)
@@ -498,6 +632,13 @@ class SafeCelEvaluator:
           ) from e
         return None
 
+    elif isinstance(node, ast.IfExp):
+      return (
+          self._eval(node.body)
+          if self._eval(node.test)
+          else self._eval(node.orelse)
+      )
+
     elif isinstance(node, ast.BinOp):
       left = self._eval(node.left)
       right = self._eval(node.right)
@@ -653,6 +794,25 @@ class SafeCelEvaluator:
           if isinstance(obj, dict):
             return args[0] in obj and obj[args[0]] is not None
           return hasattr(obj, attr_name) and getattr(obj, attr_name) is not None
+
+        if method_name == "get":
+          if len(args) not in (1, 2):
+            raise TypeError(
+                f"get() method takes 1 or 2 arguments ({len(args)} given)"
+            )
+          default_val = args[1] if len(args) == 2 else None
+          if obj is None:
+            return default_val
+          if isinstance(obj, dict):
+            key_arg = args[0]
+            if isinstance(key_arg, str) and key_arg.startswith("_"):
+              raise TypeError(f"Access to private key '{key_arg}' is blocked.")
+            val = obj.get(key_arg, default_val)
+            return default_val if val is None and key_arg not in obj else val
+          raise TypeError(
+              "Method 'get' call not allowed or not supported on"
+              f" {type(obj).__name__}"
+          )
 
         if method_name in (
             "contains",

@@ -759,6 +759,8 @@
           }
 
           const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+          path.dataset.source = parentName;
+          path.dataset.target = stage.name;
           path.setAttribute("d", `M ${x1} ${y1} C ${cx1} ${cy1}, ${cx2} ${cy2}, ${x2} ${y2}`);
           path.setAttribute("fill", "none");
           path.setAttribute("stroke", stage.run_if ? "#f59e0b" : "#475569");
@@ -773,6 +775,8 @@
 
           if (stage.run_if) {
             const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+            text.dataset.source = parentName;
+            text.dataset.target = stage.name;
             text.setAttribute("x", (x1 + x2) / 2);
             text.setAttribute("y", (y1 + y2) / 2 - 8);
             text.setAttribute("fill", "#f59e0b");
@@ -1166,6 +1170,7 @@
 
     function applyFilters() {
       const stages = WORKFLOW_DATA.stages || [];
+      const visibleStages = new Set();
       stages.forEach(s => {
         const node = document.getElementById(`node-${s.name}`);
         if (!node) return;
@@ -1181,9 +1186,14 @@
 
         if (matchesSearch && matchesType) {
           node.style.display = "";
+          visibleStages.add(s.name);
         } else {
           node.style.display = "none";
         }
+      });
+      document.querySelectorAll("#edges-group [data-source]").forEach(el => {
+        const show = visibleStages.has(el.dataset.source) && visibleStages.has(el.dataset.target);
+        el.style.display = show ? "" : "none";
       });
     }
   </script>

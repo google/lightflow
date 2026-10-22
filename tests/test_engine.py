@@ -780,6 +780,31 @@ stages:
     ):
       engine.evaluate_cel('int("10", base=16) == 16', {})
 
+  def test_cel_ternary_and_dict_get_and_compile_ast_validation(self) -> None:
+    p = {"prod": True, "n": 0, "env": "staging", "null_map": None, "_s": "x"}
+    for expr, expected in (
+        ("payload.prod ? 'live' : 'dry'", "live"),
+        ("'Mode: ' + (payload.n > 0 ? 'non-empty' : 'empty')", "Mode: empty"),
+        ("payload.n > 10 ? 'hi' : payload.prod ? 'prod-0' : 'lo'", "prod-0"),
+        ("has(payload.missing) ? payload.missing : 'fallback'", "fallback"),
+        ("'yes' if payload.prod else 'no'", "yes"),
+        ("payload.get('env', 'dev')", "staging"),
+        ("payload.get('missing', 'dev')", "dev"),
+        ("payload.get('missing')", None),
+        ("payload.null_map.get('k', 'def')", "def"),
+    ):
+      self.assertEqual(engine.evaluate_cel(expr, p, strict=True), expected)
+    with self.assertRaisesRegex(engine.EngineError, "private key '_s'"):
+      engine.evaluate_cel("payload.get('_s', 'x')", p)
+    for bad in ("[x for x in payload.a]", "(lambda x: x)(1)", "bad_fn(1)"):
+      with self.assertRaisesRegex(engine.EngineError, "not a parseable"):
+        engine.LightflowEngine(
+            schema.parse_lightflow_text(
+                f'name: w\nstages:\n  - name: s\n    run_if: "{bad}"\n'
+                "    operator_action:\n      instructions: \"'ok'\"\n"
+            )
+        ).compile()
+
   def test_compile_validates_payload_outputs_and_isolates_workflow_modules(
       self,
   ) -> None:

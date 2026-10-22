@@ -3612,6 +3612,30 @@ stages:
     self.assertEqual(runs[0].log_id, "ext_run")
     self.assertEqual(runs[0].state, "COMPLETED")
 
+  def test_cli_wrapper_preserves_string_annotated_flags(self):
+    seen: list[tuple[Any, Any, Any]] = []
+
+    class _Dummy:
+
+      def cmd(
+          self,
+          title: str | None = None,
+          comment: str = "",
+          cascade: bool = True,
+      ) -> None:
+        seen.append((title, comment, cascade))
+
+    runner_mod._dispatch_argv(  # pylint: disable=protected-access
+        runner_mod.CliWrapper(_Dummy()),
+        [
+            "cmd",
+            '--title=["Release Gate"]',
+            "--comment=false",
+            "--cascade=false",
+        ],
+    )
+    self.assertEqual(seen, [('["Release Gate"]', "false", False)])
+
 
 if __name__ == "__main__":
   unittest.main()

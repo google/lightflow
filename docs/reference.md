@@ -77,7 +77,7 @@ Listing key names in top-level `secret_keys` (e.g., `secret_keys: [api_token, db
   - `int(x)`, `double(x)`, `bool(x)` — type conversions (`0` / `0.0` / `false` for `null`)
 - **String & Collection Methods**: `contains()`, `startsWith()`, `endsWith()`, `replace(old, new)`, `split(sep)`, `strip()`, `lower()`, `upper()`, `get(key, default)`
 - **Compile-Time Validation**: `compile()` parses every expression in the manifest and verifies that any `payload.outputs.<stage>` reference names an existing stage that is an upstream dependency in `run_after`.
-- **Memory Caps**: Sequence repetition (`*`) is capped at `10,000` elements and string/list evaluation results are capped at `1,000,000` characters/items to prevent accidental OOM DoS.
+- **Memory Caps**: Sequence repetition (`*`) is capped at `10,000` elements and string/list evaluation results are capped at `100,000` characters/items to prevent accidental OOM DoS.
 
 ---
 
@@ -145,6 +145,9 @@ lightflow list [--state_dir=<dir>]
 
 # Generate a zero-CDN standalone HTML5 DAG & timeline inspector (--out is an alias for --output)
 lightflow visualize --log_id=<id> [--output=/tmp/viz.html]
+
+# Print a static Mermaid flowchart of the workflow DAG
+lightflow render --lightflow=<dir_or_manifest>
 
 # Delete saved state for a run (leaves external workflow artifacts untouched)
 lightflow cleanup --log_id=<id>
