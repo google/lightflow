@@ -340,6 +340,17 @@ class ActionExecutorMixin:
 
     return payload_res, message_res
 
+  def action_accepts_dry_run(self, action_id: str) -> bool:
+    """Returns True if `action_id` resolves to a callable with `dry_run`."""
+    try:
+      func = self._resolve_action_callable(action_id)
+      sig = inspect.signature(func)
+    except Exception:  # pylint: disable=broad-exception-caught
+      return False
+    return "dry_run" in sig.parameters or bool(
+        getattr(func, "supports_dry_run", False)
+    )
+
   def simulate_dry_run_action(
       self,
       stage_name: str,
@@ -348,16 +359,11 @@ class ActionExecutorMixin:
   ) -> Optional[tuple[dict[str, Any], str]]:
     """Simulates a PythonAction if its callable explicitly accepts `dry_run`."""
     del stage_name
+    if not self.action_accepts_dry_run(action.action_id):
+      return None
     try:
       func = self._resolve_action_callable(action.action_id)
-      sig = inspect.signature(func)
     except Exception:  # pylint: disable=broad-exception-caught
-      return None
-
-    has_explicit_dry_run = "dry_run" in sig.parameters or bool(
-        getattr(func, "supports_dry_run", False)
-    )
-    if not has_explicit_dry_run:
       return None
 
     try:

@@ -682,6 +682,10 @@ class Lightflow:
         elif isinstance(s, Stage):
           stages_list.append(s)
 
+    raw_secret_keys = data.get("secret_keys") or []
+    if isinstance(raw_secret_keys, str):
+      raw_secret_keys = [raw_secret_keys]
+
     return cls(
         name=str(data.get("name", "")),
         description=str(data.get("description", "")),
@@ -692,7 +696,7 @@ class Lightflow:
         },
         runner_target=str(data.get("runner_target", "")),
         strict_expressions=bool(data.get("strict_expressions", False)),
-        secret_keys=[str(k) for k in data.get("secret_keys") or []],
+        secret_keys=[str(k) for k in raw_secret_keys],
     )
 
 
@@ -740,14 +744,16 @@ class Stamp:
   @classmethod
   def from_dict(cls, data: dict[str, Any]) -> Stamp:
     return cls(
-        stage_name=str(data.get("stage_name", "")),
+        stage_name=str(data.get("stage_name") or data.get("stageName") or ""),
         status=StampStatus.from_value(
             data.get("status", StampStatus.STATUS_UNSPECIFIED)
         ),
         timestamp=TimestampValue(str(data.get("timestamp", ""))),
         message=str(data.get("message", "")),
         instructions=str(data.get("instructions", "")),
-        resume_command=str(data.get("resume_command", "")),
+        resume_command=str(
+            data.get("resume_command") or data.get("resumeCommand") or ""
+        ),
         reason=StampReason.from_value(
             data.get("reason", StampReason.REASON_UNSPECIFIED)
         ),
@@ -819,8 +825,12 @@ class Passport:
             s if isinstance(s, Stamp) else Stamp.from_dict(s)
             for s in stamps_data
         ),
-        lightflow_name=str(data.get("lightflow_name", "") or ""),
-        lightflow_path=str(data.get("lightflow_path", "") or ""),
+        lightflow_name=str(
+            data.get("lightflow_name") or data.get("lightflowName") or ""
+        ),
+        lightflow_path=str(
+            data.get("lightflow_path") or data.get("lightflowPath") or ""
+        ),
         passport_version=int(ver),
     )
 

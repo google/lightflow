@@ -552,7 +552,8 @@ def run_dry_run(
           unsimulated_stages.add(stage_name)
           _print_not_simulated_note(stage_name, unsimulated_stages, runner)
           counts["not_simulated"] += 1
-          not_simulated_pairs.append((stage_name, tick_action.action_id))
+          if not runner.action_accepts_dry_run(tick_action.action_id):
+            not_simulated_pairs.append((stage_name, tick_action.action_id))
     elif stage_proto.HasField("python_action") and stage_proto.python_action:
       print(
           "  Action: [RUN] executes python_action"
@@ -585,9 +586,12 @@ def run_dry_run(
         unsimulated_stages.add(stage_name)
         _print_not_simulated_note(stage_name, unsimulated_stages, runner)
         counts["not_simulated"] += 1
-        not_simulated_pairs.append(
-            (stage_name, stage_proto.python_action.action_id)
-        )
+        if not runner.action_accepts_dry_run(
+            stage_proto.python_action.action_id
+        ):
+          not_simulated_pairs.append(
+              (stage_name, stage_proto.python_action.action_id)
+          )
     elif (
         stage_proto.HasField("operator_action") and stage_proto.operator_action
     ):

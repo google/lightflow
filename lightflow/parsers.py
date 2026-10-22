@@ -124,7 +124,7 @@ def _unescape_proto_string(s: str) -> str:
 
 
 _REPEATED_KEYS = frozenset(
-    {"actions", "stages", "run_after", "fields", "values"}
+    {"actions", "stages", "run_after", "secret_keys", "fields", "values"}
 )
 
 

@@ -528,7 +528,15 @@ class SafeCelEvaluator:
       raise TypeError(f"Unsupported boolean operator: {op_type.__name__}")
 
     elif isinstance(node, ast.Compare):
-      left = self._eval(node.left)
+      negate_membership = False
+      left_node = node.left
+      if len(node.ops) == 1 and isinstance(node.ops[0], (ast.In, ast.NotIn)):
+        while isinstance(left_node, ast.UnaryOp) and isinstance(
+            left_node.op, ast.Invert
+        ):
+          negate_membership = not negate_membership
+          left_node = left_node.operand
+      left = self._eval(left_node)
       res = True
       current_left = left
       for op, comparator in zip(node.ops, node.comparators):
@@ -544,7 +552,7 @@ class SafeCelEvaluator:
           raise TypeError(
               f"Unsupported comparison operator: {op_type.__name__}"
           )
-      return res
+      return (not res) if negate_membership else res
 
     elif isinstance(node, ast.Call):
       if node.keywords:

@@ -213,6 +213,39 @@ stages:
     self.assertEqual(schema._unescape_proto_string(r"\\n"), r"\n")
     self.assertEqual(schema._unescape_proto_string(r"\n"), "\n")
 
+  def test_single_secret_key_in_textproto_and_from_dict(self) -> None:
+    parsed = schema.parse_lightflow_text(
+        'name: "wf"\nsecret_keys: "my_secret_token"\n',
+        fmt="textproto",
+    )
+    self.assertEqual(list(parsed.secret_keys), ["my_secret_token"])
+    from_dict = schema.Lightflow.from_dict(
+        {"name": "wf", "secret_keys": "my_secret_token"}
+    )
+    self.assertEqual(list(from_dict.secret_keys), ["my_secret_token"])
+
+  def test_passport_and_stamp_from_dict_accept_camelcase_proto_json(
+      self,
+  ) -> None:
+    passport = schema.Passport.from_dict({
+        "lightflowName": "g3_wf",
+        "lightflowPath": "/abs/lightflow.textproto",
+        "passportVersion": 1,
+        "stamps": [{
+            "stageName": "gate",
+            "status": "PAUSED",
+            "resumeCommand": "lightflow resume --stage=gate",
+        }],
+    })
+    self.assertEqual(passport.lightflow_name, "g3_wf")
+    self.assertEqual(passport.lightflow_path, "/abs/lightflow.textproto")
+    self.assertEqual(len(passport.stamps), 1)
+    self.assertEqual(passport.stamps[0].stage_name, "gate")
+    self.assertEqual(passport.stamps[0].status, schema.StampStatus.PAUSED)
+    self.assertEqual(
+        passport.stamps[0].resume_command, "lightflow resume --stage=gate"
+    )
+
 
 class SafeCelEvaluatorTest(unittest.TestCase):
   """Tests the AST-based SafeCelEvaluator."""
@@ -281,6 +314,38 @@ class SafeCelEvaluatorTest(unittest.TestCase):
       engine.evaluate_cel("'a' * 1000000", {})
     with self.assertRaises(engine.EngineError):
       engine.evaluate_cel("payload.env.upper", {"env": "prod"})
+
+  def test_negated_membership_operator_in_cel(self) -> None:
+    self.assertTrue(
+        engine.evaluate_cel(
+            "!payload.env in ['dev', 'staging']", {"env": "prod"}
+        )
+    )
+    self.assertFalse(
+        engine.evaluate_cel(
+            "!payload.env in ['dev', 'staging']", {"env": "dev"}
+        )
+    )
+    self.assertTrue(
+        engine.evaluate_cel(
+            "!!payload.env in ['dev', 'staging']", {"env": "dev"}
+        )
+    )
+    self.assertFalse(
+        engine.evaluate_cel(
+            "!!payload.env in ['dev', 'staging']", {"env": "prod"}
+        )
+    )
+    self.assertTrue(
+        engine.evaluate_cel(
+            "!payload.env not in ['dev', 'staging']", {"env": "dev"}
+        )
+    )
+    self.assertFalse(
+        engine.evaluate_cel(
+            "!payload.env not in ['dev', 'staging']", {"env": "prod"}
+        )
+    )
 
   def test_import_prefix_boundary_and_duplicate_stage_guard(self) -> None:
     dup_wf = schema.Lightflow(

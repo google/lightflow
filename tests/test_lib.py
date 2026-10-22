@@ -2318,6 +2318,13 @@ stages:
     self.assertIn("No runs found", empty.getvalue())
 
 
+def act_needs_summary(
+    payload: dict[str, Any], dry_run: bool = False, **static_kwargs: Any
+) -> tuple[dict[str, Any], str]:
+  del dry_run, static_kwargs
+  return {"summary_len": len(payload["summary"])}, "Measured summary"
+
+
 class DryRunDiagnosticsTest(_SandboxTestCase):
   """Behaviours added after multi-tier dogfooding of the CLI."""
 
@@ -2468,6 +2475,37 @@ stages:
     )
     self.assertIn('--payload=\'{"seed": "<value>"}\'', out)
     self.assertIn("💡 Not simulated: scan (action 'nosim')", out)
+
+  def test_dry_run_does_not_claim_missing_dry_run_param_when_upstream_unsimulated(
+      self,
+  ) -> None:
+    manifest = self._write(
+        "downstream_dry_run.yaml",
+        f"""
+name: downstream_dry_run_wf
+actions:
+  - id: raw_act
+    python_import: {__name__}.act_step_1
+  - id: sim_act
+    python_import: {__name__}.act_needs_summary
+stages:
+  - name: raw
+    python_action: {{"action_id": "raw_act"}}
+  - name: downstream
+    run_after: [raw]
+    python_action: {{"action_id": "sim_act"}}
+  - name: gate
+    run_after: [downstream]
+    operator_action:
+      instructions: "'Len ' + string(payload.outputs.downstream.summary_len)"
+""",
+    )
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+      lib.LightflowRunnerCLI().dry_run(lightflow=manifest)
+    out = buf.getvalue()
+    self.assertIn("💡 Not simulated: raw (action 'raw_act').", out)
+    self.assertNotIn("downstream (action 'sim_act')", out)
 
   def test_runtime_failure_on_unseeded_key_suggests_payload(self) -> None:
     manifest = self._write(
