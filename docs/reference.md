@@ -52,6 +52,7 @@ Python threads cannot be forcibly killed from user space. When `timeout_seconds`
 - The engine stops waiting and raises `StageTimeoutError`, while the timed-out worker thread continues in the background until its underlying I/O call returns (always pass explicit timeouts to HTTP/DB clients inside actions).
 - If `retry_policy` has remaining attempts, the engine waits for the backoff interval and checks whether the timed-out thread finished during the backoff. If it is still running, the engine **does not start a concurrent retry** (preventing overlapping side effects) and fails with an explicit `"not retried"` note.
 - Before invoking `rollback_action`, the engine waits up to one additional `timeout_seconds` window for any in-flight worker thread to exit; if the worker is still alive, rollback is skipped with an explicit warning in the stamp message.
+- A polling tick is additionally bounded by what is left of `polling_policy.timeout_seconds`, so a hung tick cannot outlive the polling budget even when the stage sets no `timeout_seconds`. Running out of polling budget *during* a tick is treated like running out *between* ticks: the stage yields (exit `5`, no rollback) and `resume` polls again. Only a `stage.timeout_seconds` expiry is a hard failure with rollback.
 
 ### Secret Redaction (`secret_keys`)
 
@@ -128,7 +129,8 @@ lightflow dry_run --lightflow=<dir_or_manifest> [--payload='{...}']
 # Start a run (accepts inline JSON, --payload=@file.json, --payload=@-, or --payload_file=file.json)
 lightflow start --lightflow=<dir_or_manifest> --log_id=<id> [--payload='{...}'] [--force]
 
-# Resolve a paused operator_action gate (--lightflow is remembered from start)
+# Resolve a paused operator_action gate (--lightflow is remembered from start;
+# --resolution and --comment require --stage and are refused without it)
 lightflow resume --log_id=<id> --stage=<gate> --resolution=APPROVE [--payload='{...}']
 lightflow resume --log_id=<id> --stage=<gate> --resolution=REJECT [--comment="..."]
 

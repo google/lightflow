@@ -2705,6 +2705,56 @@ stages:
     )
     self.assertIn("⬜ after: not started", status_buf.getvalue())
 
+  def test_resume_with_resolution_but_no_stage_refuses_without_mutation(
+      self,
+  ) -> None:
+    manifest = self._write(
+        "reject_no_stage.yaml",
+        f"""
+name: reject_no_stage_wf
+actions:
+  - id: fail
+    python_import: {__name__}.act_break_then_fail_rollback
+  - id: compute
+    python_import: {__name__}.act_emit_count_42
+stages:
+  - name: broken
+    python_action: {{"action_id": "fail"}}
+  - name: after
+    run_after: [broken]
+    python_action: {{"action_id": "compute"}}
+""",
+    )
+    cli = lib.LightflowRunnerCLI()
+    with self.assertRaises(lib.LightflowRunFailedError):
+      cli.start(lightflow=manifest, log_id="rns")
+    pm = lib.PassportManager("rns")
+    with open(pm.passport_file, "rb") as f:
+      before = f.read()
+
+    # A REJECT (or a comment) only means something against a named gate.
+    # Before the fix this fell through to "re-arm failed stages and run".
+    refused = (
+        lambda: cli.resume(log_id="rns", resolution="REJECT"),
+        lambda: cli.resume(log_id="rns", resolution="APPROVE"),
+        lambda: cli.resume(log_id="rns", comment="stop"),
+    )
+    for i, call in enumerate(refused):
+      with self.subTest(i=i):
+        with self.assertRaisesRegex(ValueError, r"require '--stage=<gate>'"):
+          call()
+        with open(pm.passport_file, "rb") as f:
+          self.assertEqual(before, f.read())
+    latest = self._latest("rns")
+    self.assertEqual(latest["broken"], schema.StampStatus.FAILED)
+    self.assertNotIn(schema.StampStatus.PENDING, latest.values())
+
+    # A bare resume still takes the re-arm-and-continue path.
+    with self.assertRaises(lib.LightflowRunFailedError):
+      cli.resume(log_id="rns")
+    with open(pm.passport_file, "rb") as f:
+      self.assertNotEqual(before, f.read())
+
   def test_rejected_gate_footer_and_one_call_reopen(self) -> None:
     manifest = self._write(
         "reject.yaml",

@@ -21,6 +21,7 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
+import time
 from typing import Any
 import unittest
 
@@ -110,6 +111,23 @@ def sample_poll_tick(
   _POLL_COUNTER += 1
   status_val = "READY" if _POLL_COUNTER >= 2 else "RUNNING"
   return {"job_status": status_val}, f"Tick {_POLL_COUNTER}: {status_val}"
+
+
+def sample_hung_tick(
+    payload: dict[str, Any], **static_kwargs: Any
+) -> tuple[dict[str, Any], str]:
+  """Poll tick that outlives a short budget (sleep_seconds is a static kwarg)."""
+  del payload
+  time.sleep(float(static_kwargs.get("sleep_seconds", 2)))
+  return {"job_status": "RUNNING"}, "still running"
+
+
+def sample_rollback_marker(
+    payload: dict[str, Any], **static_kwargs: Any
+) -> tuple[dict[str, Any], str]:
+  del payload, static_kwargs
+  _CALL_LOG.append("sample_rollback_marker")
+  return {}, "rolled back"
 
 
 class SchemaAndManifestParserTest(unittest.TestCase):
@@ -592,6 +610,94 @@ stages:
     self.assertEqual(latest["failing_stage"], schema.StampStatus.FAILED)
     self.assertEqual(latest["skipped_downstream"], schema.StampStatus.FAILED)
     self.assertEqual(latest["always_cleanup"], schema.StampStatus.COMPLETED)
+
+  def test_poll_tick_budget_picks_the_tighter_bound(self) -> None:
+    # No polling budget: only the stage timeout applies (or nothing).
+    self.assertEqual(engine.poll_tick_budget(None, None), (None, False))
+    self.assertEqual(engine.poll_tick_budget(0, None), (None, False))
+    self.assertEqual(engine.poll_tick_budget(7, None), (7, False))
+    # Polling budget only: rounded up, never below one second.
+    self.assertEqual(engine.poll_tick_budget(None, 59.2), (60, True))
+    self.assertEqual(engine.poll_tick_budget(None, 0.01), (1, True))
+    self.assertEqual(engine.poll_tick_budget(None, -3.0), (1, True))
+    # Both: the tighter one wins and says which it was.
+    self.assertEqual(engine.poll_tick_budget(2, 60.0), (2, False))
+    self.assertEqual(engine.poll_tick_budget(60, 1.5), (2, True))
+    self.assertEqual(engine.poll_tick_budget(2, 2.0), (2, True))
+
+  def test_polling_budget_bounds_a_hung_tick_and_yields(self) -> None:
+    # No stage timeout: before the fix the tick ran inline and unbounded.
+    yaml_manifest = f"""
+name: poll_budget_wf
+actions:
+  - id: hung_tick
+    python_import: {__name__}.sample_hung_tick
+  - id: rb
+    python_import: {__name__}.sample_rollback_marker
+stages:
+  - name: poll_stage
+    rollback_action: {{"action_id": "rb"}}
+    polling_policy:
+      condition: "payload.job_status == 'READY'"
+      interval_seconds: 1
+      timeout_seconds: 1
+      poll_tick_action:
+        action_id: hung_tick
+        static_kwargs: {{"sleep_seconds": 2}}
+"""
+    wf = schema.parse_lightflow_text(yaml_manifest)
+    start = time.monotonic()
+    passport = engine.LightflowEngine(wf).execute_stage(
+        "poll_stage", schema.Passport()
+    )
+
+    # Bounded by the 1s polling budget, not the 2s tick.
+    self.assertLess(time.monotonic() - start, 2.5)
+    latest = passport.stamps[-1]
+    self.assertEqual(latest.status, schema.StampStatus.FAILED)
+    # Running out of budget mid-tick is a yield, exactly like running out
+    # between ticks: resumable, and no rollback.
+    self.assertEqual(latest.reason, schema.Stamp.POLL_YIELD)
+    self.assertIn("polling timed out", latest.message)
+    self.assertIn("poll tick was still running", latest.message)
+    self.assertIn("Yielding control back to operator/agent", latest.message)
+    self.assertNotIn("sample_rollback_marker", _CALL_LOG)
+
+  def test_polling_stage_timeout_tighter_than_budget_is_a_hard_failure(
+      self,
+  ) -> None:
+    # 1.5s: past the 1s stage timeout, but done within the rollback grace.
+    yaml_manifest = f"""
+name: poll_stage_timeout_wf
+actions:
+  - id: hung_tick
+    python_import: {__name__}.sample_hung_tick
+  - id: rb
+    python_import: {__name__}.sample_rollback_marker
+stages:
+  - name: poll_stage
+    timeout_seconds: 1
+    rollback_action: {{"action_id": "rb"}}
+    polling_policy:
+      condition: "payload.job_status == 'READY'"
+      interval_seconds: 1
+      timeout_seconds: 60
+      poll_tick_action:
+        action_id: hung_tick
+        static_kwargs: {{"sleep_seconds": 1.5}}
+"""
+    wf = schema.parse_lightflow_text(yaml_manifest)
+    passport = engine.LightflowEngine(wf).execute_stage(
+        "poll_stage", schema.Passport()
+    )
+
+    latest = passport.stamps[-1]
+    self.assertEqual(latest.status, schema.StampStatus.FAILED)
+    self.assertNotEqual(latest.reason, schema.Stamp.POLL_YIELD)
+    self.assertIn("exceeded timeout_seconds=1", latest.message)
+    # The stage timeout keeps its failure semantics: rollback ran (once the
+    # abandoned tick finished).
+    self.assertIn("sample_rollback_marker", _CALL_LOG)
 
   def test_build_resume_command_quotes_args_with_spaces(self) -> None:
     wf = schema.Lightflow(

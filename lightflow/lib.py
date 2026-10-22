@@ -306,7 +306,9 @@ class LightflowRunnerCLI:
       resolution: `APPROVE` (default when omitted) or `REJECT`. Passing it
         explicitly on a *rejected* gate re-opens the gate and applies the
         decision in one call; omitting it only re-opens (pauses) the gate.
-      comment: Optional operator comment recorded on the stamp.
+        Requires `--stage`.
+      comment: Optional operator comment recorded on the stamp. Requires
+        `--stage`.
       operator: Optional operator identity; defaults to the current user.
       cascade: When re-arming a named failed stage, also re-arm its dependents
         (default true).
@@ -348,6 +350,16 @@ class LightflowRunnerCLI:
           f"Invalid resolution '{resolution}'. Must be 'APPROVE' or 'REJECT'."
       )
     is_reject = norm_resolution in ("REJECT", "2")
+    # A decision only means something against a named gate. Without `--stage`
+    # the call would fall through to the generic "re-arm failed stages and
+    # continue" path, silently turning a REJECT into a resume. Refuse before
+    # the lock is taken so no state is read or mutated.
+    if stage is None and (resolution_given or comment):
+      raise ValueError(
+          "'--resolution' and '--comment' apply to a paused operator_action"
+          " gate and require '--stage=<gate>'. To continue a failed run"
+          " instead, omit them."
+      )
 
     with pm.lock(exclusive=True, remove_if_uninitialized=True):
       passport = pm.load_passport()

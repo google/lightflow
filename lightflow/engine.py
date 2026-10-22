@@ -18,6 +18,7 @@ from __future__ import annotations
 
 # pylint: disable=g-long-ternary
 
+import math
 import os
 import random
 import sys
@@ -45,6 +46,38 @@ except ImportError:
 # pylint: disable=protected-access
 EngineError = cel_lite.EngineError
 StageTimeoutError = cel_lite.StageTimeoutError
+
+
+def poll_tick_budget(
+    stage_timeout: Optional[int], budget_left: Optional[float]
+) -> tuple[Optional[int], bool]:
+  """Bounds one polling tick by the polling budget and the stage timeout.
+
+  A tick is bounded by whatever is left of `polling_policy.timeout_seconds` so
+  a hung tick cannot outlive the documented polling budget, and by
+  `stage.timeout_seconds` when that is tighter. The budget is rounded up to a
+  whole second and never below one, so a nearly spent budget still gets its
+  last tick instead of a zero timeout that would run unbounded.
+
+  Args:
+    stage_timeout: `stage.timeout_seconds`, or None when unset.
+    budget_left: Seconds left of the polling budget, or None when unbounded.
+
+  Returns:
+    `(tick_timeout, budget_bound)`: the timeout to run the tick under (None
+    for unbounded) and whether the polling budget is the binding bound. The
+    caller yields on a budget-bound timeout (like running out of budget
+    between ticks) and fails on a stage-bound one (like any stage timeout).
+  """
+  stage_bound = stage_timeout if stage_timeout and stage_timeout > 0 else None
+  if budget_left is None:
+    return stage_bound, False
+  budget = max(1, math.ceil(budget_left))
+  if stage_bound is not None and stage_bound < budget:
+    return stage_bound, False
+  return budget, True
+
+
 MissingFieldError = cel_lite.MissingFieldError
 OperatorActionSuspended = cel_lite.OperatorActionSuspended
 ManualGateSuspended = cel_lite.ManualGateSuspended
@@ -392,9 +425,13 @@ class LightflowEngine(
 
     while True:
       attempts += 1
+      budget_left = (
+          timeout - (time.monotonic() - start_time) if timeout > 0 else None
+      )
+      tick_budget, budget_bound = poll_tick_budget(tick_timeout, budget_left)
       try:
         new_payload, message = self._execute_action_with_timeout(
-            stage_name, action, payload_dict, timeout=tick_timeout
+            stage_name, action, payload_dict, timeout=tick_budget
         )
         payload_lib._print_merge_collisions(
             stage_name,
@@ -406,6 +443,43 @@ class LightflowEngine(
         set_payload(passport.payload, payload_dict)
         if save_callback:
           save_callback(passport)
+      except StageTimeoutError as e:
+        if budget_bound:
+          # The polling budget ran out while a tick was in flight. That is the
+          # same situation as running out between ticks: the external job is
+          # still running, so yield rather than fail (and never roll back).
+          # The tick's thread cannot be killed; it ends with the process.
+          elapsed = time.monotonic() - start_time
+          progress_note = (
+              f" (last progress: {pending_stamp.message})"
+              if pending_stamp.message
+              else ""
+          )
+          return self._yield_polling_stage(
+              stage_name,
+              passport,
+              payload_dict,
+              f"Stage '{stage_name}' polling timed out after {elapsed:.1f}s"
+              f" while a poll tick was still running{progress_note}."
+              " Yielding control back to operator/agent. State is"
+              " preserved; the tick's worker thread ends with this process.",
+          )
+        failed_stamp = add_stamp(passport, stage_name, _FAILED)
+        failed_stamp.message = (
+            f"Polling tick failed: {e}\n{traceback.format_exc()}"
+        )
+        _announce_failure(
+            stage_name, self._redact(failed_stamp.message, payload_dict)
+        )
+        self.run_rollback_if_defined(
+            stage_name,
+            stage,
+            passport,
+            payload_dict,
+            failed_stamp,
+            live_workers=[e.worker] if e.worker else [],
+        )
+        return passport
       except Exception as e:  # pylint: disable=broad-exception-caught
         failed_stamp = add_stamp(passport, stage_name, _FAILED)
         failed_stamp.message = (
@@ -489,27 +563,49 @@ class LightflowEngine(
               " operator/agent. State is preserved."
           )
 
-        add_stamp(
-            passport,
-            stage_name,
-            _FAILED,
-            err_msg,
-            reason=schema.Stamp.POLL_YIELD,
+        return self._yield_polling_stage(
+            stage_name, passport, payload_dict, err_msg
         )
-
-        print(
-            f"  ⏳ [{stage_name}] {self._redact(err_msg, payload_dict)}",
-            flush=True,
-        )
-        send_notification(
-            f"Stage Waiting: {stage_name}",
-            f"⏳ {stage_name}: waiting for an external condition",
-        )
-        # A yield is a pause, not a failure: the external job is still
-        # running and `resume` polls it again, so no rollback here.
-        return passport
 
       time.sleep(interval)
+
+  def _yield_polling_stage(
+      self,
+      stage_name: str,
+      passport: schema.Passport,
+      payload_dict: dict[str, Any],
+      err_msg: str,
+  ) -> schema.Passport:
+    """Stamps a POLL_YIELD and hands control back to the operator/agent.
+
+    A yield is a pause, not a failure: the external job is still running and
+    `resume` polls it again, so no rollback is run here.
+
+    Args:
+      stage_name: The polling stage.
+      passport: Passport to stamp.
+      payload_dict: Current payload, used to redact the console line.
+      err_msg: Yield message recorded on the stamp and echoed.
+
+    Returns:
+      The stamped passport.
+    """
+    add_stamp(
+        passport,
+        stage_name,
+        _FAILED,
+        err_msg,
+        reason=schema.Stamp.POLL_YIELD,
+    )
+    print(
+        f"  ⏳ [{stage_name}] {self._redact(err_msg, payload_dict)}",
+        flush=True,
+    )
+    send_notification(
+        f"Stage Waiting: {stage_name}",
+        f"⏳ {stage_name}: waiting for an external condition",
+    )
+    return passport
 
   def _execute_python_stage(
       self,
