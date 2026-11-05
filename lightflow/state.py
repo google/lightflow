@@ -544,7 +544,10 @@ def _replace_stage_outputs(
           and key not in stage_output
       ):
         payload_dict.pop(key)
-  outputs[stage_name] = dict(stage_output)
+  if stage_output:
+    outputs[stage_name] = dict(stage_output)
+  else:
+    outputs.pop(stage_name, None)
   payload_dict[engine.STAGE_OUTPUTS_KEY] = outputs
 
 
@@ -775,6 +778,7 @@ def _raise_for_run_state(
     *,
     resume_hint: str = "",
     waiting: Optional[list[str]] = None,
+    payload_hint: str = "",
 ) -> None:
   """Raises the exception the runner maps to `state`'s exit code.
 
@@ -786,6 +790,7 @@ def _raise_for_run_state(
     unfinished: Stages not yet COMPLETED or SKIPPED.
     resume_hint: Concrete `resume` command for the message.
     waiting: Polling stages that yielded.
+    payload_hint: Schema-derived `--payload` placeholder for a rejected gate.
 
   Raises:
     LightflowRunningError: Another process holds the lock (exit 4).
@@ -815,11 +820,12 @@ def _raise_for_run_state(
   if state == "REJECTED":
     gate = rejected[0]
     cmd = resume_hint or "lightflow resume --log_id=<id>"
+    payload_arg = payload_hint or "--payload='{...}'"
     raise LightflowRunFailedError(
         f"Lightflow stopped: operator gate(s) {', '.join(rejected)} were"
         " rejected."
         " Nothing to fix. To re-open the gate and decide again in one call:"
-        f" {cmd} --stage={gate} --resolution=APPROVE|REJECT --payload='{{...}}'"
+        f" {cmd} --stage={gate} --resolution=APPROVE|REJECT {payload_arg}"
         f" (or just {cmd} --stage={gate} to re-open it and pause there)."
     )
   if state == "WAITING":

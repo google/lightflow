@@ -112,12 +112,19 @@ def spawn_background_job(
     json.dump(initial_state, f)
 
   # pylint: disable=consider-using-with
+  popen_kwargs: dict[str, Any] = {
+      "stdin": subprocess.DEVNULL,
+      "stdout": subprocess.DEVNULL,
+      "stderr": subprocess.DEVNULL,
+      "start_new_session": True,
+  }
+  if sys.platform == "win32":
+    popen_kwargs["creationflags"] = getattr(
+        subprocess, "DETACHED_PROCESS", 0x00000008
+    ) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
   proc = subprocess.Popen(
       [sys.executable, "-c", _WORKER_SCRIPT, status_file, str(delay)],
-      stdin=subprocess.DEVNULL,
-      stdout=subprocess.DEVNULL,
-      stderr=subprocess.DEVNULL,
-      start_new_session=True,
+      **popen_kwargs,
   )
 
   return (

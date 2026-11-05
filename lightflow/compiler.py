@@ -413,6 +413,16 @@ class CompilerMixin:
               f"Stage '{stage.name}': polling_policy.max_attempts must"
               f" be between 0 and 1000, got {policy.max_attempts}."
           )
+      if (
+          policy.HasField("timeout_seconds")
+          and policy.timeout_seconds == 0
+          and not (policy.HasField("max_attempts") and policy.max_attempts)
+      ):
+        raise EngineError(
+            f"Stage '{stage.name}': polling_policy.timeout_seconds is 0"
+            " (unbounded), which requires a positive"
+            " polling_policy.max_attempts (1-1000) so polling can still yield."
+        )
       if not policy.condition or not policy.condition.strip():
         raise EngineError(
             f"Stage '{stage.name}': polling_policy.condition must be a"

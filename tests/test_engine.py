@@ -24,6 +24,7 @@ import tempfile
 import time
 from typing import Any
 import unittest
+from unittest import mock
 
 # Ensure standalone execution (`python3 -m unittest`) resolves `lightflow`
 _OSS_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -924,6 +925,48 @@ class NoneFailedTriggerRuleTest(unittest.TestCase):
     )
     self.assertFalse(ok)
     self.assertNotEqual(status, schema.StampStatus.FAILED)
+
+  def test_polling_policy_zero_timeout_without_max_attempts_rejected(
+      self,
+  ) -> None:
+    wf = schema.Lightflow.from_dict({
+        "name": "unbounded_poll",
+        "actions": [{"id": "x", "python_import": "m.f"}],
+        "stages": [{
+            "name": "wait",
+            "python_action": {"action_id": "x"},
+            "polling_policy": {
+                "condition": "payload.ready == true",
+                "interval_seconds": 1,
+                "timeout_seconds": 0,
+            },
+        }],
+    })
+    with self.assertRaisesRegex(
+        engine.EngineError,
+        r"polling_policy\.timeout_seconds is 0 \(unbounded\)",
+    ):
+      engine.LightflowEngine(wf).compile()
+
+  def test_resume_target_windows_exe_and_python_launcher(self) -> None:
+    wf = schema.Lightflow.from_dict({"name": "win_wf", "stages": []})
+    eng = engine.LightflowEngine(wf, log_id="r1")
+    with (
+        mock.patch.object(engine.os, "name", "nt"),
+        mock.patch.object(engine.sys, "executable", r"C:\Python312\python.exe"),
+        mock.patch.object(
+            engine.sys, "argv", [r"C:\Scripts\lightflow.exe", "start"]
+        ),
+        mock.patch.dict(engine.sys.modules, {"__main__": object()}),
+    ):
+      self.assertEqual(eng.resume_target(), "lightflow")
+    with (
+        mock.patch.object(engine.os, "name", "nt"),
+        mock.patch.object(engine.sys, "executable", r"C:\Python312\python.exe"),
+        mock.patch.object(engine.sys, "argv", ["lightflow/runner.py"]),
+        mock.patch.dict(engine.sys.modules, {"__main__": object()}),
+    ):
+      self.assertEqual(eng.resume_target(), "python lightflow/runner.py")
 
 
 if __name__ == "__main__":

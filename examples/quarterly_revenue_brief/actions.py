@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import tempfile
 from typing import Any
 
 # 12 segment rows across NA, EMEA, and APAC (values in $M):
@@ -194,7 +195,7 @@ def analyze_variances(
 
 def render_report(
     payload: dict[str, Any],
-    default_output: str = "/tmp/q3_revenue_brief.md",
+    default_output: str = "",
     dry_run: bool = False,
     **kwargs: Any,
 ) -> tuple[dict[str, Any], str]:
@@ -205,10 +206,17 @@ def render_report(
   analysis = outputs.get("analyze_variances", {})
   gate_out = outputs.get("draft_commentary", {})
 
+  fallback_output = default_output or os.path.join(
+      tempfile.gettempdir(), "q3_revenue_brief.md"
+  )
+  if os.name == "nt" and fallback_output.startswith("/tmp/"):
+    fallback_output = os.path.join(
+        tempfile.gettempdir(), fallback_output.removeprefix("/tmp/")
+    )
   output_path = str(
       gate_out.get("output_path")
       or payload.get("output_path")
-      or default_output
+      or fallback_output
   )
   commentary = str(
       gate_out.get("commentary")

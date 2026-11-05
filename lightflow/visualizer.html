@@ -721,7 +721,7 @@
         const targetPos = nodePositions.get(stage.name);
         if (!targetPos) return;
 
-        (stage.run_after || []).forEach(parentName => {
+        (stage.run_after || []).forEach((parentName, edgeIdx) => {
           const sourcePos = nodePositions.get(parentName);
           if (!sourcePos) return;
 
@@ -773,17 +773,24 @@
           }
           edgesGroup.appendChild(path);
 
-          if (stage.run_if) {
+          if (stage.run_if && edgeIdx === 0) {
             const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
             text.dataset.source = parentName;
             text.dataset.target = stage.name;
-            text.setAttribute("x", (x1 + x2) / 2);
-            text.setAttribute("y", (y1 + y2) / 2 - 8);
+            const labelX = layoutOrientation === 'TB' ? x2 : x1 + (x2 - x1) * 0.72;
+            const labelY = layoutOrientation === 'TB' ? y2 - 12 : y1 + (y2 - y1) * 0.72 - 8;
+            text.setAttribute("x", labelX);
+            text.setAttribute("y", labelY);
             text.setAttribute("fill", "#f59e0b");
             text.setAttribute("font-size", "10");
             text.setAttribute("font-family", "monospace");
             text.setAttribute("text-anchor", "middle");
-            text.textContent = `if: ${stage.run_if}`;
+            const rawCond = String(stage.run_if);
+            const shortCond = rawCond.length > 34 ? `${rawCond.slice(0, 31)}...` : rawCond;
+            text.textContent = `if: ${shortCond}`;
+            const title = document.createElementNS("http://www.w3.org/2000/svg", "title");
+            title.textContent = `if: ${rawCond}`;
+            text.appendChild(title);
             edgesGroup.appendChild(text);
           }
         });

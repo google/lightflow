@@ -513,57 +513,41 @@ def run_dry_run(
       sim_stamp.status = schema.StampStatus.SKIPPED
       continue
 
+    target_action: Optional[schema.PythonAction] = None
     if stage_proto.HasField("polling_policy") and stage_proto.polling_policy:
       policy = stage_proto.polling_policy
-      tick_action = (
+      target_action = (
           policy.poll_tick_action
           if policy.HasField("poll_tick_action") and policy.poll_tick_action
           else stage_proto.python_action
       )
-      if tick_action is not None:
+      if target_action is not None:
         print(
             "  Action: [POLL] executes"
-            f" '{tick_action.action_id}' until '{policy.condition}'"
+            f" '{target_action.action_id}' until '{policy.condition}'"
         )
-        static_args = engine.static_kwargs_dict(tick_action)
-        if static_args:
-          print(f"    Static Args: {static_args}")
-        simulated = runner.simulate_dry_run_action(
-            stage_name, tick_action, current_payload
-        )
-        if isinstance(simulated, tuple) and len(simulated) == 2:
-          sim_payload, sim_msg = simulated
-          collisions = engine.merge_stage_payload(
-              current_payload, stage_name, sim_payload
-          )
-          shown_msg = engine.redact_text(
-              sim_msg, current_payload, workflow_proto.secret_keys
-          )
-          print(f"    Dry-Run Output: {shown_msg}")
-          counts["simulated"] += 1
-          for key, previous_owner in collisions:
-            if key in runner.top_level_keys_read:
-              print(
-                  f"    ⚠️ Overwrites top-level payload key '{key}'"
-                  f" (previously set by {previous_owner}), which an"
-                  " expression reads"
-              )
-        else:
-          unsimulated_stages.add(stage_name)
-          _print_not_simulated_note(stage_name, unsimulated_stages, runner)
-          counts["not_simulated"] += 1
-          if not runner.action_accepts_dry_run(tick_action.action_id):
-            not_simulated_pairs.append((stage_name, tick_action.action_id))
     elif stage_proto.HasField("python_action") and stage_proto.python_action:
+      target_action = stage_proto.python_action
       print(
-          "  Action: [RUN] executes python_action"
-          f" '{stage_proto.python_action.action_id}'"
+          f"  Action: [RUN] executes python_action '{target_action.action_id}'"
       )
-      static_args = engine.static_kwargs_dict(stage_proto.python_action)
+    if target_action is not None:
+      static_args = engine.static_kwargs_dict(target_action)
       if static_args:
         print(f"    Static Args: {static_args}")
+      action_err = runner.validate_action_for_dry_run(target_action.action_id)
+      if isinstance(action_err, str) and action_err:
+        print(f"    ❌ {action_err}")
+        print("  Status: [WOULD FAIL] ❌\n")
+        counts["would_fail"] += 1
+        would_fail_stages.append(stage_name)
+        unsimulated_stages.add(stage_name)
+        sim_stamp = sim_passport.stamps.add()
+        sim_stamp.stage_name = stage_name
+        sim_stamp.status = schema.StampStatus.FAILED
+        continue
       simulated = runner.simulate_dry_run_action(
-          stage_name, stage_proto.python_action, current_payload
+          stage_name, target_action, current_payload
       )
       if isinstance(simulated, tuple) and len(simulated) == 2:
         sim_payload, sim_msg = simulated
@@ -586,12 +570,8 @@ def run_dry_run(
         unsimulated_stages.add(stage_name)
         _print_not_simulated_note(stage_name, unsimulated_stages, runner)
         counts["not_simulated"] += 1
-        if not runner.action_accepts_dry_run(
-            stage_proto.python_action.action_id
-        ):
-          not_simulated_pairs.append(
-              (stage_name, stage_proto.python_action.action_id)
-          )
+        if not runner.action_accepts_dry_run(target_action.action_id):
+          not_simulated_pairs.append((stage_name, target_action.action_id))
     elif (
         stage_proto.HasField("operator_action") and stage_proto.operator_action
     ):

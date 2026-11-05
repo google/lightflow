@@ -340,6 +340,14 @@ class ActionExecutorMixin:
 
     return payload_res, message_res
 
+  def validate_action_for_dry_run(self, action_id: str) -> Optional[str]:
+    """Returns an error string if `action_id` cannot resolve to a callable."""
+    try:
+      self._resolve_action_callable(action_id)
+    except Exception as e:  # pylint: disable=broad-exception-caught
+      return str(e)
+    return None
+
   def action_accepts_dry_run(self, action_id: str) -> bool:
     """Returns True if `action_id` resolves to a callable with `dry_run`."""
     try:

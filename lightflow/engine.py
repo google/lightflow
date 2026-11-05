@@ -130,6 +130,7 @@ resolve_lightflow_path = compiler_lib.resolve_lightflow_path
 validate_json_schema = compiler_lib.validate_json_schema
 check_json_schema = compiler_lib.check_json_schema
 resume_note = compiler_lib.resume_note
+payload_placeholder = compiler_lib._payload_placeholder
 CompilerMixin = compiler_lib.CompilerMixin
 ActionExecutorMixin = executor_lib.ActionExecutorMixin
 
@@ -228,17 +229,23 @@ class LightflowEngine(
     # module's file path, so argv[0] alone cannot distinguish ``-m`` from a
     # direct ``python path/to/runner.py``; ``__main__.__spec__`` can (it is
     # only populated for ``-m`` / package execution).
+    exe_base = os.path.basename(sys.executable or "").lower()
+    py_cmd = (
+        "python"
+        if os.name == "nt" and not exe_base.startswith("python3")
+        else "python3"
+    )
     main_spec = getattr(sys.modules.get("__main__"), "__spec__", None)
     main_name = getattr(main_spec, "name", "") or ""
     if main_name == "lightflow.__main__" or main_name == "lightflow":
-      return "python3 -m lightflow"
+      return f"{py_cmd} -m lightflow"
     if main_name == "lightflow.runner":
-      return "python3 -m lightflow.runner"
+      return f"{py_cmd} -m lightflow.runner"
     if normalized.endswith(("lightflow/__main__.py", "lightflow/runner.py")):
       # Direct script invocation from a source checkout: echo the path the
       # user typed so the hint is copy-pasteable from their cwd.
-      return f"python3 {payload_lib._quote_cli_arg(argv0)}"
-    if os.path.basename(normalized) == "lightflow":
+      return f"{py_cmd} {payload_lib._quote_cli_arg(argv0)}"
+    if normalized.rsplit("/", 1)[-1].lower() in ("lightflow", "lightflow.exe"):
       # Installed console script
       # (``pip install "git+https://github.com/google/lightflow.git"``).
       return "lightflow"

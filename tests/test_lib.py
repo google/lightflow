@@ -3646,6 +3646,88 @@ stages:
     )
     self.assertEqual(seen, [('["Release Gate"]', "false", False)])
 
+  def test_dry_run_marks_missing_action_attribute_would_fail(self):
+    manifest = self._write(
+        "work/bad_action.yaml",
+        f"""
+name: bad_action_wf
+actions:
+  - id: broken
+    python_import: {__name__}.no_such_function_attr
+stages:
+  - name: s1
+    python_action: {{"action_id": "broken"}}
+""",
+    )
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+      with self.assertRaises(lib.LightflowRunFailedError):
+        lib.LightflowRunnerCLI().dry_run(lightflow=manifest)
+    out = buf.getvalue()
+    self.assertIn("has no attribute 'no_such_function_attr'", out)
+    self.assertIn("Status: [WOULD FAIL] ❌", out)
+
+  def test_rearm_clears_rollback_outputs_and_rejected_gate_shows_schema_hint(
+      self,
+  ):
+    global _STAGE_2_SHOULD_FAIL
+    _STAGE_2_SHOULD_FAIL = True
+    manifest = self._write(
+        "work/rollback_rearm.yaml",
+        f"""
+name: rollback_rearm_wf
+actions:
+  - id: fail_act
+    python_import: {__name__}.act_step_2_repairable
+  - id: rb_act
+    python_import: {__name__}.act_step_1
+stages:
+  - name: deploy
+    run_if: "payload.skip_deploy != true"
+    python_action: {{"action_id": "fail_act"}}
+    rollback_action: {{"action_id": "rb_act"}}
+  - name: gate
+    run_after: [deploy]
+    trigger_rule: NONE_FAILED
+    operator_action:
+      instructions: "'Approve release?'"
+      json_schema: '{{"type":"object","properties":{{"ticket":{{"type":"string"}}}},"required":["ticket"]}}'
+""",
+    )
+    cli = lib.LightflowRunnerCLI()
+    with contextlib.redirect_stdout(io.StringIO()):
+      with self.assertRaises(lib.LightflowRunFailedError):
+        cli.start(lightflow=manifest, log_id="rb_run")
+    pp = lib.PassportManager("rb_run").load_passport()
+    assert pp is not None
+    self.assertIn("deploy", pp.payload["outputs"])
+    self.assertTrue(pp.payload.get("step_1_done"))
+
+    with contextlib.redirect_stdout(io.StringIO()):
+      with self.assertRaises(engine.OperatorActionSuspended):
+        cli.resume(log_id="rb_run", payload={"skip_deploy": True})
+    pp = lib.PassportManager("rb_run").load_passport()
+    assert pp is not None
+    self.assertNotIn("deploy", pp.payload.get("outputs", {}))
+    self.assertNotIn("step_1_done", pp.payload)
+
+    rej_buf = io.StringIO()
+    with self.assertRaises(lib.LightflowRunFailedError):
+      with contextlib.redirect_stdout(rej_buf):
+        cli.resume(
+            log_id="rb_run",
+            stage="gate",
+            resolution="REJECT",
+            comment="wait",
+        )
+    self.assertIn('--payload=\'{"ticket": "<string>"}\'', rej_buf.getvalue())
+    with self.assertRaises(lib.LightflowRunFailedError) as status_cm:
+      with contextlib.redirect_stdout(io.StringIO()):
+        cli.status(log_id="rb_run")
+    self.assertIn(
+        '--payload=\'{"ticket": "<string>"}\'', str(status_cm.exception)
+    )
+
 
 if __name__ == "__main__":
   unittest.main()

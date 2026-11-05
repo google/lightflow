@@ -862,6 +862,11 @@ class LightflowRunnerCLI:
     rearmed = [s for s in ordered_stages if s in rearm]
     if rearmed:
       failed = [s for s in rearmed if s in targets and s not in repolled]
+      if failed:
+        payload_dict = engine.payload_to_dict(passport.payload)
+        for stage_name in failed:
+          _replace_stage_outputs(payload_dict, stage_name, {})
+        engine.set_payload(passport.payload, payload_dict)
       polls = [s for s in rearmed if s in repolled]
       downstream = [s for s in rearmed if s not in targets]
       parts = []
@@ -1098,6 +1103,13 @@ class LightflowRunnerCLI:
       print("\nLIGHTFLOW STATUS DIAGRAM:")
       print(generate_status_mermaid(lightflow_proto, passport))
 
+    rejected_payload_hint = ""
+    if rejected and rejected[0] in stages_by_name:
+      rej_stage = stages_by_name[rejected[0]]
+      if rej_stage.HasField("operator_action") and rej_stage.operator_action:
+        rejected_payload_hint = engine.payload_placeholder(
+            rej_stage.operator_action.json_schema
+        )
     _raise_for_run_state(
         state,
         paused,
@@ -1110,6 +1122,7 @@ class LightflowRunnerCLI:
             include_lightflow=not passport.lightflow_path,
         ),
         waiting=waiting,
+        payload_hint=rejected_payload_hint,
     )
 
   def dry_run(
@@ -1446,10 +1459,21 @@ class LightflowRunnerCLI:
           print(
               f"⏸️ Open gate(s), still awaiting a decision: {', '.join(paused)}"
           )
+        gate_stage = runner.get_stage(gate)
+        placeholder = ""
+        if (
+            gate_stage
+            and gate_stage.HasField("operator_action")
+            and gate_stage.operator_action
+        ):
+          placeholder = engine.payload_placeholder(
+              gate_stage.operator_action.json_schema
+          )
+        placeholder = placeholder or "--payload='{...}'"
         print(
             "Nothing to fix. To re-open the gate and decide again in one"
             f" call:\n  {resume_cmd} --stage={gate} --resolution=APPROVE"
-            " --payload='{...}'\n(or just"
+            f" {placeholder}\n(or just"
             f" {resume_cmd} --stage={gate} to re-open it and pause there)."
         )
         raise LightflowRunFailedError(headline, already_reported=True)
