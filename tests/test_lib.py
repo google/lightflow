@@ -325,23 +325,24 @@ stages:
       ):
         return runner.resume_target()
 
+    py_cmd = "python" if os.name == "nt" else "python3"
     # python -m lightflow.runner / python -m lightflow
     self.assertEqual(
         _with_main("/x/lightflow/runner.py", "lightflow.runner"),
-        "python3 -m lightflow.runner",
+        f"{py_cmd} -m lightflow.runner",
     )
     self.assertEqual(
         _with_main("/x/lightflow/__main__.py", "lightflow.__main__"),
-        "python3 -m lightflow",
+        f"{py_cmd} -m lightflow",
     )
     # Direct script from a source checkout echoes the typed path (quoted).
     self.assertEqual(
         _with_main("src/lightflow/runner.py", None),
-        "python3 src/lightflow/runner.py",
+        f"{py_cmd} src/lightflow/runner.py",
     )
     self.assertEqual(
         _with_main("my dir/lightflow/runner.py", None),
-        "python3 'my dir/lightflow/runner.py'",
+        f"{py_cmd} 'my dir/lightflow/runner.py'",
     )
     # Installed console script.
     self.assertEqual(_with_main("/venv/bin/lightflow", None), "lightflow")
