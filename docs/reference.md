@@ -60,7 +60,7 @@ Listing key names in top-level `secret_keys` (e.g., `secret_keys: [api_token, db
 - **Key matching at any depth**: Both `payload.api_token` and `payload.outputs.<stage>.api_token` are replaced with `<redacted>`.
 - **Substring scrubbing**: Non-empty string values stored under a secret key are also scrubbed if interpolated into other payload strings, stamp messages, console progress lines, gate `Instructions`, `status` (including `--verbose`), `dry_run`, or `visualizer.html`.
 - **Opaque derived values**: If an action derives a new opaque secret (such as a hash or a server-minted session token) and returns it under a different key name, include that key name in `secret_keys` as well.
-- **On-disk persistence**: `passport.json` retains the unredacted values so downstream stages can read them on `resume`. The state directory is created with mode `0700`.
+- **On-disk persistence**: `passport.json` retains the unredacted values so downstream stages can read them on `resume`. On POSIX, the state directory is created with mode `0700` (on Windows, rely on a user-private directory and avoid pointing `LIGHTFLOW_STATE_DIR` at a shared folder when using `secret_keys`).
 
 ---
 

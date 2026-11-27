@@ -50,6 +50,7 @@ set_payload = payload_lib.set_payload
 static_kwargs_dict = payload_lib.static_kwargs_dict
 
 _LOADED_MODULE_HASHES: dict[str, bytes] = {}
+_IMPORT_LOCK = threading.RLock()
 
 
 def _file_fingerprint(path: str) -> Optional[bytes]:
@@ -153,6 +154,13 @@ class ActionExecutorMixin:
       The imported module.
     """
     parts = module_path.split(".")
+    with _IMPORT_LOCK:
+      return self._import_action_module_locked(module_path, parts)
+
+  def _import_action_module_locked(
+      self, module_path: str, parts: list[str]
+  ) -> Any:
+    """Imports `module_path` under `_IMPORT_LOCK`."""
     if self.allowed_import_prefixes is None:
       candidate_dirs = [os.getcwd()]
       local_roots: list[str] = []

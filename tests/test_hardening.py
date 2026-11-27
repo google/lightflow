@@ -20,12 +20,15 @@ from __future__ import annotations
 
 import contextlib
 import io
+import json
 import os
+import re
 import shutil
 import sys
 import tempfile
 import threading
 import time
+import types
 from typing import Any
 import unittest
 from unittest import mock
@@ -36,15 +39,21 @@ if _OSS_ROOT not in sys.path:
 
 # pylint: disable=g-import-not-at-top,g-bad-import-order
 try:
+  from .. import lightflow as lightflow_pkg
   from ..lightflow import engine
   from ..lightflow import lib
   from ..lightflow import runner
   from ..lightflow import schema
+  from ..lightflow import state as state_lib
+  from ..lightflow import visualizer
 except (ImportError, ValueError):
+  import lightflow as lightflow_pkg  # pyrefly: ignore[missing-import]
   from lightflow import engine  # pyrefly: ignore[missing-import]
   from lightflow import lib  # pyrefly: ignore[missing-import]
   from lightflow import runner  # pyrefly: ignore[missing-import]
   from lightflow import schema  # pyrefly: ignore[missing-import]
+  from lightflow import state as state_lib  # pyrefly: ignore[missing-import]
+  from lightflow import visualizer  # pyrefly: ignore[missing-import]
 # pylint: enable=g-import-not-at-top,g-bad-import-order
 
 
@@ -1282,6 +1291,293 @@ stages:
         " sure it is idempotent.",
         resume_buf.getvalue(),
     )
+
+  def test_visualizer_single_pass_substitution_blocks_placeholder_expansion(
+      self,
+  ) -> None:
+    wf = schema.Lightflow(
+        name="viz_placeholder_wf",
+        description="literal __PASSPORT_DATA__ and __TITLE__",
+        stages=[
+            schema.Stage(
+                name="s1",
+                description="stage __PASSPORT_DATA__",
+                python_action=schema.PythonAction(action_id="ok"),
+            )
+        ],
+    )
+    pp = schema.Passport(
+        lightflow_name="viz_placeholder_wf",
+        payload=schema.StructDict({"note": "__WORKFLOW_DATA__"}),
+    )
+    rendered = visualizer.generate_visualizer_html(
+        wf, pp, title="Title __WORKFLOW_DATA__ __PASSPORT_DATA__"
+    )
+    wf_match = re.search(
+        r"const WORKFLOW_DATA = (.*);$", rendered, re.MULTILINE
+    )
+    pp_match = re.search(
+        r"const PASSPORT_DATA = (.*);$", rendered, re.MULTILINE
+    )
+    self.assertIsNotNone(wf_match)
+    self.assertIsNotNone(pp_match)
+    assert wf_match is not None and pp_match is not None
+    parsed_wf = json.loads(wf_match.group(1))
+    parsed_pp = json.loads(pp_match.group(1))
+    self.assertEqual(
+        parsed_wf["description"], "literal __PASSPORT_DATA__ and __TITLE__"
+    )
+    self.assertEqual(
+        parsed_wf["stages"][0]["description"], "stage __PASSPORT_DATA__"
+    )
+    self.assertEqual(parsed_pp["payload"]["note"], "__WORKFLOW_DATA__")
+    self.assertIn(
+        "<title>Title __WORKFLOW_DATA__ __PASSPORT_DATA__</title>", rendered
+    )
+
+  def test_cel_string_formats_booleans_lowercase_and_rejects_bool_as_int(
+      self,
+  ) -> None:
+    self.assertEqual(engine.evaluate_cel("string(true)", {}), "true")
+    self.assertEqual(engine.evaluate_cel("string(false)", {}), "false")
+    self.assertEqual(
+        engine.evaluate_cel("'ok=' + true + '/' + false", {}), "ok=true/false"
+    )
+    for expr in (
+        "true % 2",
+        "1 % false",
+        "'a' * true",
+        "true * 2",
+        "payload.items[true]",
+    ):
+      with self.subTest(expr=expr):
+        with self.assertRaises(engine.EngineError):
+          engine.evaluate_cel(expr, {"items": ["a", "b"]})
+    self.assertFalse(
+        engine.evaluate_cel("has(payload.items[true])", {"items": ["a", "b"]})
+    )
+
+  def test_cel_ternary_inside_dict_and_set_literals(self) -> None:
+    self.assertEqual(
+        engine.evaluate_cel(
+            "{'k': payload.ok ? 1 : 2, 'm': !payload.ok ? 'a' : 'b'}",
+            {"ok": True},
+        ),
+        {"k": 1, "m": "b"},
+    )
+    self.assertEqual(
+        engine.evaluate_cel("{'k': payload.ok ? 1 : 2}['k']", {"ok": False}),
+        2,
+    )
+    self.assertTrue(
+        engine.evaluate_cel("1 in {payload.ok ? 1 : 2}", {"ok": True})
+    )
+
+  def test_stdlib_json_schema_distinguishes_bool_from_int_in_const_and_enum(
+      self,
+  ) -> None:
+    validate = schema._validate_json_schema_stdlib
+    for instance, bad_schema in (
+        (1, {"const": True}),
+        (0, {"const": False}),
+        (True, {"const": 1}),
+        (False, {"const": 0}),
+        (True, {"enum": [1, 2]}),
+        (1, {"enum": [True, False]}),
+        ([1], {"const": [True]}),
+        ({"a": 1}, {"const": {"a": True}}),
+    ):
+      with self.subTest(instance=instance, schema=bad_schema):
+        with self.assertRaises(ValueError):
+          validate(instance, bad_schema)
+    validate(1.0, {"const": 1})
+    validate(True, {"const": True})
+    validate(True, {"enum": [True, "yes"]})
+
+  def test_fallback_yaml_flow_list_quoting_escapes_and_flow_mapping_items(
+      self,
+  ) -> None:
+    parse = schema._parse_simple_yaml
+    # Unquoted YAML flow mapping inside a block list must fail loudly rather
+    # than corrupting into `{'{id': ...}`.
+    with self.assertRaisesRegex(ValueError, "flow mapping"):
+      parse("name: demo\nactions:\n  - {id: a, python_import: p.f}\n")
+    # JSON-style flow mapping inside a block list parses cleanly.
+    self.assertEqual(
+        parse(
+            'name: demo\nactions:\n  - {"id": "a", "python_import": "p.f"}\n'
+        ),
+        {"name": "demo", "actions": [{"id": "a", "python_import": "p.f"}]},
+    )
+    self.assertEqual(
+        parse('secret_keys: ["a,b", "c"]\n'),
+        {"secret_keys": ["a,b", "c"]},
+    )
+    self.assertEqual(
+        parse('name: "a\\"b\\nc"\n'),
+        {"name": 'a"b\nc'},
+    )
+    self.assertEqual(
+        parse("name: 'it''s ok'\n"),
+        {"name": "it's ok"},
+    )
+    for bad in ('name: "\n', 'name: "a" + "b"\n', "name: 'a' + 'b'\n"):
+      with self.subTest(bad=bad):
+        with self.assertRaises(ValueError):
+          parse(bad)
+
+  def test_direct_execute_stage_does_not_stamp_paused_or_unspecified_child(
+      self,
+  ) -> None:
+    wf = schema.Lightflow(
+        name="direct_exec_wf",
+        actions=[
+            schema.ActionDefinition(id="ok", python_import=f"{__name__}.act_ok")
+        ],
+        stages=[
+            schema.Stage(
+                name="gate",
+                operator_action=schema.OperatorAction(
+                    instructions="'Approve?'"
+                ),
+            ),
+            schema.Stage(
+                name="child",
+                run_after=["gate"],
+                python_action=schema.PythonAction(action_id="ok"),
+            ),
+        ],
+    )
+    eng = engine.LightflowEngine(wf)
+    # Waiting on unstarted parent should not append a STATUS_UNSPECIFIED stamp.
+    pp_waiting = schema.Passport()
+    eng.execute_stage("child", pp_waiting)
+    self.assertEqual(list(pp_waiting.stamps), [])
+
+    # Waiting on paused parent raises without stamping PAUSED on the child.
+    pp_paused = schema.Passport()
+    with self.assertRaises(engine.OperatorActionSuspended):
+      eng.execute_stage("gate", pp_paused)
+    with self.assertRaises(engine.OperatorActionSuspended):
+      eng.execute_stage("child", pp_paused)
+    self.assertEqual(
+        [(s.stage_name, s.status) for s in pp_paused.stamps],
+        [
+            ("gate", schema.StampStatus.PENDING),
+            ("gate", schema.StampStatus.PAUSED),
+        ],
+    )
+
+  def test_posix_lock_inode_verification_and_unlink_while_locked(self) -> None:
+    pm = lib.PassportManager("posix_lock_test")
+    lock_path = pm.resolved_path + ".lock"
+    events: list[str] = []
+
+    fake_fcntl = types.SimpleNamespace(
+        LOCK_EX=2, LOCK_SH=1, LOCK_NB=4, LOCK_UN=8
+    )
+
+    def fake_flock(fd: Any, flags: int) -> None:
+      del fd
+      if flags == fake_fcntl.LOCK_UN:
+        events.append("unlock")
+      else:
+        events.append("lock")
+
+    fake_fcntl.flock = fake_flock
+    real_remove = os.remove
+
+    def tracking_remove(path: str) -> None:
+      if path == lock_path:
+        events.append("remove")
+      real_remove(path)
+
+    # First lstat returns a stale inode so lock() unlocks, reopens, and retries.
+    real_fstat = os.fstat
+    real_lstat = os.lstat
+    lstat_calls = [0]
+
+    def fake_lstat(path: str) -> Any:
+      res = real_lstat(path)
+      if path == lock_path:
+        lstat_calls[0] += 1
+        if lstat_calls[0] == 1:
+          return types.SimpleNamespace(
+              st_ino=res.st_ino + 1, st_dev=res.st_dev
+          )
+      return res
+
+    with (
+        mock.patch.object(state_lib, "fcntl", fake_fcntl),
+        mock.patch.object(state_lib.os, "fstat", side_effect=real_fstat),
+        mock.patch.object(state_lib.os, "lstat", side_effect=fake_lstat),
+        mock.patch.object(state_lib.os, "remove", side_effect=tracking_remove),
+    ):
+      with pm.lock(exclusive=True, remove_if_uninitialized=True):
+        events.append("body")
+
+    # On POSIX: first stale lock retries, then body runs, then unlink happens
+    # before the final unlock (on Windows remove on an open file raises
+    # PermissionError caught as OSError; assert ordering of events).
+    self.assertEqual(events[:4], ["lock", "unlock", "lock", "body"])
+    self.assertLess(events.index("remove"), len(events) - 1)
+    self.assertEqual(events[-1], "unlock")
+
+  def test_cli_version_sync_and_dispatch_edge_cases(self) -> None:
+    self.assertEqual(runner._VERSION, lightflow_pkg.__version__)
+    plugin_path = os.path.join(_OSS_ROOT, "plugin.json")
+    if os.path.exists(plugin_path):
+      with open(plugin_path, "r", encoding="utf-8") as f:
+        plugin_meta = json.load(f)
+      self.assertEqual(plugin_meta["version"], lightflow_pkg.__version__)
+    pyproject_path = os.path.join(_OSS_ROOT, "pyproject.toml")
+    if os.path.exists(pyproject_path):
+      with open(pyproject_path, "r", encoding="utf-8") as f:
+        pyproject_text = f.read()
+      self.assertIn(
+          f'version = "{lightflow_pkg.__version__}"', pyproject_text
+      )
+
+    calls: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
+
+    class FakeCLI:
+
+      def resume(
+          self,
+          stage: str = "",
+          comment: str = "",
+          cascade: bool = True,
+      ) -> None:
+        calls.append(
+            ((), {"stage": stage, "comment": comment, "cascade": cascade})
+        )
+
+      def start(self, lightflow: str = "", dry_run: bool = False) -> None:
+        calls.append(((lightflow,), {"dry_run": dry_run}))
+
+    wrapper = runner.CliWrapper(FakeCLI())
+    runner._dispatch_argv(
+        wrapper,
+        [
+            "resume",
+            "--stage",
+            "g",
+            "--comment",
+            "-- see ticket",
+            "--cascade",
+            "false",
+        ],
+    )
+    self.assertEqual(
+        calls[-1],
+        ((), {"stage": "g", "comment": "-- see ticket", "cascade": False}),
+    )
+
+    runner._dispatch_argv(wrapper, ["start", "--dry_run", "flow.yaml"])
+    self.assertEqual(calls[-1], (("flow.yaml",), {"dry_run": True}))
+
+    with self.assertRaisesRegex(ValueError, r"Unknown flag '--bad flag'"):
+      runner._dispatch_argv(wrapper, ["resume", "--bad flag=1"])
 
 
 if __name__ == "__main__":

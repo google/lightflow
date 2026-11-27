@@ -146,15 +146,39 @@ def _rewrite_cel_ternary(expr: str) -> str:
       depth += (ch in "([{") - (ch in ")]}")
       if ch in ")]}" and depth == 0:
         inner = s[start:i]
-        if "?" in inner and ch in ")]":
+        if "?" in inner:
           parts, p_start, p_depth = [], 0, 0
           for j, c in enumerate(inner):
             p_depth += (c in "([{") - (c in ")]}")
             if c == "," and p_depth == 0:
-              parts.append(_rewrite(inner[p_start:j]))
+              parts.append(inner[p_start:j])
               p_start = j + 1
-          parts.append(_rewrite(inner[p_start:]))
-          inner = ", ".join(parts)
+          parts.append(inner[p_start:])
+          if ch == "}":
+            rewritten_parts = []
+            for entry in parts:
+              e_depth = e_tdepth = 0
+              sep_idx = -1
+              for j, c in enumerate(entry):
+                e_depth += (c in "([{") - (c in ")]}")
+                if e_depth == 0:
+                  if c == "?":
+                    e_tdepth += 1
+                  elif c == ":":
+                    if e_tdepth > 0:
+                      e_tdepth -= 1
+                    else:
+                      sep_idx = j
+                      break
+              if sep_idx != -1:
+                k_part = _rewrite(entry[:sep_idx])
+                v_part = _rewrite(entry[sep_idx + 1 :])
+                rewritten_parts.append(f"{k_part}:{v_part}")
+              else:
+                rewritten_parts.append(_rewrite(entry))
+            inner = ", ".join(rewritten_parts)
+          else:
+            inner = ", ".join(_rewrite(p) for p in parts)
         out.append(inner + ch)
         start = i + 1
     out.append(s[start:])
@@ -375,8 +399,20 @@ def _cap_result(value: Any) -> Any:
   return value
 
 
+def _cel_str(value: Any) -> str:
+  """Converts a primitive or object to its CEL string form."""
+  if isinstance(value, bool):
+    return "true" if value else "false"
+  return str(value)
+
+
 def _safe_mul(left: Any, right: Any) -> Any:
   """Multiplies values while capping sequence repetition to prevent OOM DoS."""
+  if isinstance(left, bool) or isinstance(right, bool):
+    raise TypeError(
+        "Operator '*' is not supported for boolean operands, got"
+        f" {type(left).__name__} and {type(right).__name__}."
+    )
   if isinstance(left, (str, bytes, list, tuple)) and isinstance(right, int):
     if len(left) * max(right, 0) > _MAX_SEQUENCE_REPEAT:
       raise ValueError(
@@ -395,9 +431,9 @@ def _safe_mul(left: Any, right: Any) -> Any:
 def _safe_add(left: Any, right: Any) -> Any:
   """Adds two values, coercing numeric/boolean primitives onto a str."""
   if isinstance(left, str) and isinstance(right, (int, float, bool)):
-    right = str(right)
+    right = _cel_str(right)
   elif isinstance(right, str) and isinstance(left, (int, float, bool)):
-    left = str(left)
+    left = _cel_str(left)
   if isinstance(left, (str, bytes, list, tuple)) and isinstance(
       right, (str, bytes, list, tuple)
   ):
@@ -434,7 +470,12 @@ def _safe_replace(obj: str, args: list[Any]) -> str:
 
 def _safe_mod(left: Any, right: Any) -> Any:
   """Numeric modulo only; printf-style `str % x` can allocate huge padding."""
-  if not isinstance(left, (int, float)) or not isinstance(right, (int, float)):
+  if (
+      isinstance(left, bool)
+      or isinstance(right, bool)
+      or not isinstance(left, (int, float))
+      or not isinstance(right, (int, float))
+  ):
     raise TypeError(
         "Operator '%' is only supported between numbers, got"
         f" {type(left).__name__} and {type(right).__name__}."
@@ -537,7 +578,7 @@ class SafeCelEvaluator:
         if isinstance(base, dict):
           return slice_val in base and base[slice_val] is not None
         if isinstance(base, (list, tuple)):
-          if isinstance(slice_val, int):
+          if isinstance(slice_val, int) and not isinstance(slice_val, bool):
             return 0 <= slice_val < len(base) and base[slice_val] is not None
           return False
         return False
@@ -619,6 +660,8 @@ class SafeCelEvaluator:
         raise TypeError(
             f"Access to private subscript key '{slice_val}' is blocked."
         )
+      if isinstance(value, (list, tuple)) and isinstance(slice_val, bool):
+        raise TypeError("List index must be an integer, not bool.")
       try:
         return value[slice_val]
       except (KeyError, IndexError, TypeError) as e:
@@ -731,7 +774,7 @@ class SafeCelEvaluator:
                 " given)"
             )
           val = self._eval(node.args[0])
-          return "" if val is None else _cap_result(str(val))
+          return "" if val is None else _cap_result(_cel_str(val))
 
         elif func_name == "int":
           if len(node.args) != 1:

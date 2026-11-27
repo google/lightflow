@@ -25,6 +25,7 @@ import html
 import importlib.resources
 import json
 import os
+import re
 from typing import Any, Optional
 
 # pylint: disable=g-import-not-at-top,g-bad-import-order
@@ -37,6 +38,11 @@ except ImportError:
   from lightflow import schema  # pyrefly: ignore[missing-import]
   from lightflow import state  # pyrefly: ignore[missing-import]
 # pylint: enable=g-import-not-at-top,g-bad-import-order
+
+
+_TEMPLATE_PLACEHOLDER_RE = re.compile(
+    r"__(?:TITLE|BG_CLASS|WORKFLOW_DATA|PASSPORT_DATA)__"
+)
 
 
 def _load_template() -> str:
@@ -146,8 +152,14 @@ def generate_visualizer_html(
   )
 
   template = _load_template()
-  rendered = template.replace("__TITLE__", display_title)
-  rendered = rendered.replace("__BG_CLASS__", bg_class)
-  rendered = rendered.replace("__WORKFLOW_DATA__", wf_json)
-  rendered = rendered.replace("__PASSPORT_DATA__", pp_json)
-  return rendered
+  replacements = {
+      "__TITLE__": display_title,
+      "__BG_CLASS__": bg_class,
+      "__WORKFLOW_DATA__": wf_json,
+      "__PASSPORT_DATA__": pp_json,
+  }
+  # Single-pass substitution so literal placeholder tokens inside workflow
+  # metadata or passport payloads cannot be expanded by a subsequent pass.
+  return _TEMPLATE_PLACEHOLDER_RE.sub(
+      lambda match: replacements[match.group(0)], template
+  )
