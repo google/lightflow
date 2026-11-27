@@ -30,6 +30,7 @@ from typing import Any, Optional, Union, get_args, get_origin
 
 # pylint: disable=g-import-not-at-top,g-bad-import-order
 try:
+  from . import __version__ as _VERSION
   from . import engine
   from . import lib
 except ImportError:
@@ -40,11 +41,10 @@ except ImportError:
   _OSS_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
   if _OSS_ROOT not in sys.path:
     sys.path.insert(0, _OSS_ROOT)
+  from lightflow import __version__ as _VERSION  # pyrefly: ignore[missing-import]
   from lightflow import engine  # pyrefly: ignore[missing-import]
   from lightflow import lib  # pyrefly: ignore[missing-import]
 # pylint: enable=g-import-not-at-top,g-bad-import-order
-
-_VERSION = "0.7.4"
 
 
 def _parse_arg(val: Any) -> Any:
@@ -249,6 +249,37 @@ def _render_command_help(cmd_name: str, target: Any) -> str:
   return f"{usage}\n\n{doc}".strip()
 
 
+def _is_bool_param(param: Optional[inspect.Parameter]) -> bool:
+  """Returns True when `param` is a boolean flag parameter."""
+  if param is None:
+    return False
+  if isinstance(param.default, bool):
+    return True
+  ann = getattr(param, "annotation", inspect.Parameter.empty)
+  if ann is bool:
+    return True
+  if isinstance(ann, str):
+    return ann.strip() == "bool"
+  return False
+
+
+def _is_known_flag_token(
+    tok: str, param_map: dict[str, inspect.Parameter]
+) -> bool:
+  """Returns True if `tok` names `--help` or a known flag of the command."""
+  if tok in ("-h", "--help"):
+    return True
+  if not tok.startswith("--"):
+    return False
+  body = tok[2:].split("=", 1)[0]
+  norm = body.replace("-", "_")
+  if norm in param_map:
+    return True
+  if norm.startswith("no_") and norm[3:] in param_map:
+    return True
+  return False
+
+
 def _dispatch_argv(wrapper: CliWrapper, argv: list[str]) -> None:
   """Dispatches command-line arguments to a CLI command."""
   commands = sorted(dir(wrapper))
@@ -272,6 +303,16 @@ def _dispatch_argv(wrapper: CliWrapper, argv: list[str]) -> None:
     )
 
   target = getattr(wrapper, cmd_name)
+  sig = getattr(target, "__signature__", None)
+  if sig is None:
+    try:
+      sig = inspect.signature(target)
+    except (ValueError, TypeError):
+      sig = None
+  param_map: dict[str, inspect.Parameter] = (
+      dict(sig.parameters) if sig is not None else {}
+  )
+
   pos_args: list[Any] = []
   kw_args: dict[str, Any] = {}
   i = 1
@@ -300,25 +341,41 @@ def _dispatch_argv(wrapper: CliWrapper, argv: list[str]) -> None:
         kw_args[norm_k] = v
       elif body.startswith("no-") or body.startswith("no_"):
         kw_args[body[3:].replace("-", "_")] = False
-      elif i + 1 < len(argv) and not argv[i + 1].startswith("--"):
+      else:
         norm_k = body.replace("-", "_")
-        v = argv[i + 1]
-        i += 1
-        if (
-            norm_k == "payload"
-            and v.lstrip().startswith(("{", "["))
-            and not _is_balanced_json_like(v)
+        param = param_map.get(norm_k)
+        has_next = i + 1 < len(argv)
+        next_tok = argv[i + 1] if has_next else ""
+        if _is_bool_param(param):
+          if has_next and next_tok.lower() in ("true", "false"):
+            kw_args[norm_k] = next_tok
+            i += 1
+          else:
+            kw_args[norm_k] = True
+        elif has_next and (
+            not next_tok.startswith("--")
+            or (
+                param is not None
+                and not _is_known_flag_token(next_tok, param_map)
+            )
         ):
-          while (
-              i + 1 < len(argv)
-              and not argv[i + 1].startswith("--")
+          v = next_tok
+          i += 1
+          if (
+              norm_k == "payload"
+              and v.lstrip().startswith(("{", "["))
               and not _is_balanced_json_like(v)
           ):
-            i += 1
-            v = f"{v} {argv[i]}"
-        kw_args[norm_k] = v
-      else:
-        kw_args[body.replace("-", "_")] = True
+            while (
+                i + 1 < len(argv)
+                and not argv[i + 1].startswith("--")
+                and not _is_balanced_json_like(v)
+            ):
+              i += 1
+              v = f"{v} {argv[i]}"
+          kw_args[norm_k] = v
+        else:
+          kw_args[norm_k] = True
     else:
       pos_args.append(tok)
     i += 1
@@ -345,17 +402,11 @@ def _dispatch_argv(wrapper: CliWrapper, argv: list[str]) -> None:
   try:
     target(*pos_args, **kw_args)
   except TypeError as e:
-    unknown = re.search(r"unexpected keyword argument '(\w+)'", str(e))
+    unknown = re.search(r"unexpected keyword argument '([^']+)'", str(e))
     if not unknown:
       raise
     flag = unknown.group(1)
     supported: list[str] = []
-    sig = getattr(target, "__signature__", None)
-    if sig is None:
-      try:
-        sig = inspect.signature(target)
-      except (ValueError, TypeError):
-        sig = None
     if sig is not None:
       supported = [
           f"--{name}"

@@ -140,7 +140,7 @@ Both arms are at ceiling (100%) on adherence in v2, and the design is intentiona
 
 ```bash
 # Harness unit tests (scripted agents; no model needed)
-python3 -m unittest tests.test_reliability_benchmark          # from oss/
+python3 -m unittest tests.test_reliability_benchmark
 
 # Arm A end to end through the Lightflow CLI, one seed per quadrant
 python3 benchmarks/reliability_benchmark.py --self-test

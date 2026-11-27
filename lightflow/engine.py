@@ -815,15 +815,18 @@ class LightflowEngine(
         stage, passport
     )
     if not should_run:
+      if target_status == schema.StampStatus.PAUSED:
+        # Upstream gate is paused; do not stamp PAUSED on this dependent stage.
+        raise OperatorActionSuspended(reason)
+      if target_status == schema.StampStatus.STATUS_UNSPECIFIED:
+        # Still waiting on parent stages; not a lifecycle transition.
+        return passport
+
       stamp = add_stamp(passport, stage_name, target_status, reason)
       if reason == UPSTREAM_FAILED_MESSAGE:
         stamp.reason = schema.Stamp.UPSTREAM_FAILED
 
-      if target_status == schema.StampStatus.PAUSED:
-        raise OperatorActionSuspended(reason)
-
-      # Only terminal outcomes are lifecycle transitions worth announcing;
-      # STATUS_UNSPECIFIED means the stage is still waiting on its parents.
+      # Only terminal outcomes are lifecycle transitions worth announcing.
       icon = _TRIGGER_NOTIFICATION_ICONS.get(target_status)
       if icon:
         if reason == UPSTREAM_FAILED_MESSAGE:

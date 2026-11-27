@@ -245,22 +245,111 @@ def _strip_yaml_comment_outside_quotes(line: str) -> str:
   return line
 
 
+def _is_single_double_quoted(s: str) -> bool:
+  """Returns True if `s` is one complete double-quoted scalar."""
+  if len(s) < 2 or not (s.startswith('"') and s.endswith('"')):
+    return False
+  escaped = False
+  for ch in s[1:-1]:
+    if escaped:
+      escaped = False
+      continue
+    if ch == "\\":
+      escaped = True
+      continue
+    if ch == '"':
+      return False
+  return not escaped
+
+
+def _is_single_single_quoted(s: str) -> bool:
+  """Returns True if `s` is one complete YAML single-quoted scalar."""
+  if len(s) < 2 or not (s.startswith("'") and s.endswith("'")):
+    return False
+  i = 1
+  end = len(s) - 1
+  while i < end:
+    if s[i] == "'":
+      if i + 1 < end and s[i + 1] == "'":
+        i += 2
+        continue
+      return False
+    i += 1
+  return True
+
+
+def _split_yaml_flow_items(inner: str) -> list[str]:
+  """Splits a YAML flow sequence body on top-level commas."""
+  items: list[str] = []
+  start = 0
+  depth = 0
+  in_single = False
+  in_double = False
+  escaped = False
+  i = 0
+  length = len(inner)
+  while i < length:
+    ch = inner[i]
+    if in_double:
+      if escaped:
+        escaped = False
+      elif ch == "\\":
+        escaped = True
+      elif ch == '"':
+        in_double = False
+    elif in_single:
+      if ch == "'":
+        if i + 1 < length and inner[i + 1] == "'":
+          i += 1
+        else:
+          in_single = False
+    else:
+      if ch == '"':
+        in_double = True
+      elif ch == "'":
+        in_single = True
+      elif ch in "[{":
+        depth += 1
+      elif ch in "]}":
+        depth -= 1
+      elif ch == "," and depth == 0:
+        items.append(inner[start:i])
+        start = i + 1
+    i += 1
+  if in_single or in_double or depth != 0:
+    raise ValueError(f"unterminated flow collection: '[{inner}]'")
+  tail = inner[start:]
+  if tail.strip() or not items:
+    items.append(tail)
+  return items
+
+
 def _parse_yaml_scalar(val_str: str) -> Any:
   """Parses a YAML scalar value using pure Python stdlib."""
   s = val_str.strip()
   if not s:
     return ""
-  if (s.startswith('"') and s.endswith('"')) or (
-      s.startswith("'") and s.endswith("'")
-  ):
-    return s[1:-1]
+  if s.startswith('"'):
+    if not _is_single_double_quoted(s):
+      raise ValueError(f"invalid or unterminated double-quoted scalar: {s!r}")
+    try:
+      parsed_str = json.loads(s)
+      if isinstance(parsed_str, str):
+        return parsed_str
+    except ValueError:
+      pass
+    return _unescape_proto_string(s[1:-1])
+  if s.startswith("'"):
+    if not _is_single_single_quoted(s):
+      raise ValueError(f"invalid or unterminated single-quoted scalar: {s!r}")
+    return s[1:-1].replace("''", "'")
   if s[0] in "[{" and s[-1] != {"[": "]", "{": "}"}[s[0]]:
     raise ValueError(f"unterminated flow collection: {s!r}")
   if s.startswith("[") and s.endswith("]"):
     inner = s[1:-1].strip()
     if not inner:
       return []
-    return [_parse_yaml_scalar(x) for x in inner.split(",")]
+    return [_parse_yaml_scalar(x) for x in _split_yaml_flow_items(inner)]
   if s.startswith("{") and s.endswith("}"):
     try:
       return json.loads(s)
@@ -394,9 +483,7 @@ def _parse_simple_yaml(text: str) -> dict[str, Any]:
         idx += 1
         if not item_str:
           arr.append(parse_node(first_indent + 1))
-        elif ":" in item_str and not (
-            item_str.startswith('"') or item_str.startswith("'")
-        ):
+        elif ":" in item_str and not item_str.startswith(('"', "'", "{", "[")):
           k, _, v = item_str.partition(":")
           item_dict: dict[str, Any] = {}
           item_dict[k.strip()] = parse_value(first_indent, v)
@@ -583,6 +670,17 @@ def _matches_json_type(val: Any, expected_type: str) -> bool:
   return True
 
 
+def _json_equal(a: Any, b: Any) -> bool:
+  """JSON Schema equality where booleans never equal numbers (True != 1)."""
+  if isinstance(a, bool) or isinstance(b, bool):
+    return isinstance(a, bool) and isinstance(b, bool) and a == b
+  if isinstance(a, list) and isinstance(b, list):
+    return len(a) == len(b) and all(_json_equal(x, y) for x, y in zip(a, b))
+  if isinstance(a, dict) and isinstance(b, dict):
+    return a.keys() == b.keys() and all(_json_equal(a[k], b[k]) for k in a)
+  return a == b
+
+
 def _validate_json_schema_stdlib(
     instance: Any, schema_dict: dict[str, Any], path: str = ""
 ) -> None:
@@ -602,12 +700,12 @@ def _validate_json_schema_stdlib(
           f"Expected one of {expected_type!r}{loc}, got"
           f" {type(instance).__name__}"
       )
-  if "const" in schema_dict and instance != schema_dict["const"]:
+  if "const" in schema_dict and not _json_equal(instance, schema_dict["const"]):
     raise ValueError(
         f"Expected const {schema_dict['const']!r}{loc}, got {instance!r}"
     )
   if "enum" in schema_dict and isinstance(schema_dict["enum"], list):
-    if instance not in schema_dict["enum"]:
+    if not any(_json_equal(instance, opt) for opt in schema_dict["enum"]):
       raise ValueError(
           f"{instance!r} is not one of {schema_dict['enum']!r}{loc}"
       )

@@ -1577,14 +1577,8 @@ class LightflowRunnerCLI:
       )
     pm = PassportManager(log_id)
     try:
-      with pm.lock(exclusive=True):
+      with pm.lock(exclusive=True, remove_if_uninitialized=True):
         pm.delete_state(remove_lock=False)
-      lock_path = pm.resolved_path + ".lock"
-      if os.path.exists(lock_path) and not os.path.islink(lock_path):
-        try:
-          os.remove(lock_path)
-        except OSError:
-          pass
       print(
           f"Successfully cleaned up state for log ID: {log_id} (removed"
           f" {pm.resolved_path}; external workflow artifacts on disk are"

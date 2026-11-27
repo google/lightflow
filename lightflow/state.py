@@ -251,31 +251,72 @@ class PassportManager:
         | getattr(os, "O_NOFOLLOW", 0)
         | getattr(os, "O_BINARY", 0)
     )
-    raw_fd = os.open(lock_path, open_flags, 0o600)
-    fd = os.fdopen(raw_fd, "r+b")
-    try:
-      acquired = _lock_with_retry(fd, exclusive, _LOCK_RETRY_SECONDS)
-    except OSError:
-      fd.close()
-      raise
-    if not acquired:
-      fd.close()
-      raise LightflowRunningError(
-          f"Could not acquire lock on workflow '{self.workflow_id}'."
-          " Another process is running this workflow; wait for it to finish"
-          " (check with 'status'), then retry."
-      )
+    deadline = time.monotonic() + _LOCK_RETRY_SECONDS
+    stale_inode_retries = 0
+    while True:
+      raw_fd = os.open(lock_path, open_flags, 0o600)
+      fd = os.fdopen(raw_fd, "r+b")
+      try:
+        remaining = max(0.0, deadline - time.monotonic())
+        acquired = _lock_with_retry(fd, exclusive, remaining)
+      except OSError:
+        fd.close()
+        raise
+      if not acquired:
+        fd.close()
+        raise LightflowRunningError(
+            f"Could not acquire lock on workflow '{self.workflow_id}'."
+            " Another process is running this workflow; wait for it to finish"
+            " (check with 'status'), then retry."
+        )
+      if fcntl is not None:
+        # On POSIX, another holder may have unlinked `lock_path` while holding
+        # the lock right before releasing it. Verify our locked fd still names
+        # the directory entry at `lock_path`; otherwise re-open and retry.
+        try:
+          fd_stat = os.fstat(fd.fileno())
+          path_stat = os.lstat(lock_path)
+          same_inode = (
+              fd_stat.st_ino == path_stat.st_ino
+              and fd_stat.st_dev == path_stat.st_dev
+          )
+        except FileNotFoundError:
+          same_inode = False
+        if not same_inode:
+          _unlock(fd)
+          fd.close()
+          stale_inode_retries += 1
+          if stale_inode_retries >= 8 and time.monotonic() >= deadline:
+            raise LightflowRunningError(
+                f"Could not acquire lock on workflow '{self.workflow_id}'."
+                " Another process is running this workflow; wait for it to"
+                " finish (check with 'status'), then retry."
+            )
+          continue
+      break
 
     try:
       yield
     finally:
-      _unlock(fd)
-      fd.close()
-      if (
-          remove_if_uninitialized
+      should_remove = (
+          exclusive
+          and remove_if_uninitialized
           and not os.path.exists(self.resolved_path)
           and not os.path.islink(lock_path)
-      ):
+      )
+      if should_remove and fcntl is not None:
+        # Unlink while still holding the exclusive lock so no concurrent waiter
+        # can acquire this inode before its directory entry is removed.
+        try:
+          os.remove(lock_path)
+        except OSError:
+          pass
+      _unlock(fd)
+      fd.close()
+      if should_remove and fcntl is None:
+        # Windows cannot unlink an open file handle; removing after close is
+        # safe there because Windows rejects unlinking a file held open by
+        # another process.
         try:
           os.remove(lock_path)
         except OSError:
@@ -468,20 +509,6 @@ class PassportManager:
       )
     self._validate_path_safety(self.resolved_path)
     if os.path.exists(self.resolved_path):
-      base_name = os.path.basename(self.resolved_path)
-      if not base_name.startswith("lightflow_state_"):
-        unexpected = [
-            entry
-            for entry in os.listdir(self.resolved_path)
-            if entry != "passport.json"
-            and not entry.startswith("passport.json.tmp-")
-        ]
-        if unexpected:
-          raise ValueError(
-              "Refusing to delete non-lightflow_state_ directory"
-              f" '{self.resolved_path}' containing unexpected files:"
-              f" {unexpected}"
-          )
       shutil.rmtree(self.resolved_path)
     if remove_lock:
       lock_path = self.resolved_path + ".lock"
