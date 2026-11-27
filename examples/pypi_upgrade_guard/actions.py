@@ -18,7 +18,9 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
+import tempfile
 from typing import Any
 import urllib.error
 import urllib.request
@@ -36,6 +38,20 @@ _FALLBACK_LATEST = {
     "jsonschema": "4.23.0",
     "httpx": "0.28.1",
 }
+
+
+def _normalize_pkg(name: str) -> str:
+  """Normalizes a Python package name per PEP 503."""
+  return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def _resolve_requirements_path(raw_path: str) -> str:
+  """Resolves a requirements path, mapping `/tmp/` to tempdir on Windows."""
+  if os.name == "nt" and raw_path.startswith("/tmp/"):
+    raw_path = os.path.join(
+        tempfile.gettempdir(), raw_path.removeprefix("/tmp/")
+    )
+  return os.path.abspath(raw_path)
 
 
 def _fetch_latest_pypi_version(package: str, timeout: float = 5.0) -> str:
@@ -120,7 +136,7 @@ def apply_and_smoke_test(
       outputs.get("approve_upgrades") or payload.get("upgrade_gate") or payload
   )
 
-  req_path = os.path.abspath(
+  req_path = _resolve_requirements_path(
       str(
           gate.get("requirements_path")
           or payload.get("requirements_path")
@@ -159,10 +175,18 @@ def apply_and_smoke_test(
 
   shutil.copy2(req_path, backup_path)
 
-  updated = dict(existing_pins)
-  updated.update(pinned)
+  updated: dict[str, str] = {}
+  norm_to_key: dict[str, str] = {}
+  for pkg, ver in existing_pins.items():
+    key = norm_to_key.setdefault(_normalize_pkg(pkg), pkg)
+    updated[key] = ver
+  for pkg, ver in pinned.items():
+    key = norm_to_key.setdefault(_normalize_pkg(pkg), pkg)
+    updated.setdefault(key, ver)
   for u in upgrades:
-    updated[u["package"]] = u["to"]
+    pkg = u["package"]
+    key = norm_to_key.setdefault(_normalize_pkg(pkg), pkg)
+    updated[key] = u["to"]
 
   with open(req_path, "w", encoding="utf-8") as f:
     for pkg, ver in updated.items():
@@ -205,7 +229,7 @@ def restore_requirements_backup(
   gate = (
       outputs.get("approve_upgrades") or payload.get("upgrade_gate") or payload
   )
-  req_path = os.path.abspath(
+  req_path = _resolve_requirements_path(
       str(
           gate.get("requirements_path")
           or payload.get("requirements_path")

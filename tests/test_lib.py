@@ -693,6 +693,52 @@ stages:
         cli.status(lightflow=pypi_wf, log_id="pypi_test_run", verbose=True)
     self.assertIn("[rolled back]", status_buf.getvalue())
 
+    # 3b. Case/separator-insensitive upgrade merge & Windows /tmp/ mapping
+    case_req = os.path.join(self.temp_dir, "case_requirements.txt")
+    with open(case_req, "w", encoding="utf-8") as f:
+      f.write("requests==2.28.0\npyyaml==5.4.1\nmy_pkg==1.0\n")
+    from examples.pypi_upgrade_guard import actions as pypi_actions  # pylint: disable=g-import-not-at-top
+
+    out_payload, _ = pypi_actions.apply_and_smoke_test(
+        {
+            "requirements_path": case_req,
+            "outputs": {
+                "audit_pypi_versions": {
+                    "pinned": {"PyYAML": "6.0", "my-pkg": "1.0"},
+                    "upgrades": [
+                        {"package": "PyYAML", "from": "6.0", "to": "6.0.4"},
+                        {"package": "my-pkg", "from": "1.0", "to": "1.2"},
+                    ],
+                },
+                "approve_upgrades": {"approved": True},
+            },
+        }
+    )
+    self.assertEqual(
+        out_payload["updated_versions"],
+        {"requests": "2.28.0", "pyyaml": "6.0.4", "my_pkg": "1.2"},
+    )
+    with open(case_req, "r", encoding="utf-8") as f:
+      self.assertEqual(
+          f.read().splitlines(),
+          ["requests==2.28.0", "pyyaml==6.0.4", "my_pkg==1.2"],
+      )
+    with (
+        mock.patch.object(pypi_actions.os, "name", "nt"),
+        mock.patch.object(
+            pypi_actions.tempfile, "gettempdir", return_value=self.temp_dir
+        ),
+    ):
+      win_path = pypi_actions._resolve_requirements_path(  # pylint: disable=protected-access
+          "/tmp/lightflow_demo_requirements.txt"
+      )
+      self.assertEqual(
+          win_path,
+          os.path.abspath(
+              os.path.join(self.temp_dir, "lightflow_demo_requirements.txt")
+          ),
+      )
+
     # 4. Dry-run and execute 22-stage tenant_gitops_onboarding across all paths
     tenant_wf = os.path.join(
         examples_dir, "tenant_gitops_onboarding", "lightflow.yaml"
